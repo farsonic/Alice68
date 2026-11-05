@@ -1,6 +1,12 @@
 # Alice68 release notes
 
-## Unreleased (on `main`, after 0.2.0)
+## 0.3.0 — hardfiles on the status strip
+
+Download: `Alice68-0.3.0-Pi4.zip` from the
+[v0.3.0 release](https://github.com/farsonic/Alice68/releases).
+
+Upgrading from 0.2.0: replace `kernel8.img` (and `C:Alice68-HDF` if you use it).
+Nothing else on the card changes.
 
 - **Hardfiles on the boot splash's status strip**, after INPUT: `HARDFILES 1 bootable 4
   non-bootable`, plus `n left out` in amber when any were skipped (the SYSTEM panel says
