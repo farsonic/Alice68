@@ -150,8 +150,18 @@ static uint32_t chip(uint32_t x, const char *label, const char *state, uint16_t 
     uint32_t y = strip_y + 8;
     rect(x, y + 3, 10, 10, col);
     x = text(x + 16, y, label, C_TEXT, 16) + 8;
-    x = text(x, y, state, col, 24);
+    x = text(x, y, state, col, 48);
     return x + 28;
+}
+
+static unsigned num(char *b, unsigned k, int v)
+{
+    char t[12];
+    unsigned n = 0;
+    if (v < 0) v = 0;
+    do { t[n++] = (char)('0' + v % 10); v /= 10; } while (v && n < sizeof t);
+    while (n) b[k++] = t[--n];
+    return k;
 }
 
 void al_status_draw(const struct al_status *s)
@@ -175,7 +185,21 @@ void al_status_draw(const struct al_status *s)
         b[k++] = (char)('0' + (ms % 10)); for (const char *t = " mouse"; *t; ) b[k++] = *t++;
         if (ms != 1) { k -= 3; for (const char *t = "ice"; *t; ) b[k++] = *t++; }
         b[k] = 0;
-        chip(x, "INPUT", b, (kb || ms) ? C_OK : C_DIM);
+        x = chip(x, "INPUT", b, (kb || ms) ? C_OK : C_DIM);
+    }
+    if (s->hdf_boot >= 0) {                              /* from alice68hdf.device's summary line */
+        char b[64];
+        unsigned k = 0;
+        int nb = s->hdf_boot, no = s->hdf_other, nl = s->hdf_left;
+        if (!nb && !no && !nl) {
+            for (const char *t = "none"; *t; ) b[k++] = *t++;
+        } else {
+            k = num(b, k, nb); for (const char *t = " bootable  "; *t; ) b[k++] = *t++;
+            k = num(b, k, no); for (const char *t = " non-bootable"; *t; ) b[k++] = *t++;
+            if (nl) { b[k++] = ' '; b[k++] = ' '; k = num(b, k, nl); for (const char *t = " left out"; *t; ) b[k++] = *t++; }
+        }
+        b[k] = 0;
+        chip(x, "HARDFILES", b, nl ? C_WAIT : (nb || no) ? C_OK : C_DIM);
     }
     rect(0, strip_y + 31, fw, 1, C_RULE);
 }

@@ -182,7 +182,9 @@ AGA-PiStorm's Chipset menu (`agaboot`) changes the picture at run time as well.
 The splash has five parts:
 
 - **Header:** the Alice68 emblem and versions.
-- **Status strip:** video, ROM, 68k, CPU1, USB and the input devices found.
+- **Status strip:** video, ROM, 68k, CPU1, USB, the input devices found, and the
+  hardfiles: how many boot, how many are mounted without booting, and how many were left
+  out (in amber, with the reason in the SYSTEM panel).
 - **SYSTEM panel:** the kernel log.
 - **USB panel:** the USB log.
 - **Credits line.**

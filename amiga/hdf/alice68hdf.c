@@ -30,9 +30,9 @@
 #include "hdf_core.h"
 
 #define VERSION   0
-#define REVISION  3
+#define REVISION  4
 const char hdf_devname[] = "alice68hdf.device";
-const char hdf_idstring[] = "alice68hdf.device 0.3 (05.11.2026) Alice68 hardfiles";
+const char hdf_idstring[] = "alice68hdf.device 0.4 (05.11.2026) Alice68 hardfiles";
 
 #define HDF_MAGIC  0x41363848u              /* 'A68H', read by Alice68-HDF */
 #define LOG_SIZE   4096
@@ -603,10 +603,12 @@ static void set_name(char *d, const char *s)
     d[k] = 0;
 }
 
-static void mount_unit(struct HdfBase *db, struct card *c, APTR eb, APTR cd, struct HUnit *hu, int any_chosen)
+/* returns: bit 0 a partition was mounted, bit 1 one of them boots */
+static int mount_unit(struct HdfBase *db, struct card *c, APTR eb, APTR cd, struct HUnit *hu, int any_chosen)
 {
     struct hdf_io io = HDF_IO(c);
     (void)any_chosen;                                   /* only the chosen one boots, chosen or not */
+    int res = 0;
     for (int i = 0; i < hu->rdb.nparts; i++) {
         struct hdf_part *p = &hu->rdb.part[i];
         ULONG *ev = p->envec;
@@ -704,9 +706,11 @@ static void mount_unit(struct HdfBase *db, struct card *c, APTR eb, APTR cd, str
         else if (pri < -127) pri = -127;
         if (!AddBootNode(eb, pri, 1 /* ADNF_STARTPROC */, dn, cd)) { hdf_log(&io, "  %s: AddBootNode failed", name); continue; }
         if (vol[0]) add_vol(db, vol, name);
+        res |= 1 | (boot ? 2 : 0);
         if (boot) hdf_log(&io, "  %s: %lu MB, %s, boot priority %ld%s", name, blocks >> 11, fsname, pri, db->readonly ? ", read-only" : "");
         else      hdf_log(&io, "  %s: %lu MB, %s, not bootable%s", name, blocks >> 11, fsname, db->readonly ? ", read-only" : "");
     }
+    return res;
 }
 
 static int matches_boot(const struct hdf_opts *o, const char *file)
@@ -773,6 +777,7 @@ APTR dev_init(struct HdfBase *db, APTR seglist)
         hdf_log(&io, "no hardfiles (*.hdf) in the FAT partition's root or HDF folder");
     }
 
+    int n_boot = 0, n_other = 0, n_left = 0;            /* hardfiles, for the summary line */
     int any_chosen = 0;
     for (int i = 0; i < n; i++) any_chosen |= matches_boot(&db->opts, files[i].name);
     if (db->opts.boot[0] && !any_chosen && !db->opts.off) hdf_log(&io, "hdf.boot=%s: no hardfile of that name", db->opts.boot);
@@ -791,6 +796,7 @@ APTR dev_init(struct HdfBase *db, APTR seglist)
             if (!db->cmd64 && top > 0x800000u) {
                 hdf_log(&io, "%s: lies beyond the card's first 4 GB, which %s cannot reach", h->name, db->card_dev);
                 hdf_file_free(&io, h);
+                n_left++;
                 continue;
             }
             struct HUnit *hu = AllocMem(sizeof *hu, MEMF_PUBLIC | MEMF_CLEAR);
@@ -806,8 +812,10 @@ APTR dev_init(struct HdfBase *db, APTR seglist)
                         hu->single ? "single partition" : (hu->rdb.nparts == 1 ? "1 partition" : "RDB"), hu->chosen ? ", hdf.boot" : "");
                 db->unit[db->nunits++] = hu;
                 if (!hu->single) load_rdb_filesystems(db, &io, hu);
-                if (eb) mount_unit(db, &c, eb, cd, hu, any_chosen);
+                int m = eb ? mount_unit(db, &c, eb, cd, hu, any_chosen) : 0;
+                if (m & 2) n_boot++; else if (m & 1) n_other++; else n_left++;
             } else {
+                n_left++;
                 hdf_log(&io, "%s: %s", hu->f.name, r == 0 ? "neither a Rigid Disk Block nor a filesystem at block 0 - ignored" : "unreadable RDB");
                 hdf_file_free(&io, &hu->f);
                 FreeMem(hu, sizeof *hu);
@@ -839,6 +847,8 @@ APTR dev_init(struct HdfBase *db, APTR seglist)
         add_task(t, (APTR)task_entry);
     }
     hdf_log(&io, "%lu unit%s ready%s", db->nunits, db->nunits == 1 ? "" : "s", db->readonly ? ", read-only" : "");
+    /* the kernel reads this line for the splash's status strip: keep its form */
+    hdf_log(&io, "hardfiles: %ld bootable, %ld non-bootable, %ld left out", (LONG)n_boot, (LONG)n_other, (LONG)n_left);
     return db;
 }
 

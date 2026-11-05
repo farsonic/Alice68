@@ -10,13 +10,14 @@
 #include <stdint.h>
 
 #define ALICE_NAME    "Alice68"
-#define ALICE_VERSION "0.2.0"
+#define ALICE_VERSION "0.3.0"
 
 /* stage bits as frf_boot_stage() numbers them */
 struct al_status {
     uint32_t stages;            /* bit n: stage n reached */
     int keyboards, mice;        /* -1: not known yet */
     int usb_fail;               /* the USB-A host gave up */
+    int hdf_boot, hdf_other, hdf_left;  /* hardfiles: bootable, mounted not bootable, left out; -1 not known yet */
 };
 
 void al_setup(uint16_t *fb, uint32_t pitch_bytes, uint32_t w, uint32_t h);

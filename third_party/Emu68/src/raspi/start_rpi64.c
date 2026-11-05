@@ -259,6 +259,7 @@ static void __attribute__((unused)) draw_logo_rgb(uint32_t start_x, uint32_t sta
 static volatile uint32_t post_flags;
 static volatile uint32_t post_lock, post_stop;
 static volatile uint32_t post_kb=~0u, post_ms=~0u, post_gp=~0u, post_storage=~0u;
+static volatile int post_hdf_boot = -1, post_hdf_other = -1, post_hdf_left = -1;   /* Alice68 hardfiles */
 static volatile uint32_t post_rx, post_bad, post_err, post_id, post_len;
 static volatile uint32_t post_raw0, post_raw1, post_joy, post_fire, post_events;
 static volatile uint32_t post_decoded;
@@ -869,6 +870,17 @@ void frf_post_native_usb_stage(unsigned stage, int rc,
     frf_post_draw();
 }
 #endif
+/* alice68hdf.device's summary (aga_glue.c reads it off the 68k's serial line) */
+void frf_post_hardfiles(int bootable, int other, int left)
+{
+#ifdef ALICE_SPLASH
+    post_hdf_boot = bootable; post_hdf_other = other; post_hdf_left = left;
+    alice_status();
+#else
+    (void)bootable; (void)other; (void)left;
+#endif
+}
+
 void frf_post_usb_devices(unsigned kb,unsigned ms,unsigned gp,unsigned msc)
 {
     post_kb=kb;post_ms=ms;post_gp=gp;post_storage=msc;
@@ -948,12 +960,17 @@ static volatile uint32_t alice_lock;
 static void alice_status(void)
 {
     if (!alice_live()) return;
-    if (__atomic_exchange_n(&alice_lock, 1u, __ATOMIC_ACQUIRE)) return;
+    /* another core may be drawing: wait a little rather than lose this update */
+    for (int spin = 0; __atomic_exchange_n(&alice_lock, 1u, __ATOMIC_ACQUIRE); spin++) {
+        if (spin > 200000) return;
+        __asm__ volatile("yield");
+    }
     struct al_status st;
     st.stages = __atomic_load_n(&post_flags, __ATOMIC_ACQUIRE);
     st.keyboards = post_kb == ~0u ? -1 : (int)post_kb;
     st.mice = post_ms == ~0u ? -1 : (int)post_ms;
     st.usb_fail = frf_usb_failed;
+    st.hdf_boot = post_hdf_boot; st.hdf_other = post_hdf_other; st.hdf_left = post_hdf_left;
     al_status_draw(&st);
     __asm__ volatile("dsb ishst" ::: "memory");
     __atomic_store_n(&alice_lock, 0u, __ATOMIC_RELEASE);

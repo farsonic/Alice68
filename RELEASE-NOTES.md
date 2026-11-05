@@ -1,5 +1,11 @@
 # Alice68 release notes
 
+## Unreleased (branch `next`)
+
+- **Hardfiles on the boot splash's status strip**, after INPUT: `HARDFILES 1 bootable 4
+  non-bootable`, plus `n left out` in amber when any were skipped (the SYSTEM panel says
+  why), or `none`. The hardfile driver sends a summary line; the kernel reads it.
+
 ## 0.2.0 — hardfiles on the SD card
 
 Download: `Alice68-0.2.0-Pi4.zip` from the

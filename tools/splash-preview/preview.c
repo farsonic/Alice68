@@ -7,7 +7,7 @@
 #include "alice_splash.h"
 
 static const char *sys_log[] = {
-    "[BOOT] Alice68 0.2.0 - Emu68 1.1.0-beta.1 (05.11.2026)",
+    "[BOOT] Alice68 0.3.0 - Emu68 1.1.0-beta.1 (05.11.2026)",
     "[BOOT] Boot address is 00080000",
     "[BOOT] Build ID: b4dcb52",
     "[BOOT] ARM stack top at 0xffffff9000200000",
@@ -35,6 +35,7 @@ static const char *sys_log[] = {
     "[alice68hdf]   filesystem PFS\\3 19.2 loaded from the RDB",
     "[alice68hdf]   DH5: volume Work is mounted already (on DH1) - not mounted",
     "[alice68hdf] 3 units ready",
+    "[alice68hdf] hardfiles: 1 bootable, 2 non-bootable, 0 left out",
 };
 static const char *usb_log[] = {
     "PCIe link up, Gen 2 x1",
@@ -64,7 +65,7 @@ int main(int argc, char **argv)
     snprintf(l2, sizeof l2, "Emu68 1.1.0-beta.1 - AGA core 1.120");
     snprintf(l3, sizeof l3, "Raspberry Pi 4 - display %ux%u", w, h);
     al_header(ALICE_NAME " " ALICE_VERSION, l2, l3);
-    struct al_status s = { 0x7fe, 1, 1, 0 };
+    struct al_status s = { 0x7fe, 1, 1, 0, 1, 2, 0 };
     al_status_draw(&s);
     al_panel(0, sys_log, sizeof sys_log / sizeof *sys_log);
     al_panel(1, usb_log, sizeof usb_log / sizeof *usb_log);

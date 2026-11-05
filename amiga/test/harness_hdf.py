@@ -281,6 +281,11 @@ elif scen == 'extra':
     want = [('DH5', 0, 0), ('DH1', 1, -128), ('GAMES', 1, -128), ('DH0', 2, -128), ('FR0', 3, -128), ('DH2', 4, -128)]
 else:
     order, want = [], []
+summary = {'default': (0, 4, 1), 'ro': (0, 4, 1), 'noboot': (0, 4, 1), 'boot': (1, 4, 0), 'raw': (1, 4, 0),
+           'bootnb': (1, 4, 0), 'extra': (1, 4, 0), 'off': (0, 0, 0)}[scen]
+ms = re.search(r'\[alice68hdf\] hardfiles: (\d+) bootable, (\d+) non-bootable, (\d+) left out', logtxt)
+if not ms or tuple(int(x) for x in ms.groups()) != summary: die('%s: summary line %s, want %s' % (scen, ms and ms.groups(), summary))
+if ms.group(0) not in ''.join(serial): die('summary line not sent through RawPutChar')
 got = [(b['name'], b['unit'], b['pri']) for b in boots]
 if got != want: die('%s: boot list %s, want %s' % (scen, got, want))
 if any(b['cd'] != CONFIGDEV or b['flags'] != 1 or b['dev'] != 'alice68hdf.device' for b in boots): die('boot node device/flags/configdev')

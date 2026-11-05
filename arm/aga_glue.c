@@ -615,7 +615,22 @@ static void alice_serial_char(uint8_t c)
         return;
     }
     ser_line[ser_len] = 0;
-    if (ser_len >= 8 && !memcmp(ser_line, "[alice68", 8)) kprintf("%s\n", ser_line);
+    if (ser_len >= 8 && !memcmp(ser_line, "[alice68", 8)) {
+        kprintf("%s\n", ser_line);
+        /* "[alice68hdf] hardfiles: B bootable, N non-bootable, L left out": for the splash's status strip */
+        static const char tag[] = "[alice68hdf] hardfiles: ";
+        if (ser_len > sizeof tag && !memcmp(ser_line, tag, sizeof tag - 1)) {
+            int v[3] = { 0, 0, 0 }, k = 0;
+            for (const char *p = ser_line + sizeof tag - 1; *p && k < 3; p++) {
+                if (*p < '0' || *p > '9') continue;
+                while (*p >= '0' && *p <= '9') { v[k] = v[k] * 10 + (*p - '0'); p++; }
+                k++;
+                if (!*p) break;
+            }
+            extern void frf_post_hardfiles(int bootable, int other, int left);
+            if (k == 3) frf_post_hardfiles(v[0], v[1], v[2]);
+        }
+    }
     ser_len = 0;
 }
 #endif
