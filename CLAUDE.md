@@ -178,3 +178,10 @@ without asking for each step. Stop and ask only where noted.
 
 If nothing is new, say so, with the script's output. Don't make empty commits.
 
+**Running unattended** (GitHub Action from an `@claude` issue, or a web session): you can't
+stop to ask. Work on the branch you were given instead of `next`. Push it, and open a
+pull request whose description is the report from step 6. Don't fast-forward `main` or
+package a release unless the instruction said so. If you need the AGA-PiStorm download and
+have no link, say so in the report. How people start these runs:
+[`docs/USING-CLAUDE.md`](docs/USING-CLAUDE.md).
+

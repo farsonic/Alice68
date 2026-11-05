@@ -6,7 +6,8 @@
 and AGA software on a local HDMI display, with no PiStorm and no motherboard.**
 
 Downloads: [Releases](https://github.com/farsonic/Alice68/releases) ·
-What's new: [RELEASE-NOTES.md](RELEASE-NOTES.md)
+What's new: [RELEASE-NOTES.md](RELEASE-NOTES.md) ·
+Maintaining it with Claude: [docs/USING-CLAUDE.md](docs/USING-CLAUDE.md)
 
 Alice68 is named after Alice, the AGA chip that succeeded Agnus, and the 68k that
 Emu68 runs. It is a Pi 4 build of three projects, plus a Pi 4 USB stack of its own:
