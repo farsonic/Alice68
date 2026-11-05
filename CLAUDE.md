@@ -92,6 +92,74 @@ tools/splash-preview/build.sh > out.ppm  # the splash, drawn by the kernel's own
   C/Alice68-USBLog, C/Alice68-HDF, ReadMe-USB.txt), `Licenses/` and `source/` (git archive
   of the commit plus the three submodules, and SOURCE.txt). The kernels report
   `git:<commit>`; the release must be that commit.
-- Upstream: official Emu68 had only a MULU.L/MULS.L fix since `0ba3a89`, already in this
-  tree (via AGA-PiStorm 1.120). Faster driver support (data-cache extensions) exists only
-  in rondoval's Emu68 fork, not upstream.
+
+## "Bring everything up to date"
+
+When the user says this (or "update everything", "check upstream"), do all of it, in order,
+without asking for each step. Stop and ask only where noted.
+
+1. **Sync.** `git fetch origin`, `git checkout next`, `git merge --ff-only origin/main`
+   (`next` must contain `main`), `git submodule update --init`.
+2. **Find what's new.** Run `tools/check-upstreams.sh`. It reads `tools/upstreams.tsv`
+   (each upstream, the version last reviewed, what it is to Alice68) and prints `ok`,
+   `NEW …` with a compare/release link, or `??` for the two checked by hand
+   (AGA-PiStorm on itch.io, the Arm toolchain: look at the page).
+3. **Take each update in**, one commit (or merge) per upstream, building and testing after
+   each:
+   - **AGA-PiStorm** (new version on itch.io). Ask the user for the
+     `AGA-Pistorm_universal_vX.7z` if you can't download it. Its
+     `Source/AGA-PISTORM-X-src.zip` holds the tree, and its `EMU68-SOURCE.txt` names the
+     Emu68 commit plus `arm/emu68-aga.patch`. Use the **`upstream` branch**: it is the pure
+     upstream import (AGA-PiStorm 1.120 on Emu68 `0ba3a89`, commit `2b56a31`).
+     1. `git checkout upstream`.
+     2. Replace the AGA files with the new release's.
+     3. Rebuild `third_party/Emu68` as Emu68 at the named commit with the AGA patch applied.
+        Keep `external/*` as submodule gitlinks at the commits that Emu68 commit records,
+        and don't add USPi.
+     4. Commit "AGA-PiStorm X on Emu68 <sha>" and push `upstream`.
+     5. `git checkout next && git merge upstream`. Conflicts will be where FRF and Alice68
+        changed AGA or Emu68 files; keep their behaviour. AGA's `README.md` and `LICENSE`
+        live in `docs/AGA-PISTORM-README.md` and `docs/AGA-PISTORM-LICENSE.txt` here: put
+        the new ones there and keep Alice68's root files.
+   - **Emu68** (`NEW` on `emu68`). Look at every commit in the compare link. Some may already
+     be here: AGA-PiStorm carries Emu68 fixes (the MULx fix `874c3a6` came that way). For
+     wanted changes: on `upstream`, apply them to `third_party/Emu68`, using
+     `git apply -3 --directory=third_party/Emu68` with the upstream diff. Commit, then
+     merge `upstream` into `next`. A new Emu68 *release* is better taken together with the
+     AGA-PiStorm release built on it.
+   - **FRF** (`NEW` on `frf`). FRF's tree is not ours, so port by hand. Read its diff
+     (mainly `machine/Emu68/src/frf_usb/`, `src/boards/frf_z3ram.c` and the
+     `FRF_VIRTUAL_AGA` hooks in `machine/arm/`). Port fixes that apply to a Pi 4
+     standalone machine. Never bring back USPi or anything GPL-3.
+   - **Neptune / driver stack** (`NEW` on `neptune`, `driver-stack`). Read their release
+     notes for:
+     - changes to the `USBHardware` interface or the hub/transfer rules that
+       `alice68-usb.device` implements (`amiga/alice68-usb.c`; test with
+       `amiga/test/harness.py`);
+     - changes to which archive or driver users need (README's Neptune and Ethernet advice);
+     - PCIe/xHCI bring-up changes worth mirroring in `frf_xhci.c`.
+   - **rondoval-emu68:** don't merge the fork. If its data-cache extensions have reached
+     official Emu68, say so: they enable the faster `-rangeops` drivers.
+   - **TinyUSB:** only when FRF moves or a fix is needed (MIT).
+   - **Arm toolchain:** try the newer one. Keep 15.x if the kernel misbehaves; GCC 14 is
+     known bad.
+4. **Verify** (as in *Build and test*): fresh clone of `next`, `amiga/build.sh` leaves git
+   clean, `tools/hdf-test/run.sh` all `ALL OK`, `amiga/test/harness.py` `ALL OK`, both
+   kernels build, and the splash preview still renders.
+5. **Record it.**
+   - Set `reviewed` in `tools/upstreams.tsv` to what you reviewed, whether taken in or
+     skipped.
+   - Update `docs/PROVENANCE.md` and the versions in `THIRD_PARTY_NOTICES.md`.
+   - Add an "Unreleased" section to `RELEASE-NOTES.md` saying what changed and what was
+     skipped and why.
+6. **Push `next`.** Then report:
+   - what's new upstream;
+   - what was taken in and what was skipped;
+   - test results;
+   - what needs a real Pi to confirm.
+
+   **Ask before** fast-forwarding `main` or packaging a release, unless the user asked for
+   that too.
+
+If nothing is new, say so, with the script's output. Don't make empty commits.
+

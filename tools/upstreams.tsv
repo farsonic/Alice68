@@ -1,0 +1,15 @@
+# Alice68's upstreams. tools/check-upstreams.sh compares each with what was last reviewed.
+# kind: branch = compare the branch head with the reviewed commit; tags = list tags newer than
+# the reviewed one; manual = no git, check the page by hand.
+# After taking in (or deliberately skipping) an update, set "reviewed" to what you reviewed.
+#name	kind	repository	ref	reviewed	what it is to Alice68
+emu68	branch	https://github.com/michalsc/Emu68	refs/heads/master	af63580f66ac79d9fefb790997f3012df01a5d59	vendored in third_party/Emu68 (base 0ba3a89; MULx fix 874c3a6 already in via AGA-PiStorm)
+emu68-releases	tags	https://github.com/michalsc/Emu68	-	v1.1.0-beta.1	Emu68 releases; a new one usually comes before a new AGA-PiStorm
+aga-pistorm	manual	https://astair86.itch.io/aga-pistorm-10-experimental-prototype	-	1.120	the virtual chipset (core/, arm/, Emu68 patch); 7z downloads, no git
+frf	branch	https://github.com/futureretrofusion/EMU68AGA-Bare-Metal	refs/heads/main	5d9f5ce4baca047d42e693c5e82452aa9a405d6e	standalone layer (FRF v0.10.44 delta); ported by hand, not merged
+frf-releases	tags	https://github.com/futureretrofusion/EMU68AGA-Bare-Metal	-	v0.10.44-AGA1.119-rc3	FRF releases
+neptune	tags	https://github.com/rondoval/neptune-usb-stack	-	v6.3	USB stack that alice68-usb.device serves (USBHardware interface)
+driver-stack	tags	https://github.com/rondoval/emu68-driver-stack	-	v2.3.0	genet/xhci/pcie drivers; README tells users which archive to take
+rondoval-emu68	tags	https://github.com/rondoval/Emu68	-	v1.1-alpha-with-rangeops	Emu68 fork with the data-cache extensions; watch, do not merge the fork
+tinyusb	tags	https://github.com/hathach/tinyusb	-	0.21.0	vendored (via FRF) in third_party/Emu68/third_party/tinyusb, USB-C host
+arm-toolchain	manual	https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads	-	15.2.rel1	aarch64_be-none-linux-gnu, builds the kernel
