@@ -19,6 +19,21 @@ User-facing docs: README.md. History of where code came from: docs/PROVENANCE.md
   `hdf_core.[ch]`, `Alice68-HDF`), `amiga.h` (minimal NDK types with offset asserts), `lvo.S`.
 - `tools/hdf-test/`, `amiga/test/` — tests. `tools/splash-preview/` — render the splash on a PC.
 
+## Setting up a fresh machine (Ubuntu 24.04)
+
+```bash
+sudo apt-get update
+sudo apt-get install -y build-essential cmake ninja-build device-tree-compiler xxd \
+    gcc-14-powerpc-linux-gnu g++-14-powerpc-linux-gnu gcc-m68k-linux-gnu \
+    dosfstools mtools fdisk python3-pil python3-numpy
+pip install machine68k==0.3.0          # the 68k emulator the driver tests run on
+mkdir -p ~/toolchains && cd ~/toolchains
+curl -LO https://developer.arm.com/-/media/Files/downloads/gnu/15.2.rel1/binrel/arm-gnu-toolchain-15.2.rel1-x86_64-aarch64_be-none-linux-gnu.tar.xz
+tar xf arm-gnu-toolchain-15.2.rel1-x86_64-aarch64_be-none-linux-gnu.tar.xz
+```
+
+Then, in the repository, `git submodule update --init`.
+
 ## Build and test
 
 ```bash
