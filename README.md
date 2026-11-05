@@ -225,8 +225,9 @@ Shell.
   `C:Alice68-NetCheck` (in `amiga/C`) prints what the driver reports, as text, on any
   AmigaOS: link rate, MAC address, packets and whether its interrupts reach AmigaOS.
   `Alice68-NetCheck WATCH` repeats the counters every second; `Alice68-NetCheck TEST`
-  brings an interface no TCP/IP stack has up itself and checks the hardware for five
-  seconds. It never loads a second copy of a driver a stack is using.
+  brings the interface up if no TCP/IP stack has, sends three broadcast test frames and
+  says whether the link, the hardware and its interrupts work. It never loads a second
+  copy of a driver a stack is using.
 - **Leaving the USB-A ports to AmigaOS:** `frf_usb=neptune` in `cmdline.txt` keeps the
   kernel off them, so rondoval's `xhci.device` can drive them instead.
 

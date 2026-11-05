@@ -7,7 +7,8 @@
   the Pi's own Ethernet (`genet.device` 3.x) it shows link rate, MAC address, packet and
   interrupt counters, and says whether interrupts reach AmigaOS. `WATCH` repeats the
   counters every second; `TEST` brings an unconfigured interface up with its factory
-  address and checks the hardware without a TCP/IP stack.
+  address, sends three broadcast test frames and checks link, hardware and interrupts
+  without a TCP/IP stack.
 
 ## 0.3.0 — hardfiles on the status strip
 

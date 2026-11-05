@@ -92,6 +92,35 @@ def run(hunk, args, dev):
             err = 8
         mem.w8(io + 31, err & 0xff); setd0(err)
     lvo(SYSBASE, -456, doio)
+    # SendIO / CheckIO / WaitIO / AbortIO: a write completes at once, or (no link) never
+    def sendio(o, p):
+        io = d(R.A1); cmd = mem.r16(io + 28)
+        if cmd != 3: fails.append('SendIO of command %d' % cmd); return
+        st['writes'] = st.get('writes', 0) + 1
+        bm = mem.r32(io + 84)
+        tags = {}
+        while bm and mem.r32(bm) != 0: tags[mem.r32(bm)] = mem.r32(bm + 4); bm += 8
+        if tags.get(0x800B0002) is None or not (0x20000 <= tags[0x800B0002] < 0x30000):
+            fails.append('test frame sent without an S2_CopyFromBuff function')
+        if mem.r16(io + 36 - 4 + 4) is None: pass
+        if bytes(mem.r_block(io + 56, 6)) != b'\xff' * 6 or mem.r32(io + 36) != 0x88b5: fails.append('test frame not a 0x88B5 broadcast')
+        if dev.get('link', True):
+            dev['hwtx'] += 1
+            if dev.get('grow') != 'noirq': dev['irq'] += 1
+            st['pending'] = None; mem.w8(io + 31, 0)
+        else:
+            st['pending'] = io
+    lvo(SYSBASE, -462, sendio)
+    lvo(SYSBASE, -468, lambda o, p: setd0(0 if st.get('pending') == d(R.A1) else d(R.A1)))
+    def waitio(o, p):
+        io = d(R.A1)
+        if st.get('pending') == io: fails.append('WaitIO on a request that never completes')
+        setd0(mem.r8(io + 31))
+    lvo(SYSBASE, -474, waitio)
+    def abortio(o, p):
+        io = d(R.A1)
+        if st.get('pending') == io: st['pending'] = None; mem.w8(io + 31, 0xfe); st['aborted'] = True
+    lvo(SYSBASE, -480, abortio)
     # load the hunk
     h = open(hunk, 'rb').read(); w = lambda o: struct.unpack('>I', h[o:o + 4])[0]
     n = w(28) * 4; code = bytearray(h[32:32 + n]); p = 32 + n
@@ -119,7 +148,7 @@ cases = [
       'irq0_count', 'the driver works'], ['genet.device']),
     ('traffic but no interrupts (Alice68 bug)', '', dict(base, irq=0, hwrx=55, hwtx=3),
      ['NO interrupt reached AmigaOS', 'please report'], ['genet.device']),
-    ('configured, no traffic', '', dict(base), ['nothing was sent or received'], ['genet.device']),
+    ('configured, no traffic', '', dict(base), ['sent and received nothing: no link'], ['genet.device']),
     ('loaded by a stack that holds it exclusively: no second copy', '', dict(base, open_by_name=False),
      ['refused a second', 'opened it for itself alone'], ['genet.device']),
     ('not loaded: from DEVS:Networks/, not configured', '', dict(unloaded),
@@ -129,11 +158,17 @@ cases = [
     ('netdev 4.x installed', '', dict(base, version=4, revision=4), ['is the netdev driver', 'use the SANA-II driver'], None),
     ('WATCH until Ctrl-C', 'WATCH', dict(base, irq=7, hwrx=9, ctrl_c_after=3), ['Watching', 'irq0 7', '***Break'], None),
     ('TEST: brings it up, interrupts arrive', 'TEST', dict(unloaded, grow='irq'),
-     ['bringing the interface up with the factory address... online', 'Watching for 5 seconds', 'the driver works'], None),
+     ['bringing the interface up with the factory address... online', 'Watching for 5 seconds', 'their interrupts reached AmigaOS'], None),
     ('TEST: traffic but no interrupts', 'TEST', dict(unloaded, grow='noirq'),
      ['online', 'NO interrupt reached AmigaOS'], None),
     ('TEST on a configured interface leaves it alone', 'TEST', dict(base, irq=3, hwrx=4),
-     ['already configured by a TCP/IP stack'], None),
+     ['already configured by a TCP/IP stack', 'sending 3 broadcast test frames... sent'], None),
+    ('TEST, quiet network: the test frames bring interrupts', 'TEST', dict(unloaded),
+     ['online', 'sending 3 broadcast test frames... sent', 'their interrupts reached AmigaOS'], None),
+    ('TEST, quiet network: frames go out, no interrupt', 'TEST', dict(unloaded, grow='noirq'),
+     ['sent', 'NO interrupt reached AmigaOS'], None),
+    ('TEST, no link: the driver holds the frame', 'TEST', dict(unloaded, link=False),
+     ['no answer in 4 s', 'no link'], None),
 ]
 for name, args, dev, want, paths in cases:
     out, st = run(hunk, args, dev)
@@ -146,6 +181,28 @@ for name, args, dev, want, paths in cases:
     else: print('ok  %s' % name)
 if fails:
     print('\n'.join('FAIL: ' + f for f in fails)); sys.exit(1)
-print('--- sample: TEST, traffic but no interrupts ---')
+# the copy routine the driver calls: a0 = to, a1 = from, d0 = bytes -> TRUE
+import subprocess
+nm = subprocess.run(['m68k-linux-gnu-nm', hunk + '.elf'], capture_output=True, text=True).stdout
+addr = [int(l.split()[0], 16) for l in nm.splitlines() if l.endswith(' nc_copybuff')]
+if not addr: fails.append('no nc_copybuff symbol')
+else:
+    mach = M.Machine(M.CPUType.M68020, 1024); cpu, mem, traps = mach.cpu, mach.mem, mach.traps
+    h = open(hunk, 'rb').read(); n = struct.unpack('>I', h[28:32])[0] * 4
+    mem.w_block(0x20000, h[32:32 + n])
+    done = {'f': False}
+    def t_exit(op, pc): done['f'] = True; cpu.end()
+    mem.w16(0x1000, 0xA000 | traps.setup(t_exit))
+    mem.w_block(0x5000, b'Alice68 copy'); mem.w_block(0x6000, bytes(16))
+    mem.w32(0x8000, 0x1000); cpu.w_reg(R.A7, 0x8000)
+    cpu.w_reg(R.A0, 0x6000); cpu.w_reg(R.A1, 0x5000); cpu.w_reg(R.D0, 12); cpu.w_pc(0x20000 + addr[0]); cpu.w_sr(0)
+    for _ in range(100):
+        if done['f']: break
+        cpu.execute(1000)
+    if bytes(mem.r_block(0x6000, 13)) != b'Alice68 copy\0' or cpu.r_reg(R.D0) != 1: fails.append('nc_copybuff copies wrong')
+    else: print('ok  nc_copybuff copies and returns TRUE')
+if fails:
+    print('\n'.join('FAIL: ' + f for f in fails)); sys.exit(1)
+print('--- sample: TEST on a quiet network, frames go out, no interrupt ---')
 print(run(hunk, 'TEST', dict(unloaded, grow='noirq'))[0])
 print('ALL OK')

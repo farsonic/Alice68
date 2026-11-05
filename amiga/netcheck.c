@@ -13,8 +13,10 @@
  * Ethernet hardware received): together they tell a missing interrupt from a
  * missing link. WATCH repeats the key counters every second until Ctrl-C.
  * TEST brings an unconfigured interface up itself (S2_CONFIGINTERFACE with the
- * factory address), so the hardware can be checked without a TCP/IP stack, and
- * watches it for five seconds.
+ * factory address), sends three broadcast test frames (EtherType 0x88B5, reserved
+ * for local experiments) and watches the counters for five seconds: a sent frame
+ * ends with a "transmit done" interrupt, so TEST tells a missing interrupt from a
+ * missing link even on a quiet network.
  *
  * SANA-II structures and command numbers: devices/sana2.h. */
 #include "amiga.h"
@@ -23,11 +25,14 @@ void *memcpy(void *d, const void *s, unsigned long n) { UBYTE *a = d; const UBYT
 void *memset(void *d, int c, unsigned long n) { UBYTE *a = d; while (n--) *a++ = (UBYTE)c; return d; }
 
 #define S2_DEVICEQUERY        (CMD_NONSTD + 0)
+#define CMD_WRITE_            3
 #define S2_GETSTATIONADDRESS  (CMD_NONSTD + 1)
 #define S2_CONFIGINTERFACE    (CMD_NONSTD + 2)
 #define S2_GETSPECIALSTATS    (CMD_NONSTD + 12)
 #define S2_GETGLOBALSTATS     (CMD_NONSTD + 13)
 #define SIGBREAKF_CTRL_C      (1u << 12)
+#define S2_CopyToBuff         (TAG_USER + 0xB0001)
+#define S2_CopyFromBuff       (TAG_USER + 0xB0002)
 
 struct IOSana2Req {
     struct IORequest ios2_Req;
@@ -60,6 +65,11 @@ static void DeleteMsgPort(APTR p)                   { lvo(SYSBASE, -672, 0, 0, (
 static APTR CreateIORequest(APTR p, ULONG n)        { return (APTR)lvo(SYSBASE, -654, n, 0, (ULONG)p, 0); }
 static void DeleteIORequest(APTR io)                { lvo(SYSBASE, -660, 0, 0, (ULONG)io, 0); }
 static BYTE DoIO(APTR io)                           { return (BYTE)lvo(SYSBASE, -456, 0, 0, 0, (ULONG)io); }
+static void SendIO(APTR io)                         { lvo(SYSBASE, -462, 0, 0, 0, (ULONG)io); }
+static APTR CheckIO(APTR io)                        { return (APTR)lvo(SYSBASE, -468, 0, 0, 0, (ULONG)io); }
+static BYTE WaitIO(APTR io)                         { return (BYTE)lvo(SYSBASE, -474, 0, 0, 0, (ULONG)io); }
+static void AbortIO(APTR io)                        { lvo(SYSBASE, -480, 0, 0, 0, (ULONG)io); }
+extern void nc_copybuff(void);
 static APTR AllocMem_(ULONG n)                      { return (APTR)lvo(SYSBASE, -198, n, 0x10001, 0, 0); }   /* MEMF_PUBLIC|MEMF_CLEAR */
 
 static int str_eq_ci(const char *a, const char *b)
@@ -136,13 +146,15 @@ LONG netcheck_main(const char *args, ULONG arglen)
         else { memcpy(devname, w, sizeof devname); explicit_dev = 1; }
     }
 
-    puts_("Alice68-NetCheck 1.2\n");
+    puts_("Alice68-NetCheck 1.3\n");
     APTR port = CreateMsgPort();
     struct IOSana2Req *io = port ? CreateIORequest(port, sizeof *io) : 0;
     struct SSHdr *ss = AllocMem_(sizeof(struct SSHdr) + MAXREC * sizeof(struct SSRec));
-    static const struct TagItem nobuf[] = { { TAG_DONE, 0 } };
+    /* copy functions, so that the driver can take the test frames */
+    static const struct TagItem bufmgmt[] = { { S2_CopyToBuff, (ULONG)nc_copybuff }, { S2_CopyFromBuff, (ULONG)nc_copybuff },
+                                              { TAG_DONE, 0 } };
     if (!io || !ss) { puts_("out of memory\n"); goto out; }
-    io->ios2_BufferManagement = (APTR)nobuf;
+    io->ios2_BufferManagement = (APTR)bufmgmt;
 
     /* By name first: that is the copy a TCP/IP stack has loaded. Only if no driver of
        that name is loaded at all, from DEVS:Networks/ - opening a path while one is
@@ -223,7 +235,37 @@ LONG netcheck_main(const char *args, ULONG arglen)
         if (ce) err(ce, io->ios2_WireError);
         else { puts_("online\n"); configured = 1; }
     } else if (test && configured) {
-        puts_("Test:      already configured by a TCP/IP stack - watching it as it is\n");
+        puts_("Test:      already configured by a TCP/IP stack - testing it as it is\n");
+    }
+    if (test && configured) {
+        /* three broadcast frames: each one ends with a transmit-done interrupt */
+        static UBYTE frame[46] = "Alice68-NetCheck test frame - please ignore";
+        puts_("Test:      sending 3 broadcast test frames... ");
+        int sent = 0, lasterr = 0;
+        for (int i = 0; i < 3; i++) {
+            io->ios2_Req.io_Command = CMD_WRITE_;
+            io->ios2_Req.io_Flags = 0;
+            io->ios2_PacketType = 0x88b5;
+            memset(io->ios2_DstAddr, 0xff, 6);
+            io->ios2_DataLength = sizeof frame;
+            io->ios2_Data = frame;
+            io->ios2_WireError = 0;
+            SendIO(io);
+            int waited = 0;
+            while (!CheckIO(io) && waited < 40) { Delay(dos, 5); waited++; }      /* up to 4 s */
+            if (!CheckIO(io)) {
+                AbortIO(io);
+                WaitIO(io);
+                puts_("no answer in 4 s (the driver holds the frame: no link?)\n");
+                lasterr = -1;
+                break;
+            }
+            int we = WaitIO(io);
+            if (we) { lasterr = we; puts_("frame "); dec((ULONG)i + 1); puts_(": "); err(we, io->ios2_WireError); break; }
+            sent++;
+        }
+        if (sent == 3) puts_("sent\n");
+        else if (lasterr == 0) puts_("\n");
     }
     int rounds = test ? 6 : -1;
 
@@ -263,11 +305,16 @@ LONG netcheck_main(const char *args, ULONG arglen)
                 puts_("  The interface is not up yet: bring it up in your TCP/IP stack (genet.device, unit 0),\n"
                       "  or run Alice68-NetCheck TEST to bring it up here and check the hardware.\n");
             else if (hwrx == 0 && hwtx == 0)
-                puts_("  The interface is up but nothing was sent or received: check the cable and the\n"
-                      "  port's LEDs (a busy network sends some broadcasts within seconds).\n");
+                puts_("  The interface is up but the Ethernet hardware sent and received nothing: no link.\n"
+                      "  Check the cable and the port's LEDs (both ends). If they are lit, the Ethernet PHY\n"
+                      "  may not have started: please report it with this output.\n");
             else if (irq == 0)
                 puts_("  The Ethernet hardware has traffic, but NO interrupt reached AmigaOS.\n"
                       "  That is an Alice68 problem: please report it with this output.\n");
+            else if (test)
+                puts_("  The test frames went out and their interrupts reached AmigaOS: hardware, driver\n"
+                      "  and interrupts work. If the network still fails, it is the TCP/IP stack's\n"
+                      "  settings (interface, address, DHCP).\n");
             else
                 puts_("  Interrupts reach AmigaOS and the hardware has traffic: the driver works.\n"
                       "  If the network still fails, look at the TCP/IP stack's settings (address, DHCP).\n");
