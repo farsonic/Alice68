@@ -96,8 +96,7 @@ for read-only.
   each partition is mounted with its own name and boot priority.
 - **Single-partition hardfiles** (a filesystem from block 0, starting `DOS\x`): the
   layout is worked out from the file size and checked against the FFS root block. The
-  partition is mounted as the first free `DH0`, `DH1`, and so on, and is not bootable
-  unless chosen with `hdf.boot=`.
+  partition is mounted as the first free `DH0`, `DH1`, and so on.
 - **Same volume twice:** if a hardfile holds a copy of the volume on your SD card's
   partition (two volumes both called `Workbench`, say), AmigaOS can mix them up. Rename
   one of the volumes, or use `hdf.boot=` so that only one of them is mounted.
@@ -108,14 +107,23 @@ for read-only.
   like mount only if that filesystem is already loaded, for example from an SD card
   partition. Loading it from the hardfile itself is still to come.
 
-Options in `cmdline.txt`:
+**Every hardfile is mounted, and none of them boots** - your SD card boots as before.
+To boot from one of them, name it in `cmdline.txt` (one line):
 
-| Option | Effect |
+```
+hdf.boot=Workbench
+```
+
+That hardfile boots, and the others stay mounted. `Workbench` matches `Workbench.hdf`
+(any case, `.hdf` optional); write a space in the file name as `_`
+(`hdf.boot=Workbench_3.1`). If one of its partitions has the name of a drive that's
+already mounted (your SD card's `DH0`, say), it takes that name and the SD card drive is
+not mounted for this boot, so `DH0:` is the hardfile. Any other hardfile partition
+whose name is taken is mounted as `HF<unit><partition>` (e.g. `HF10`) instead.
+
+| Other options | Effect |
 |---|---|
-| `hdf.boot=NAME` | This hardfile boots, ahead of the other drives. A partition named like a drive that's already mounted (the SD card's `DH0`, say) takes its name, and the other drive is not mounted. `NAME` is the file name with or without `.hdf`, in any case; write a space as `_` (e.g. `hdf.boot=Workbench_3.1`). |
-| *(no `hdf.boot`)* | Drives already mounted keep their names: a hardfile partition with the same name is left out, so no drive is ever there twice. Hardfiles boot only as their RDB says. |
-| `hdf.noboot` | Every hardfile is mounted, none boots. A partition named like a drive that's already mounted gets a name of its own (`HF<unit><partition>`, e.g. `HF10`). With `hdf.boot=` as well, only that hardfile boots. |
-| `hdf.readonly` | No writes: the drives show as write-protected. |
+| `hdf.readonly` | No writes: the hardfiles show as write-protected. |
 | `hdf=off` | No hardfiles at all. |
 
 Limits: FAT32 holds files up to 4 GB. Copy files only while the Pi is off. `C:Alice68-HDF`

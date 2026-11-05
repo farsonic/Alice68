@@ -10,12 +10,12 @@
  * Rigid Disk Block, or for a single-partition hardfile (a filesystem from
  * block 0, as WinUAE makes them) one partition, DH<n>. Each hardfile is a unit.
  *
- * cmdline.txt (read from the FAT partition): hdf=off, hdf.readonly, and
- * hdf.boot=NAME - that hardfile boots, and where one of its partitions has
- * the name of a drive already mounted (an SD card partition, say DH0) it
- * takes the name over and the other drive is not mounted. Without it, the
- * drive mounted first keeps the name and the hardfile's partition is left
- * out: a drive is never there twice.
+ * Every hardfile is mounted; none boots unless cmdline.txt (read from the
+ * FAT partition) says hdf.boot=NAME. That one boots, ahead of the other
+ * drives, and where one of its partitions has the name of a drive already
+ * mounted (an SD card partition, say DH0) it takes the name over and that
+ * drive is not mounted. Other hardfile partitions whose names are taken get
+ * HF<unit><part>. Also: hdf.readonly, hdf=off.
  *
  * Writes go to the file's own clusters on the card, nowhere else; the FAT
  * itself is never changed. Partitions whose filesystem is not FFS and not
@@ -355,6 +355,7 @@ static void set_name(char *d, const char *s)
 static void mount_unit(struct HdfBase *db, struct card *c, APTR eb, APTR cd, struct HUnit *hu, int any_chosen)
 {
     struct hdf_io io = HDF_IO(c);
+    (void)any_chosen;                                   /* only the chosen one boots, chosen or not */
     for (int i = 0; i < hu->rdb.nparts; i++) {
         struct hdf_part *p = &hu->rdb.part[i];
         ULONG *ev = p->envec;
@@ -388,24 +389,15 @@ static void mount_unit(struct HdfBase *db, struct card *c, APTR eb, APTR cd, str
             set_name(name, p->name[0] ? p->name : "DH0");
             other = find_drive(eb, name);
         }
-        if (other && !hu->chosen && db->opts.noboot) {    /* it never boots: mount it under a name of its own */
+        if (other && !hu->chosen) {                     /* it never boots: mount it under a name of its own */
             char old[32];
             set_name(old, name);
             name[0] = 'H'; name[1] = 'F'; name[2] = (char)('0' + hu->index % 10); name[3] = (char)('0' + i % 10); name[4] = 0;
             for (char x = 'A'; find_drive(eb, name) && x <= 'Z'; x++) { name[4] = x; name[5] = 0; }
-            hdf_log(&io, "  %s: a drive of that name is mounted already - mounted as %s (hdf.noboot)", old, name);
+            hdf_log(&io, "  %s: a drive of that name is mounted already - mounted as %s", old, name);
             other = 0;
         }
-        if (other) {
-            if (!hu->chosen) {
-                char hint[HDF_NAME];                    /* cmdline.txt splits at spaces: '_' stands for ' ' */
-                unsigned k = 0;
-                for (; hu->f.name[k] && k < HDF_NAME - 1; k++) hint[k] = hu->f.name[k] == ' ' ? '_' : hu->f.name[k];
-                hint[k] = 0;
-                hdf_log(&io, "  %s: a drive of that name is mounted already - not mounted (hdf.boot=%s in cmdline.txt mounts this one instead)",
-                        name, hint);
-                continue;
-            }
+        if (other) {                                    /* the chosen hardfile takes the name over */
             Forbid();
             Remove(&other->bn_Node);                    /* the other drive is not mounted this time */
             Permit();
@@ -429,9 +421,9 @@ static void mount_unit(struct HdfBase *db, struct card *c, APTR eb, APTR cd, str
                 if (pri <= top) pri = top + 1;
                 if (pri > 127) pri = 127;
             }
-        } else {                                        /* its RDB decides, unless another one was chosen */
-            boot = (p->flags & 1) && !hu->single && !any_chosen && !db->opts.noboot;
-            pri = (LONG)ev[15];
+        } else {                                        /* only the hdf.boot one boots */
+            boot = 0;
+            pri = -128;
         }
         if (!boot) pri = -128;
         else if (pri < -127) pri = -127;

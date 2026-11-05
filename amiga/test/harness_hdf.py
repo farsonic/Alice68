@@ -257,24 +257,17 @@ scen = 'bootnb' if m and 'hdf.noboot' in m.group(1) and 'hdf.boot=raw' in m.grou
        'boot' if m and 'hdf.boot=workbench' in m.group(1) else 'raw' if m and 'hdf.boot=RAW' in m.group(1) else \
        'off' if m and 'hdf=off' in m.group(1) else 'ro' if (m and 'hdf.readonly' in m.group(1)) else 'default'
 G = [] if no_fsres else [('GAMES', None, -5)]
-if scen in ('default', 'ro'):
-    # SD card's DH0 wins: Workbench's and extra's DH0 are left out; raw.hdf takes the first free DHn
-    order = ['games.hdf', 'Workbench 3.1.hdf', 'frag.hdf', 'raw.hdf', 'extra.hdf']
-    want = [('DH1', 0, -128)] + [(n, 0, p) for n, _, p in G] + [('FR0', 2, -128), ('DH2', 3, -128)]
-elif scen == 'boot':
-    order = ['Workbench 3.1.hdf', 'games.hdf', 'frag.hdf', 'raw.hdf', 'extra.hdf']
-    want = [('DH0', 0, 5), ('DH1', 1, -128)] + [(n, 1, -128) for n, _, p in G] + [('FR0', 2, -128), ('DH2', 3, -128)]
-elif scen == 'noboot':
-    # everything mounted, nothing bootable; clashing names become HF<unit><part>
+if scen in ('default', 'ro', 'noboot'):
+    # everything mounted, nothing bootable; names taken (the SD card's DH0) become HF<unit><part>
     order = ['games.hdf', 'Workbench 3.1.hdf', 'frag.hdf', 'raw.hdf', 'extra.hdf']
     want = [('DH1', 0, -128)] + [(n, 0, -128) for n, _, p in G] + [('HF10', 1, -128), ('FR0', 2, -128), ('DH2', 3, -128), ('HF40', 4, -128)]
-elif scen == 'bootnb':
-    # raw.hdf chosen: boots as DH0 (the SD card's DH0 not mounted); the rest mounted, none bootable
+elif scen == 'boot':
+    # Workbench boots as DH0 (the SD card's DH0 not mounted); the rest mounted, none bootable
+    order = ['Workbench 3.1.hdf', 'games.hdf', 'frag.hdf', 'raw.hdf', 'extra.hdf']
+    want = [('DH0', 0, 5), ('DH1', 1, -128)] + [(n, 1, -128) for n, _, p in G] + [('FR0', 2, -128), ('DH2', 3, -128), ('HF40', 4, -128)]
+elif scen in ('raw', 'bootnb'):
     order = ['raw.hdf', 'games.hdf', 'Workbench 3.1.hdf', 'frag.hdf', 'extra.hdf']
     want = [('DH0', 0, 0), ('DH1', 1, -128)] + [(n, 1, -128) for n, _, p in G] + [('HF20', 2, -128), ('FR0', 3, -128), ('HF40', 4, -128)]
-elif scen == 'raw':
-    order = ['raw.hdf', 'games.hdf', 'Workbench 3.1.hdf', 'frag.hdf', 'extra.hdf']
-    want = [('DH0', 0, 0), ('DH1', 1, -128)] + [(n, 1, -128) for n, _, p in G] + [('FR0', 3, -128)]
 else:
     order, want = [], []
 got = [(b['name'], b['unit'], b['pri']) for b in boots]
