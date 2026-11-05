@@ -42,6 +42,7 @@
                     // enable-debug
                     // enable-disassembe
                     // dump-device-tree
+                    // frf-hud
                 };
             };
         };
@@ -60,5 +61,6 @@
         debug = <&diag>,"enable-debug?";
         disassemble = <&diag>,"enable-disassemble?";
         dump_dt = <&diag>,"dump-device-tree?";
+        hud = <&diag>,"frf-hud?";
     };
 };

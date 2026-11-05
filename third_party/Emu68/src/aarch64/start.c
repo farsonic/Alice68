@@ -30,6 +30,7 @@
 #include "sponsoring.h"
 #include "spinlock.h"
 #include "intc.h"
+#include "boards.h"
 #ifdef PISTORM_ANY_MODEL
 #include "ps_protocol.h"
 #endif
@@ -474,14 +475,35 @@ void secondary_boot(void)
 
     __atomic_clear(&boot_lock, __ATOMIC_RELEASE);
 
+#if defined(FRF_USB_HOST) && defined(FRF_VIRTUAL_AGA)
+#ifdef FRF_USB_NATIVE_DWC2
+    /* Native USB core must not miss its one-time startup because AGA memory
+       was published after CPU1 passed this point. The worker itself waits
+       for the CPU0 USB boot gate before touching registers or mailbox. */
+    if (cpu_id == 1) {
+        extern void frf_post_native_usb_cpu1_seen(unsigned chip_base_set);
+        extern void frf_usb_main(void);
+        frf_post_native_usb_cpu1_seen(aga_chip_base != 0u);
+        frf_usb_main();
+    }
+#else
+    if (cpu_id == 1 && aga_chip_base) {
+        extern void frf_usb_main(void);
+        frf_usb_main();
+    }
+#endif
+#endif
+
 #ifdef AGA_PISTORM
     if (cpu_id == 3 && aga_chip_base) {
         aga_chipset_main();     /* never returns; parked until enabled */
     }
     /* core 1 idles unless async_log wants it: HAM6 on the RGB port (aga_rgbout.c) */
+#ifndef FRF_VIRTUAL_AGA
     if (cpu_id == 1 && aga_chip_base && !async_log) {
         aga_rgbout_main();      /* never returns; parked until a game has it on */
     }
+#endif
 #endif
 
     if (cpu_id == 3 && ppc_enable) {
@@ -490,6 +512,7 @@ void secondary_boot(void)
     }
 
 #ifdef PISTORM_ANY_MODEL
+#ifndef FRF_VIRTUAL_AGA
     if (cpu_id == 1)
     {
         if (async_log)
@@ -499,6 +522,23 @@ void secondary_boot(void)
     {
         ps_housekeeper();
     }
+#else
+    (void)async_log;
+    if (cpu_id == 2 && aga_chip_base) {
+        /* FRF v0.10.15 STANDALONE FIREWALL:
+           CPU2 services only Raspberry-Pi-side presentation.  Do NOT call
+           aga_audio_bus_service(): that legacy wrapper also owns the donor
+           Amiga's real-Paula crystal probe / DMA-ring backend. */
+        extern void aga_hvs_service(void);
+        extern void aga_hdmi_service(void);
+        kprintf("[BOOT] FRF v0.10.15: CPU2 standalone HVS/HDMI only; physical Amiga bus firewalled\n");
+        for (;;) {
+            aga_hvs_service();
+            aga_hdmi_service();
+            __asm__ volatile("yield");
+        }
+    }
+#endif
 #else
     (void)async_log;
 #endif
@@ -922,6 +962,19 @@ void parse_cmdline(const char *cmdline)
         }
     }
 #endif
+#ifdef FRF_VIRTUAL_AGA
+    aga_mode = 1;
+    aga_chip_size = 2u << 20;
+    aga_use_mmu = 1;
+    /* v0.9.1: keep Emu68 virtual Zorro autoconfig active so the
+       Emu68 ROM board (devicetree.resource + brcm-sdhc.device) is visible
+       to the standalone Amiga. Physical PiStorm bus startup remains
+       independently disabled by FRF_VIRTUAL_AGA. */
+    zorro_disable = 0;
+    ppc_enable = 0;
+    fast_page0 = 0;
+    kprintf("[BOOT] FRF virtual AGA v0.10.15 COHERENT-MMU: machine mode, 2048 KB chip, MMU, no physical bus\n");
+#endif
     if ((tok = find_token(cmdline, "checksum_rom")))
     {
         recalc_checksum = 1;
@@ -960,6 +1013,7 @@ void parse_cmdline(const char *cmdline)
 #endif
 }
 
+extern void frf_boot_stage(unsigned stage);
 void boot(void *dtree)
 {
     uintptr_t kernel_top_virt = ((uintptr_t)boot + (KERNEL_SYS_PAGES << 21)) & ~((1 << 21)-1);
@@ -1411,8 +1465,24 @@ void boot(void *dtree)
 #endif
 
 #ifdef PISTORM_ANY_MODEL
+#ifndef FRF_VIRTUAL_AGA
     ps_setup_protocol();
     ps_reset_state_machine();
+#else
+    kprintf("[BOOT] FRF virtual AGA: PiStorm protocol/CPLD bus startup bypassed\n");
+
+    /* v0.9.2: physical PiStorm reset normally initializes the virtual
+       autoconfig board chain as a side effect. Standalone mode deliberately
+       skips that reset, so do only the virtual part here. */
+    {
+        extern struct ExpansionBoard *__boards_start;
+        extern struct ExpansionBoard **board;
+        extern int board_idx;
+        board = &__boards_start;
+        board_idx = 0;
+        kprintf("[BOOT] FRF v0.9.2: virtual Zorro autoconfig chain connected\n");
+    }
+#endif
 #endif
 
     /* Setup debug console on serial port */
@@ -1587,11 +1657,14 @@ void boot(void *dtree)
             if (aga_mode || !aga_diag_have_prev())
                 memset((void *)aga_chip_base, 0, aga_chip_size);
             memset((void *)(aga_chip_base + aga_chip_size), 0, AGA_FB_RESERVE);
-            /* machine mode: 68k address 0 is the virtual chip RAM from boot. No MMU
-               unless aga.mmu asks for it - the abort handler serves it instead.
-               The redirect flag is raised after aga_glue_init has set chip_va. */
-            if (aga_mode && aga_use_mmu)
-                mmu_map(aga_chip_base, 0x000000, aga_chip_size, MMU_ACCESS | MMU_ISHARE | MMU_ALLOW_EL0 | MMU_ATTR_CACHED, 0);
+            /* FRF v0.10.15 COHERENT-MMU: standalone Chip RAM MUST stay behind the
+               abort-handler path. A direct MMU map would let JIT loads/stores
+               bypass the 7 MHz bus governor completely. Ignore aga.mmu in
+               machine mode; Fast/Z3 RAM remains directly mapped and fast. */
+            if (aga_mode && aga_use_mmu) {
+                kprintf("[BOOT] CHIP7: aga.mmu ignored in standalone mode; Chip RAM governed at 7 MHz\n");
+                aga_use_mmu = 0;
+            }
             aga_glue_init((uint8_t *)aga_chip_base, aga_chip_size,
                           (uint8_t *)(aga_chip_base + aga_chip_size), aga_chip_base + aga_chip_size, 0, aga_mode);
             if (aga_mode && !aga_use_mmu) aga_chip_redirect = 1;
@@ -1961,11 +2034,24 @@ void boot(void *dtree)
     else if (initramfs_loc != NULL && initramfs_size != 0)
     {
         extern uint32_t rom_mapped;
+        uintptr_t frf_rom_size = initramfs_size;
+#ifdef FRF_VIRTUAL_AGA
+        const uint8_t *frf_boot_adf = NULL;
+        uint32_t frf_boot_adf_size = 0;
+        if (initramfs_size == (524288u + 901120u) ||
+            initramfs_size == (524288u + 1802240u)) {
+            frf_rom_size = 524288u;
+            frf_boot_adf = (const uint8_t *)initramfs_loc + 524288u;
+            frf_boot_adf_size = (uint32_t)(initramfs_size - 524288u);
+            kprintf("[BOOT] FRF v0.8.1: concatenated SD boot blob: ROM=512K DF0=%d bytes\n",
+                    frf_boot_adf_size);
+        }
+#endif
 
-        kprintf("[BOOT] Loading ROM from %p, size %d\n", initramfs_loc, initramfs_size);
+        kprintf("[BOOT] Loading ROM from %p, size %d\n", initramfs_loc, frf_rom_size);
         mmu_map(0xf80000, 0xf80000, 524288, MMU_ACCESS | MMU_ISHARE | MMU_ALLOW_EL0 | MMU_READ_ONLY | MMU_ATTR_CACHED, 0);
             
-        if (initramfs_size == 262144)
+        if (frf_rom_size == 262144)
         {
             /* Make a shadow of 0xf80000 at 0xe00000 */
             mmu_map(0xe00000, 0xe00000, 524288, MMU_ACCESS | MMU_ISHARE | MMU_ALLOW_EL0 | MMU_READ_ONLY | MMU_ATTR_CACHED, 0);
@@ -1973,14 +2059,14 @@ void boot(void *dtree)
             DuffCopy((void*)0xffffff9000fc0000, initramfs_loc, 262144 / 4);
             DuffCopy((void*)0xffffff9000e00000, (void*)0xffffff9000f80000, 524288 / 4);
         }
-        else if (initramfs_size == 524288)
+        else if (frf_rom_size == 524288)
         {
             /* Make a shadow of 0xf80000 at 0xe00000 */
             mmu_map(0xe00000, 0xe00000, 524288, MMU_ACCESS | MMU_ISHARE | MMU_ALLOW_EL0 | MMU_READ_ONLY | MMU_ATTR_CACHED, 0);
             DuffCopy((void*)0xffffff9000e00000, initramfs_loc, 524288 / 4);
             DuffCopy((void*)0xffffff9000f80000, initramfs_loc, 524288 / 4);
         }
-        else if (initramfs_size == 1048576)
+        else if (frf_rom_size == 1048576)
         {
             mmu_map(0xe00000, 0xe00000, 524288, MMU_ACCESS | MMU_ISHARE | MMU_ALLOW_EL0 | MMU_READ_ONLY | MMU_ATTR_CACHED, 0);
             mmu_map(0xf00000, 0xf00000, 524288, MMU_ACCESS | MMU_ISHARE | MMU_ALLOW_EL0 | MMU_READ_ONLY | MMU_ATTR_CACHED, 0);
@@ -1988,7 +2074,7 @@ void boot(void *dtree)
             DuffCopy((void*)0xffffff9000f00000, initramfs_loc, 524288 / 4);
             DuffCopy((void*)0xffffff9000f80000, (void*)((uintptr_t)initramfs_loc + 524288), 524288 / 4);
         }
-        else if (initramfs_size == 2097152) {
+        else if (frf_rom_size == 2097152) {
             mmu_map(0xa80000, 0xa80000, 524288, MMU_ACCESS | MMU_ISHARE | MMU_ALLOW_EL0 | MMU_READ_ONLY | MMU_ATTR_CACHED, 0);
             mmu_map(0xb00000, 0xb00000, 524288, MMU_ACCESS | MMU_ISHARE | MMU_ALLOW_EL0 | MMU_READ_ONLY | MMU_ATTR_CACHED, 0);
             mmu_map(0xe00000, 0xe00000, 524288, MMU_ACCESS | MMU_ISHARE | MMU_ALLOW_EL0 | MMU_READ_ONLY | MMU_ATTR_CACHED, 0);
@@ -2008,7 +2094,7 @@ void boot(void *dtree)
                     rom_start[i] = rom_start[i + 1];
                     rom_start[i+1] = tmp;
                 }
-                if (initramfs_size == 0x100000 || initramfs_size == 0x200000) {
+                if (frf_rom_size == 0x100000 || frf_rom_size == 0x200000) {
                     rom_start = (uint8_t *)0xffffff9000e00000;
 
                     for (int i=0; i < 524288; i+=2) {
@@ -2017,7 +2103,7 @@ void boot(void *dtree)
                         rom_start[i+1] = tmp;
                     }
 
-                    if (initramfs_size == 0x200000) {
+                    if (frf_rom_size == 0x200000) {
                         rom_start = (uint8_t *)0xffffff9000a80000;
 
                         for (int i=0; i < 2*524288; i+=2) {
@@ -2031,6 +2117,12 @@ void boot(void *dtree)
         }
 
         rom_mapped = 1;
+#ifdef FRF_VIRTUAL_AGA
+        if (frf_boot_adf && frf_boot_adf_size) {
+            int dr = aga_boot_insert_adf(0, frf_boot_adf, frf_boot_adf_size, 1);
+            kprintf("[BOOT] FRF v0.8.1: SD DF0 insert rc=%d\n", dr);
+        }
+#endif
 
         tlsf_free(tlsf, initramfs_loc);
     }
@@ -2115,6 +2207,90 @@ void boot(void *dtree)
     }
 #endif
 
+#ifdef FRF_VIRTUAL_AGA
+    extern uint32_t rom_mapped;
+    if (rom_mapped && aga_chip_base) {
+        extern uint32_t overlay;
+        overlay = 1;
+        mmu_map(0x00f80000u, 0x000000u, 0x00080000u,
+                MMU_ACCESS | MMU_ISHARE | MMU_ALLOW_EL0 |
+                MMU_READ_ONLY | MMU_ATTR_CACHED, 0);
+        __asm__ volatile("dsb ish; isb" ::: "memory");
+        kprintf("[BOOT] FRF virtual AGA: reset overlay ROM -> $000000-$07ffff\n");
+    }
+#endif
+#if defined(FRF_USB_HOST) && defined(FRF_VIRTUAL_AGA)
+    {
+        /* CPU1 must not race CPU0 through early firmware mailbox operations. */
+        extern volatile uint8_t frf_usb_host_start_allowed;
+        extern void frf_boot_stage(unsigned stage);
+        frf_boot_stage(2);
+        __atomic_store_n(&frf_usb_host_start_allowed, 1u, __ATOMIC_RELEASE);
+        __asm__ volatile("sev" ::: "memory");
+#ifdef FRF_USB_DIAG_HOLD
+        /* R9 diagnostic-only firmware: CPU1 still owns the live host.
+           Keep CPU0 out of AmigaOS, graphics takeover and guest input so
+           the POST can display real USB state indefinitely. This cannot
+           accidentally activate in the normal production build. */
+        for (;;) { __asm__ volatile("yield" ::: "memory"); }
+#endif
+        extern volatile uint8_t frf_usb_boot_ready;
+        extern volatile uint8_t frf_usb_mouse_present;
+        extern volatile uint8_t frf_usb_mouse_seen;
+        extern volatile uint8_t frf_usb_mouse_buttons;
+        uint64_t f, t0, now;
+        __asm__ volatile("mrs %0, CNTFRQ_EL0" : "=r"(f));
+        __asm__ volatile("mrs %0, CNTVCT_EL0" : "=r"(t0));
+        do {
+            __asm__ volatile("yield");
+            __asm__ volatile("mrs %0, CNTVCT_EL0" : "=r"(now));
+        } while (!__atomic_load_n(&frf_usb_boot_ready, __ATOMIC_ACQUIRE)
+#ifdef FRF_USB_NATIVE_DWC2
+                 && (now - t0) < f * 18u);
+#else
+                 && (now - t0) < f * 6u);
+#endif
+        frf_boot_stage(3);
+        __asm__ volatile("dmb ish" ::: "memory");
+        kprintf("[BOOT] USB gate: ready=%u mouse=%u seen=%u buttons=%02x\n",
+                (unsigned)frf_usb_boot_ready,
+                (unsigned)frf_usb_mouse_present,
+                (unsigned)frf_usb_mouse_seen,
+                (unsigned)frf_usb_mouse_buttons);
+    }
+#endif
+#ifdef FRF_VIRTUAL_AGA
+    {
+        extern struct ExpansionBoard *__boards_start;
+        extern struct ExpansionBoard **board;
+        extern int board_idx;
+        board = &__boards_start;
+        board_idx = 0;
+    }
+#endif
+#if defined(FRF_USB_HOST) && defined(FRF_VIRTUAL_AGA)
+    {
+        /* Give keyboard HID a brief boot-time window for Ctrl+Shift+F12.
+           Keyboard is already enumerated by the USB boot gate above. */
+        uint64_t begin, now, hz;
+        __asm__ volatile("mrs %0, CNTVCT_EL0" : "=r"(begin));
+        __asm__ volatile("mrs %0, CNTFRQ_EL0" : "=r"(hz));
+        do {
+            __asm__ volatile("yield");
+            __asm__ volatile("mrs %0, CNTVCT_EL0" : "=r"(now));
+        } while ((now - begin) < hz * 2u);
+        extern void frf_usb_guest_start(void);
+        frf_usb_guest_start();
+        frf_boot_stage(4);
+    }
+#endif
+#if defined(FRF_USB_HOST) && defined(FRF_VIRTUAL_AGA)
+    {
+        extern void frf_boot_stage(unsigned stage);
+        frf_boot_stage(5);
+        kprintf("[BOOT] FRF USB-SYNC: entering M68K_StartEmu now\n");
+    }
+#endif
     M68K_StartEmu(0, NULL);
 
     while(1) __asm__ volatile("wfe");

@@ -1,7 +1,0 @@
-This is the complete source of the Emu68 part of the AGA-PISTORM kernels
-(from AGA-PISTORM 1.106 on): Emu68 git 0ba3a89 (https://github.com/michalsc/Emu68,
-MPL-2.0) with its submodules external/capstone, external/libdeflate at the commits it records.
-AGA-PISTORM's own part (GPL-2.0) and arm/emu68-aga.patch are in the
-package's Source/AGA-PISTORM-<version>-src.zip. To build: apply the patch to
-this Emu68 folder (git apply), put it at third_party/Emu68 of the
-AGA-PISTORM source and run tools/build-wsl.sh (see EMU68-SOURCE.txt there).

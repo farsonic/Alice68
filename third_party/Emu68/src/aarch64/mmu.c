@@ -230,6 +230,10 @@ extern uintptr_t aga_chip_base;   /* AGA-PISTORM virtual chip RAM (physical) */
 extern uint32_t aga_chip_size;
 extern uint32_t aga_gpu_size;     /* AGA-PISTORM: the GPU room after the output frames */
 extern uintptr_t unicam_size;
+#ifdef FRF_VIRTUAL_AGA
+extern uintptr_t frf_z3ram_phys;
+extern uint32_t frf_z3ram_size;
+#endif
 extern void* m68k_jit_phys_base;
 extern void* ppc_jit_phys_base;
 
@@ -325,6 +329,27 @@ void mmu_init()
                     update_needed = 1;
                 }
             }
+
+#ifdef FRF_VIRTUAL_AGA
+            /* Dedicated backing for genuine Z3 Fast RAM. Carve it out here so
+               devicetree.resource cannot register these same bytes as generic
+               Emu68 /memory too. */
+            if (last_block && frf_z3ram_size && frf_z3ram_phys == 0) {
+                uintptr_t need = (frf_z3ram_size + 0x1fffff) & ~0x1fffff;
+                if (size > need + (32u << 20)) {
+                    size -= need;
+                    frf_z3ram_phys = addr + size;
+                    update_needed = 1;
+                    kprintf("[BOOT] FRF Z3 Fast RAM backing: %p-%p (%u MiB)\n",
+                            frf_z3ram_phys,
+                            frf_z3ram_phys + frf_z3ram_size - 1,
+                            frf_z3ram_size >> 20);
+                } else {
+                    kprintf("[BOOT] FRF Z3 Fast RAM disabled: insufficient host RAM\n");
+                    frf_z3ram_size = 0;
+                }
+            }
+#endif
 
 #ifdef PISTORM_ANY_MODEL
             // Adjust base and size of the memory block

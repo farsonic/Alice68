@@ -87,6 +87,7 @@
 
 extern void kprintf(const char *fmt, ...);
 #include "ps_protocol.h"    /* the bus API differs per board; don't redeclare it or it bites */
+#include "frf_ps_stub.h"
 
 #define PAD_MAGIC      0x41335044u                 /* 'A3PD' - don't touch, it's the handshake */
 #define JPF_RIGHT      0x1u

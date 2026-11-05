@@ -755,4 +755,21 @@ void emu68_arm_release(uint16_t intena);      /* vectors.c: the hold ends, the O
 #define AGA_DIAG_TRAP(r, v, w, p) ((void)0)
 #endif
 
+
+/* ---- EMU68AGA standalone (FRF_VIRTUAL_AGA): no PiStorm, no Amiga board ---- */
+#ifdef FRF_VIRTUAL_AGA
+void aga_virtual_cia_irq(uint16_t bit, int active);     /* virtual CIA /INT -> Paula INTREQ */
+uint8_t aga_virtual_ciaa_buttons(void);                 /* CIA-A PRA fire bits from the host's USB */
+void aga_virtual_joy_set(int port, uint16_t joydat, int fire);
+void aga_virtual_pad_buttons(int port, uint32_t buttons);
+void aga_virtual_mouse_update(int dx, int dy, unsigned buttons);
+void aga_virtual_joy_link_stats(uint32_t out[4]);
+void aga_virtual_pad_line_snapshot(uint8_t *pra, uint16_t *potgor);
+int  aga_boot_insert_adf(int drive, const uint8_t *adf, uint32_t size, int wprot);
+void aga_virtual_disk_prb(uint8_t prb);
+int  aga_virtual_disk_pra(uint8_t *bits);
+void aga_machine_code_overlay(int rom_on);
+void aga_video_overlay_allow(int on);                   /* boot-config gate for the HUD */
+#endif
+uint16_t aga_disk_status(void);                         /* $DFF1F2 read: the last $ADxx command's status */
 #endif

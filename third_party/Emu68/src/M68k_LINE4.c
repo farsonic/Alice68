@@ -3276,8 +3276,32 @@ void do_reset()
 {
     void ps_send_reset();
 #ifdef AGA_PISTORM
+    extern int aga_mode;
     void aga_machine_reset(void);
+
+    /* FRF v0.10.6: 68k RESET resets external devices, not the CPU.
+       In the standalone virtual-A1200 there is no physical Amiga chipset
+       behind the guest. Reset only the virtual machine hardware and do NOT
+       pulse the PiStorm/Amiga reset line, which returns the user to the
+       firmware splash. Hybrid/non-machine PiStorm mode retains the original
+       physical reset pulse. */
     aga_machine_reset();
+#ifdef FRF_VIRTUAL_AGA
+    if (aga_mode) {
+        /* A guest RESET does not pulse real PiStorm pins. Kickstart nevertheless
+           reruns Zorro Autoconfig on a warm reboot, so expose the ROM board
+           chain from the beginning. Preserve SD controller and media state. */
+        extern struct ExpansionBoard *__boards_start;
+        extern struct ExpansionBoard **board;
+        extern int board_idx;
+        board = &__boards_start;
+        board_idx = 0;
+        __asm__ volatile("dmb ish" ::: "memory");
+        return;
+    }
+#endif
+    if (aga_mode)
+        return;
 #endif
 
     struct Size sz = get_display_size();

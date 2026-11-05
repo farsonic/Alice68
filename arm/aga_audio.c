@@ -20,6 +20,7 @@
 
 extern void kprintf(const char *fmt, ...);
 #include "ps_protocol.h"    /* the bus API differs per board, so don't re-declare the bloody thing */
+#include "frf_ps_stub.h"
 
 #define PAULA_PERIOD     127                       /* 3546895 / 127 = 27928 Hz */
 #define RING_SAMPLES     2048                      /* per channel, bytes */
@@ -541,7 +542,9 @@ static volatile int wedge_req;
 void aga_wedge_test(void) { wedge_req = 1; }
 void aga_audio_bus_service(void)
 {
+#ifndef FRF_VIRTUAL_AGA
     if (__builtin_expect(wedge_req, 0)) { extern void ps_wedge_test(void); ps_wedge_test(); }
+#endif
     aga_hvs_service();                  /* cheap: one timer read unless a watch is armed */
     aga_hdmi_service();                 /* cheap too: one timer read unless the mix stopped */
     aga_rgbout_bus_service();           /* cheap: one load unless core 1 handed it a frame */

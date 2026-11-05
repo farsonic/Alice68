@@ -30,6 +30,11 @@ extern void kprintf(const char *fmt, ...);
    classic CPLD PiStorm, function pointers for PiStorm16/32. Include the header
    rather than re-declaring it, so I cannot drift from whichever is built. */
 #include "ps_protocol.h"
+#include "frf_ps_stub.h"
+#ifdef FRF_VIRTUAL_AGA
+#include "frf_potgor_model.h"
+#include "devicetree.h"     /* HUD boot-config gate */
+#endif
 extern void mmu_map(uintptr_t phys, uintptr_t virt, uintptr_t length, uint32_t attr_low, uint32_t attr_high);
 extern void mmu_unmap(uintptr_t virt, uintptr_t length);
 /* provided by the patched Emu68: set/get the AGA IPL byte in INTF */
@@ -80,6 +85,25 @@ volatile uint32_t aga_code_chip_size;
    switch for the above (agaboot CODEDIRECT). */
 static volatile int aga_code_direct = 1;
 void aga_set_code_direct(int on) { aga_code_direct = on; }
+
+/* EMU68AGA standalone: the machine's OVL bit owns the meaning of low 68k
+   addresses. Keep the translator's direct-code backing in lockstep with it:
+   ROM overlay ON -> no chip RAM shortcut; OFF -> code straight from chip_va
+   (vectors.c frf_vcia_overlay_recalc_locked). */
+void aga_machine_code_overlay(int rom_on)
+{
+#ifdef FRF_VIRTUAL_AGA
+    if (rom_on || !aga_code_direct) {
+        aga_code_chip = NULL;
+        aga_code_chip_size = 0;
+    } else {
+        aga_code_chip_size = chip_size;
+        __atomic_store_n(&aga_code_chip, chip_va, __ATOMIC_RELEASE);
+    }
+#else
+    (void)rom_on;
+#endif
+}
 static uint32_t chip_real;   /* the real chip RAM: what is copied in and out, probed at entry */
 static volatile char aga_lock_v __attribute__((aligned(64)));
 static volatile int frames_done;
@@ -129,9 +153,110 @@ static inline void unlock(void)
 }
 
 /* ---- hooks ---------------------------------------------------------------- */
+#ifdef FRF_VIRTUAL_AGA
+static volatile uint16_t frf_joydat[2];
+static volatile uint8_t frf_fire_bits;
+static volatile uint8_t frf_mouse_buttons;
+static volatile uint8_t frf_mouse_x, frf_mouse_y;
+/* Host input -> emulated Amiga readback telemetry. Atomic because Pi3
+   TinyUSB lives on CPU1 and 68k custom register emulation on CPU0. */
+static volatile uint32_t frf_guest_joy1_reads, frf_guest_ciaa_reads;
+static volatile uint32_t frf_host_joy1_writes;
+void aga_virtual_joy_link_stats(uint32_t out[4])
+{
+    out[0] = __atomic_load_n(&frf_joydat[1],__ATOMIC_ACQUIRE) |
+      ((__atomic_load_n(&frf_fire_bits,__ATOMIC_ACQUIRE)&2u)?0x10000u:0u);
+    out[1] = __atomic_load_n(&frf_host_joy1_writes,__ATOMIC_ACQUIRE);
+    out[2] = __atomic_load_n(&frf_guest_joy1_reads,__ATOMIC_ACQUIRE);
+    out[3] = __atomic_load_n(&frf_guest_ciaa_reads,__ATOMIC_ACQUIRE);
+}
+
+/* Paula POTGO high-byte state. OUT/DAT pairs are:
+   15/14 RY, 13/12 RX, 11/10 LY (port-1 right mouse), 9/8 LX. */
+static volatile uint16_t frf_potgo;
+static volatile uint16_t frf_pad_potgor[2];
+static volatile uint32_t frf_pad_fullbuttons[2];
+
+static uint8_t frf_virtual_ciaa_buttons_value(void)
+{
+    uint8_t v = 0xC0u;
+    if (frf_fire_bits & 1u) v &= (uint8_t)~0x40u;
+    if (frf_fire_bits & 2u) v &= (uint8_t)~0x80u;
+    return v;
+}
+uint8_t aga_virtual_ciaa_buttons(void)
+{
+    __atomic_fetch_add(&frf_guest_ciaa_reads,1u,__ATOMIC_RELAXED);
+    return frf_virtual_ciaa_buttons_value();
+}
+void aga_virtual_joy_set(int port, uint16_t joydat, int fire)
+{
+    if ((unsigned)port > 1u) return;
+    __atomic_store_n(&frf_joydat[port], joydat, __ATOMIC_RELEASE);
+    if(port==1)
+        __atomic_fetch_add(&frf_host_joy1_writes,1u,__ATOMIC_RELAXED);
+    uint8_t bit = (uint8_t)(1u << port);
+    if (fire) __atomic_fetch_or(&frf_fire_bits, bit, __ATOMIC_ACQ_REL);
+    else      __atomic_fetch_and(&frf_fire_bits, (uint8_t)~bit, __ATOMIC_ACQ_REL);
+}
+void aga_virtual_pad_buttons(int port,uint32_t buttons)
+{
+ if((unsigned)port>1u)return;
+ __atomic_store_n(&frf_pad_fullbuttons[port],buttons,__ATOMIC_RELEASE);
+ uint16_t mask=0;
+ /* Independent Amiga port-2 buttons. Button 1 is handled by CIA-A fire.
+    Button 2 -> RY/pin 9 (POTGOR bit 14), button 3 -> RX/pin 5 (bit 12).
+    Button 4 is deliberately unmapped. Never drive port-1 POTGOR bits. */
+ if(port==1 && (buttons&2u))mask|=0x4000u;
+ if(port==1 && (buttons&4u))mask|=0x1000u;
+ __atomic_store_n(&frf_pad_potgor[port],mask,__ATOMIC_RELEASE);
+}
+void aga_virtual_mouse_update(int dx, int dy, unsigned buttons)
+{
+    frf_mouse_x = (uint8_t)(frf_mouse_x + dx);
+    frf_mouse_y = (uint8_t)(frf_mouse_y + dy);
+    __atomic_store_n(&frf_joydat[0],
+                     (uint16_t)(((uint16_t)frf_mouse_y << 8) | frf_mouse_x),
+                     __ATOMIC_RELEASE);
+    frf_mouse_buttons = (uint8_t)buttons;
+    if (buttons & 1u) __atomic_fetch_or(&frf_fire_bits, 1u, __ATOMIC_ACQ_REL);
+    else              __atomic_fetch_and(&frf_fire_bits, (uint8_t)~1u, __ATOMIC_ACQ_REL);
+}
+static uint16_t frf_virtual_potgor_value(void)
+{
+    uint16_t pg = __atomic_load_n(&frf_potgo, __ATOMIC_ACQUIRE);
+    uint8_t mb = __atomic_load_n(&frf_mouse_buttons, __ATOMIC_ACQUIRE);
+    extern int frf_usb_early_startup_active(void);
+    if (frf_usb_early_startup_active()) mb |= 3u;
+    uint16_t pad = __atomic_load_n(&frf_pad_potgor[0],__ATOMIC_ACQUIRE) |
+                   __atomic_load_n(&frf_pad_potgor[1],__ATOMIC_ACQUIRE);
+    return frf_potgor_model(pg,mb,pad);
+}
+
+void aga_virtual_pad_line_snapshot(uint8_t *pra, uint16_t *potgor)
+{
+    if (pra) *pra = frf_virtual_ciaa_buttons_value();
+    if (potgor) *potgor = frf_virtual_potgor_value();
+}
+
+#endif
+
 static uint16_t hook_ext_read(void *u, uint32_t reg)
 {
     (void)u;
+#ifdef FRF_VIRTUAL_AGA
+    /* EMU68AGA standalone firewall: ext_read is a host-input/default
+       provider only. No register read may escape to a donor Amiga. */
+    if (reg == JOY0DAT) return __atomic_load_n(&frf_joydat[0], __ATOMIC_ACQUIRE);
+    if (reg == JOY1DAT) {
+        __atomic_fetch_add(&frf_guest_joy1_reads,1u,__ATOMIC_RELAXED);
+        return __atomic_load_n(&frf_joydat[1], __ATOMIC_ACQUIRE);
+    }
+    if (reg == POTGOR) return frf_virtual_potgor_value();
+    /* no serial device attached: transmitter and shift register empty */
+    if (reg == SERDATR) return 0x3000u;
+    return 0;
+#endif
     /* input, pots, serial and disk status live in the real Paula/Denise */
     uint16_t v = (uint16_t)ps_read_16(0xDFF000 + reg);
     /* ...and the A314's pads join the ports while a game runs (aga_pad.c) */
@@ -477,6 +602,22 @@ static void exter_storm_check(void)
 static void hook_ext_write_body(void *u, uint32_t reg, uint16_t v)
 {
     (void)u;
+#ifdef FRF_VIRTUAL_AGA
+    /* EMU68AGA standalone: the virtual chipset is authoritative. Extension
+       writes are host-side effects only; nothing goes to a physical
+       Paula/Agnus/CIA. */
+    switch (reg) {
+    case SERDAT:
+        aga_diag_serial((uint8_t)(v & 0xFF));   /* WHDLoad's serial crash dump */
+        break;
+    case POTGO:
+        __atomic_store_n(&frf_potgo, (uint16_t)(v & 0xFF00u), __ATOMIC_RELEASE);
+        break;
+    default:
+        break;
+    }
+    return;
+#endif
     if (aga_audio_reg_write(reg, v)) return;     /* AUDx*, DMACON audio bits -> real Paula */
     switch (reg) {
     case INTREQ:
@@ -641,6 +782,8 @@ void aga_glue_snapshot_regs(uint16_t *regs, uint32_t *colors)
 /* ---- init ----------------------------------------------------------------- */
 static int aga_start_ntsc;   /* what this kernel was BUILT for; regs[] does not know */
 
+static inline void chip7_reset_clock(void);
+static inline void chip7_wait(uint64_t far, int size);
 int aga_glue_init(uint8_t *chipram_va, uint32_t size, uint8_t *fb_va, uintptr_t fb_phys, int ntsc, int enable)
 {
     aga_start_ntsc = ntsc;
@@ -655,6 +798,19 @@ int aga_glue_init(uint8_t *chipram_va, uint32_t size, uint8_t *fb_va, uintptr_t 
        costs frames: the copy 902 skipped instead of 19 (Jim Power), the
        fingerprints alone - 0.5 ms a frame - 457, with the Pi cool (Pi 3 A+,
        2026-10-11). */
+#ifdef FRF_VIRTUAL_AGA
+    /* EMU68AGA standalone: HUD is OFF unless config.txt loads
+       dtoverlay=diagnostic,hud (creates /emu68/diag/frf-hud). */
+    {
+        of_node_t *dn = dt_find_node("/emu68/diag");
+        int frf_hud = dn && dt_find_property(dn, "frf-hud");
+        aga_video_overlay_allow(frf_hud);
+        aga_video_overlay_enable(frf_hud);
+        aga_overlay_idle = frf_hud;
+        kprintf("[AGA] EMU68AGA standalone: native AGA/Lisa machine; HUD %s by config\n",
+                frf_hud ? "ENABLED" : "OFF");
+    }
+#endif
     aga_hooks_t h = { hook_ext_read, hook_ext_write, hook_ipl, hook_frame, NULL, aga_is_pi3() ? NULL : hook_line };
     aga_set_hooks(aga, &h);
     aga_lock_v = 0;
@@ -676,12 +832,45 @@ int aga_glue_init(uint8_t *chipram_va, uint32_t size, uint8_t *fb_va, uintptr_t 
     }
     /* the mix on HDMI too, playing silence from now on (aga_hdmi.c) */
     aga_hdmi_boot(fb_va, fb_phys);
+#ifdef FRF_VIRTUAL_AGA
+    /* No agaboot Sound window sends $5821 in a standalone machine: the
+       classic Paula mix on HDMI from boot. */
+    aga_hdmi_paula(0);
+    aga_hdmi_enable(1);
+    kprintf("[AGA] EMU68AGA standalone: HDMI Paula audio on at boot\n");
+    if (enable) {
+        /* The abort-handler redirect serves chip RAM until the OVL bit
+           clears (vectors.c then maps it directly). aga_code_chip is not
+           published yet: OVL still maps Kickstart at zero. */
+        redirect_lo = 0;
+        redirect_hi = size;
+        aga_code_chip = NULL;
+        aga_code_chip_size = 0;
+        chip7_reset_clock();
+        __asm__ volatile("dmb ish" ::: "memory");
+        kprintf("[AGA] EMU68AGA chip RAM redirect armed: $000000-$%06x\n", size - 1);
+    }
+#endif
     aga_diag_init();
     aga_enabled = enable;
     kprintf("[AGA] chipset core ready, %d KB chip RAM at %p, %s\n", size >> 10, chip_va,
             enable ? "machine mode" : "parked (sandbox available)");
     return 0;
 }
+
+#ifdef FRF_VIRTUAL_AGA
+/* EMU68AGA virtual CIA (vectors.c) -> Paula. CIA /INT is level-driven but
+   Paula's INTREQ is latched: a falling CIA line does not acknowledge it,
+   only the guest's INTREQ write does. */
+void aga_virtual_cia_irq(uint16_t bit, int active)
+{
+    if (!aga || !active) return;
+    lock();
+    aga_custom_wput(aga, INTREQ, (uint16_t)(0x8000u | bit));
+    unlock();
+    __asm__ volatile("dsb ish; sev" ::: "memory");
+}
+#endif
 
 /* ---- diagnostics: let aga_diag.c see the virtual chipset ------------------
    Read without the lock. These are single words the chipset thread writes; a
@@ -951,6 +1140,10 @@ static void log_slow(uint32_t kb)
 
 int aga_sandbox_enter(void)
 {
+#ifdef FRF_VIRTUAL_AGA
+    aga_diag_log("[AGA] standalone firewall: sandbox entry ignored");
+    return 0;
+#endif
     if (!aga || aga_enabled) return 0;
     aga_diag_log("[AGA] enter 1: begin");
     /* Bring-up: stop after step N and return, leaving the machine untouched.
@@ -1324,6 +1517,10 @@ static void sandbox_restore(void)
 
 int aga_sandbox_leave(void)
 {
+#ifdef FRF_VIRTUAL_AGA
+    aga_diag_log("[AGA] standalone firewall: sandbox leave ignored");
+    return 0;
+#endif
     if (!aga || !aga_sandbox_active) return 0;
     kprintf("[AGA] sandbox: leaving\n");
     /* 1. park the chipset loop and the virtual interrupt line.
@@ -1374,11 +1571,76 @@ int aga_sandbox_leave(void)
  * the 68k expects, and the 128-bit split (value = first 8 bytes, value2 = next
  * 8) matches SYSReadValFromAddr's own convention for unmapped space.
  */
+/* ---- A1200 Chip-RAM bus governor -----------------------------------------
+ *
+ * FRF v0.10.15 CHIP7
+ *
+ * The standalone machine must not let Emu68 treat Chip RAM as ordinary host
+ * RAM. The real A1200 shared chip-memory domain is clocked from the 7 MHz
+ * chipset/bus clock (PAL master 28.37512 MHz / 4 = 7.09378 MHz; NTSC
+ * 28.63636 MHz / 4 = 7.15909 MHz). Fast/Z3 RAM is intentionally untouched.
+ *
+ * One 1/2/4-byte CPU Chip-RAM access consumes one 32-bit bus cycle. Wider
+ * accesses generated by Emu68's cache-line fill consume as many 32-bit cycles
+ * as the touched address range spans. Idle time is deliberately not banked.
+ */
+static uint64_t chip7_next_ticks;
+static uint32_t chip7_next_frac;
+static uint64_t chip7_ticks_per_slot_fp;
+static uint32_t chip7_hz;
+
+static inline void chip7_reset_clock(void)
+{
+    chip7_next_ticks = 0;
+    chip7_next_frac = 0;
+    chip7_ticks_per_slot_fp = 0;
+    chip7_hz = 0;
+}
+
+static inline void chip7_wait(uint64_t far, int size)
+{
+#ifdef FRF_VIRTUAL_AGA
+    uint64_t now = cntvct();
+
+    if (!chip7_ticks_per_slot_fp) {
+        uint64_t f;
+        __asm__ volatile("mrs %0, CNTFRQ_EL0" : "=r"(f));
+        chip7_hz = aga_start_ntsc ? 7159090u : 7093780u;
+        chip7_ticks_per_slot_fp = (f << 32) / chip7_hz;
+        if (!chip7_ticks_per_slot_fp) chip7_ticks_per_slot_fp = 1ull << 32;
+    }
+
+    if (!chip7_next_ticks || (int64_t)(now - chip7_next_ticks) > 0) {
+        chip7_next_ticks = now;
+        chip7_next_frac = 0;
+    }
+
+    unsigned slots = (unsigned)(((far & 3u) + (uint64_t)size + 3u) >> 2);
+    if (!slots) slots = 1;
+
+    while (slots--) {
+        uint64_t inc = chip7_ticks_per_slot_fp;
+        uint32_t oldf = chip7_next_frac;
+        uint32_t newf = oldf + (uint32_t)inc;
+        chip7_next_ticks += (inc >> 32) + (newf < oldf ? 1u : 0u);
+        chip7_next_frac = newf;
+    }
+
+    while ((int64_t)(cntvct() - chip7_next_ticks) < 0)
+        __asm__ volatile("yield");
+
+    __asm__ volatile("dmb ish" ::: "memory");
+#else
+    (void)far; (void)size;
+#endif
+}
+
 int aga_chip_read(uint64_t far, int size, uint64_t *value, uint64_t *value2)
 {
     if (!aga_chip_redirect || far < redirect_lo || far + (uint64_t)size > redirect_hi) return 0;
     /* a314.device's ComArea while the OS runs in here: the real one (aga_pad.c) */
     if (far < aga_ca_hi && far + (uint64_t)size > aga_ca_lo) return aga_pad_ca_read(chip_va, far, size, value, value2);
+    chip7_wait(far, size);
     aga_diag_ctr[AGA_D_CHIP_R]++;
     cpu_activity++;
     /* NO instrumentation here. A 16-slot scan on every JIT cache-line fill -
@@ -1402,6 +1664,7 @@ int aga_chip_write(uint64_t far, int size, uint64_t value, uint64_t value2)
 {
     if (!aga_chip_redirect || far < redirect_lo || far + (uint64_t)size > redirect_hi) return 0;
     if (far < aga_ca_hi && far + (uint64_t)size > aga_ca_lo) return aga_pad_ca_write(chip_va, far, size, value, value2);
+    chip7_wait(far, size);
     cpu_activity++;
 #ifdef AGA_PROBES
     aga_diag_ctr[AGA_D_CHIP_W]++;
@@ -2155,6 +2418,14 @@ void aga_chipset_main(void)
             continue;
         }
         int native = 0;
+#ifdef FRF_VIRTUAL_AGA
+        {
+            extern void frf_vcia_service(void);
+            static uint32_t frf_cia_div;
+            if ((++frf_cia_div & 31u) == 0u)
+                frf_vcia_service();
+        }
+#endif
         lock();
         if (aga_loct_fix_pending && !(aga_custom_rget(aga, DMACONR) & 0x0080)) {
             /* the copper is off: the OS list is history and the game has not
@@ -2887,20 +3158,65 @@ static uint8_t *dsk_slot[DSK_SLOTS];      /* images kept for Ctrl+F1..F4 swappin
 static uint32_t dsk_slot_size[DSK_SLOTS];
 static int      key_ctrl;
 
-static void slot_insert(int n)
+static int slot_insert(int n)
 {
-    if (n < 0 || n >= DSK_SLOTS || !dsk_slot[n]) return;
+    if (!aga || n < 0 || n >= DSK_SLOTS || !dsk_slot[n]) return 0;
     lock();
-    aga_disk_insert(aga, 0, dsk_slot[n], dsk_slot_size[n], 0);
+    int rc = aga_disk_insert(aga, 0, dsk_slot[n], dsk_slot_size[n], 0);
     unlock();
+    if (rc != 0) return 0;
     kprintf("[AGA] disk: DF0 <- slot %d (%d KB)\n", n + 1, dsk_slot_size[n] >> 10);
+    return 1;
 }
+
+#ifdef FRF_VIRTUAL_AGA
+/* EMU68AGA: an ADF appended to the Kickstart in the SD-card initramfs
+   (start.c) goes into DF0 before the 68k starts. */
+int aga_boot_insert_adf(int drive, const uint8_t *adf, uint32_t size, int wprot)
+{
+    int r;
+    if (!aga || !adf || drive < 0 || drive >= AGA_MAX_DRIVES) return -1;
+    lock();
+    r = aga_disk_insert(aga, drive, adf, size, wprot);
+    unlock();
+    if (r == 0)
+        kprintf("[AGA] boot floppy: DF%d <- SD initramfs ADF (%d bytes)%s\n",
+                drive, size, wprot ? " [WP]" : "");
+    else
+        kprintf("[AGA] boot floppy: DF%d insert failed (%d bytes, rc=%d)\n",
+                drive, size, r);
+    return r;
+}
+
+/* the virtual CIA-B PRB / CIA-A PRA disk lines (vectors.c frf_vcia_*) */
+void aga_virtual_disk_prb(uint8_t prb)
+{
+    if (!aga || !aga_disk_active(aga)) return;
+    lock();
+    aga_disk_cia_prb(aga, prb);
+    unlock();
+}
+
+int aga_virtual_disk_pra(uint8_t *bits)
+{
+    int r;
+    if (!aga || !bits || !aga_disk_active(aga)) return 0;
+    lock();
+    r = aga_disk_cia_pra(aga, bits);
+    unlock();
+    return r;
+}
+#endif
 
 /* The CIA hooks exist only for the virtual drives: with no image inserted they
    do nothing and the normal Emu68 bus path handles the access unchanged, so a
    WHDLoad game without a floppy never sees them. */
 int aga_cia_write(uint64_t far, int size, uint64_t value)
 {
+#ifdef FRF_VIRTUAL_AGA
+    (void)far; (void)size; (void)value;
+    return 0;   /* standalone: the virtual CIAs in vectors.c own $BFxxxx */
+#endif
     if (!aga_enabled || !aga || !aga_disk_active(aga)) return 0;
     if (far == 0xBFD100 && (size == 1 || size == 2)) {
         /* CIA-B lives on the upper data byte: a word access carries PRB in bits 8-15 */
@@ -2919,6 +3235,10 @@ int aga_cia_write(uint64_t far, int size, uint64_t value)
 
 int aga_cia_read(uint64_t far, int size, uint64_t *value)
 {
+#ifdef FRF_VIRTUAL_AGA
+    (void)far; (void)size; (void)value;
+    return 0;   /* standalone: the virtual CIAs in vectors.c own $BFxxxx */
+#endif
     /* The mouse quit. WHDLoad, once it has moved the VBR, compares its quit
        key with the keyboard's serial register at EVERY interrupt, whatever
        handlers the program installed - which is why F10 gets out of most
@@ -2989,15 +3309,27 @@ int aga_cia_read(uint64_t far, int size, uint64_t *value)
      $ADF0/$ADF1  insert the image into DF0/DF1 (also kept as swap slot 1 for DF0)
      $ADC1..$ADC4 load the image into swap slot 1..4 (Ctrl+F1..F4 inserts it into DF0)
      $ADE0/$ADE1  eject DF0/DF1 */
+/* EMU68AGA: the AmigaOS mount tool reads the last command's status from
+   $DFF1F2: $AD80 idle/protocol present, $AD81 inserted, $AD82 ejected,
+   $AD83 slot loaded, $AD84 slot inserted, $AD40 error, $AD41 no chipset. */
+static volatile uint16_t frf_adf_status = 0xAD80u;
+uint16_t aga_disk_status(void) { return frf_adf_status; }
+
 int aga_disk_command(unsigned cmd)
 {
     aga_diag_inc(AGA_D_DISK_CMDS);
-    if (!aga_enabled || !aga) { kprintf("[AGA] disk command %02x ignored (chipset not active)\n", cmd); return 0; }
+    if (!aga_enabled || !aga) { frf_adf_status = 0xAD41u; kprintf("[AGA] disk command %02x ignored (chipset not active)\n", cmd); return 0; }
     unsigned op = (cmd >> 4) & 0xF, n = cmd & 0xF;
     if (op == 0xE) {
         lock(); aga_disk_eject(aga, n & 1); unlock();
         kprintf("[AGA] disk: DF%d ejected\n", n & 1);
+        frf_adf_status = 0xAD82u;
         return 1;
+    }
+    if (op == 0xB && n >= 1 && n <= DSK_SLOTS) {   /* $ADB1..$ADB4: slot n into DF0 (EMU68AGA mount tool) */
+        int rc = slot_insert(n - 1);
+        frf_adf_status = rc ? 0xAD84u : 0xAD40u;
+        return rc;
     }
     uint32_t addr = ((uint32_t)aga_peek_reg(aga, 0x1EC) << 16) | aga_peek_reg(aga, 0x1EE);
     uint32_t szf = aga_peek_reg(aga, 0x1F0);
@@ -3005,6 +3337,7 @@ int aga_disk_command(unsigned cmd)
     int wprot = (szf >> 12) & 1;
     if (addr < 0x200000 || addr + size > 0xFFFFFFFFu || (size != 901120 && size != 1802240)) {
         kprintf("[AGA] disk command %02x: bad image %08x/%d\n", cmd, addr, size);
+        frf_adf_status = 0xAD40u;
         return 0;
     }
     const uint8_t *src = (const uint8_t *)(uintptr_t)addr;   /* 68k fast RAM is Pi memory, identity mapped */
@@ -3015,16 +3348,19 @@ int aga_disk_command(unsigned cmd)
             if (dsk_slot[0]) { memcpy(dsk_slot[0], src, size); dsk_slot_size[0] = size; }
         }
         kprintf("[AGA] disk: DF%d insert %d KB from %08x -> %d\n", n, size >> 10, addr, r);
+        frf_adf_status = r == 0 ? 0xAD81u : 0xAD40u;
         return r == 0;
     }
     if (op == 0xC && n >= 1 && n <= DSK_SLOTS) {
         if (!dsk_slot[n - 1]) dsk_slot[n - 1] = calloc(1, 1802240);
-        if (!dsk_slot[n - 1]) return 0;
+        if (!dsk_slot[n - 1]) { frf_adf_status = 0xAD40u; return 0; }
         memcpy(dsk_slot[n - 1], src, size);
         dsk_slot_size[n - 1] = size;
         kprintf("[AGA] disk: slot %d loaded (%d KB)\n", n, size >> 10);
+        frf_adf_status = 0xAD83u;
         return 1;
     }
+    frf_adf_status = 0xAD40u;
     return 0;
 }
 

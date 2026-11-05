@@ -54,6 +54,7 @@
 #include "aga/chipset.h"
 #include "aga_glue.h"
 #include "ps_protocol.h"
+#include "frf_ps_stub.h"
 
 extern void kprintf(const char *fmt, ...);
 

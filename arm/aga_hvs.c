@@ -1872,7 +1872,15 @@ static volatile int      ovl_on = 0;      /* the build people play: a clean pict
 #endif
 
 void aga_video_overlay(int row, uint32_t v) { if ((unsigned)row < OVL_ROWS) ovl_val[row] = v; }
+#ifdef FRF_VIRTUAL_AGA
+/* EMU68AGA standalone: the HUD only opens when config.txt asks for it
+   (dtoverlay=diagnostic,hud -> /emu68/diag/frf-hud, see aga_glue_init) */
+static volatile int      ovl_allowed = 0;
+void aga_video_overlay_allow(int on)        { ovl_allowed = on ? 1 : 0; if (!ovl_allowed) ovl_on = 0; }
+void aga_video_overlay_enable(int on)       { ovl_on = (ovl_allowed && on) ? 1 : 0; }
+#else
 void aga_video_overlay_enable(int on)       { ovl_on = on; }
+#endif
 
 /* bit 0..6 = segments a,b,c,d,e,f,g */
 static const uint8_t seg7[16] = {
@@ -2436,7 +2444,12 @@ void aga_video_present(const uint32_t *frame, int native_active)
            WHDLoad's own splash menu, whose Start button nobody could fucking
            click. The idle overlay is opt-in (agaboot OVERLAY ON, $5F01) for the
            case where a game hangs without ever drawing. */
+#ifdef FRF_VIRTUAL_AGA
+        /* standalone: no sandbox, the machine IS the virtual chipset */
+        if (!(ovl_on && aga_overlay_idle)) { hide(); return; }
+#else
         if (!(ovl_on && aga_sandbox_active && aga_overlay_idle)) { hide(); return; }
+#endif
         if (frame_woven) aga_video_set_frame(0, 0, frame_ntsc);   /* the digits go on one page */
         /* TRANSPARENT, not black. The plane is set up with alpha mode
            FIXED_NONZERO (POS2_ALPHA_FIXED), so a pixel whose alpha byte is
@@ -2537,6 +2550,12 @@ extern void pi_reset(void);
 
 void aga_reboot(int tryboot)
 {
+#ifdef FRF_VIRTUAL_AGA
+    /* Standalone has no physical reset-line housekeeper to save the previous
+       session. Save it explicitly before the Pi watchdog reset. */
+    aga_diag_log("[AGA] standalone host reboot: preserving previous session");
+    aga_diag_persist();
+#endif
     aga_diag_inc(AGA_D_REBOOTS);
     if (tryboot) {
         int c = 1;

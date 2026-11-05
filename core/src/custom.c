@@ -333,23 +333,26 @@ uint16_t aga_custom_rget(aga_t *a, uint32_t reg)
     case DSKBYTR: { uint16_t v; if (dsk_read(a, reg, &v)) return v; return ext_read(a, reg, 0); }
     case INTENAR:  return a->intena & 0x7FFF;
     case INTREQR:  return a->intreq & 0x7FFF;
-    case DENISEID: return DENISEID_LISA;
+    case DENISEID:
+#ifdef FRF_VIRTUAL_AGA
+        return a->pf.ecs_mode ? 0xffffu : DENISEID_LISA;
+#else
+        return DENISEID_LISA;
+#endif
     case HHPOSR:   return 0;
     case COPINS:   return 0;
     case COPJMP1:
     case COPJMP2:
         /* The chipset strobes COPJMP on any access, a read as much as a
-           write, because the thing is a contrary bastard (WinUAE
-           custom_wget_1). Bubble Bobble starts its copper list with MOVE.W
-           $DFF088,D0 (found by RGB2RTG bc4c93d). Only the 68k gets here: a
-           diagnostic that wants register values without side effects reads
-           aga_peek_reg. The value is the last one on the bus; 0 here, as
-           for the other write-only registers. */
+           write (WinUAE custom_wget_1). Bubble Bobble starts its copper list
+           with MOVE.W $DFF088,D0 (found by RGB2RTG bc4c93d). Only the 68k
+           gets here: a diagnostic that wants register values without side
+           effects reads aga_peek_reg. The value is the last one on the bus;
+           0 here, as for the other write-only registers. */
         cop_strobe(a, reg == COPJMP1 ? 1 : 2);
         return 0;
     default:
-        /* write-only registers read back as the last value on the data
-           bus; I give 0 here */
+        /* write-only registers read back as the last value on the data bus; 0 here */
         return 0;
     }
 }
@@ -514,16 +517,14 @@ void aga_custom_wput(aga_t *a, uint32_t reg, uint16_t v)
             (uint32_t)v | (a->cop.in_move ? 0x10000u : 0)
             | ((uint32_t)(a->frame & 0x7FFF) << 17);
         a->bc0_log_head++;
-        /* The register takes the value at once, the frame does NOT change
-           size until the next one starts: Agnus latches the timing at the
-           top of a frame, and WinUAE does the same (init_hz from the vsync
-           handler). Worms: The Director's Cut writes BEAMCON0 twice in one
-           frame, first with the PAL bit clear and then with it set;
-           changing the geometry on the first of those left me in NTSC -
-           263 lines - while the game went on waiting for a PAL raster line
-           that could no longer come round, and the screen stayed black for
-           ever. Bugger that for a game of soldiers, and the horse it rode
-           in on. */
+        /* The register takes the value at once, the frame does NOT change size
+           until the next one starts: Agnus latches the timing at the top of a
+           frame, and WinUAE does the same (init_hz from the vsync handler).
+           Worms: The Director's Cut writes BEAMCON0 twice in one frame, first
+           with the PAL bit clear and then with it set; changing the geometry on
+           the first of those left me in NTSC - 263 lines - while the game went
+           on waiting for a PAL raster line that could no longer come round, and
+           the screen stayed black for ever. */
         a->beamcon0 = v;
         break;
     case HTOTAL: case HSSTOP: case HBSTRT: case HBSTOP: case VTOTAL: case VSSTOP:
@@ -532,13 +533,19 @@ void aga_custom_wput(aga_t *a, uint32_t reg, uint16_t v)
     case BPLHMOD: case SPRHPTH: case SPRHPTL: case BPLHPTH: case BPLHPTL:
     case NOOP:
         break;
-    case 0x1F2:              /* AGA-PISTORM control register (not an Amiga register) */
+#ifdef FRF_VIRTUAL_AGA
+    case 0x1F2: case 0x1F4: case 0x1F6: case 0x1F8: case 0x1FA:
+        /* standalone machine: reserved/no-op; $1FC FMODE remains real AGA */
+        break;
+#else
+    case 0x1F2:
         a->aga_ctrl = v;
         break;
-    case 0x1F4: a->aga_win[0] = v; break;   /* window x (RTG screen pixels) */
-    case 0x1F6: a->aga_win[1] = v; break;   /* window y */
-    case 0x1F8: a->aga_win[2] = v; break;   /* window width */
-    case 0x1FA: a->aga_win[3] = v; break;   /* window height */
+    case 0x1F4: a->aga_win[0] = v; break;
+    case 0x1F6: a->aga_win[1] = v; break;
+    case 0x1F8: a->aga_win[2] = v; break;
+    case 0x1FA: a->aga_win[3] = v; break;
+#endif
     default:
         break;
     }
@@ -549,8 +556,7 @@ void aga_write(aga_t *a, uint32_t addr, uint32_t value, int size)
     uint32_t reg = addr & 0x1FF;
     switch (size) {
     case 1:
-        /* byte writes to custom registers hit both halves: that is the bus's
-           behaviour, not my idea */
+        /* byte writes to custom registers write the byte to both halves (bus behaviour) */
         aga_custom_wput(a, reg & 0x1FE, (uint16_t)((value & 0xFF) | ((value & 0xFF) << 8)));
         break;
     case 2:

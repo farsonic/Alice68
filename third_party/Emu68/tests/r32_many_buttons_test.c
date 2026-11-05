@@ -1,0 +1,47 @@
+#include <stdint.h>
+#include <assert.h>
+#include "../src/frf_usb/tinyusb/frf_r19_hid_descriptor.h"
+static const uint8_t desc[]={
+0x05,0x01,0x09,0x05,0xa1,0x01,0x85,0x01,
+0x09,0x30,0x09,0x31,0x15,0x00,0x26,0xff,0x00,0x75,0x08,0x95,0x02,0x81,0x02,
+0x85,0x03,0x05,0x09,0x19,0x01,0x29,0x18,0x15,0x00,0x25,0x01,0x75,0x01,0x95,0x18,0x81,0x02,0xc0
+};
+static const uint8_t missing_usage_desc[]={
+0x05,0x01,0x09,0x05,0xa1,0x01,
+0x05,0x09,0x09,0x01,
+0x15,0x00,0x25,0x01,0x75,0x01,0x95,0x02,0x81,0x02,
+0x75,0x06,0x95,0x01,0x81,0x03,0xc0
+};
+static const uint8_t sparse_desc[]={
+0x05,0x01,0x09,0x05,0xa1,0x01,
+0x05,0x09,0x09,0x01,0x09,0x05,0x09,0x09,
+0x15,0x00,0x25,0x01,0x75,0x01,0x95,0x03,0x81,0x02,
+0x75,0x05,0x95,0x01,0x81,0x03,0xc0
+};
+int main(void){
+struct frf_hid_map m={0};uint32_t b=0,p=0;
+assert(frf_hid_gamepad_parse(&m,desc,sizeof(desc)));
+assert(m.count>=26u);
+uint8_t axis[]={1,0,128};
+assert(!frf_hid_gamepad_decode_buttons(&m,axis,sizeof(axis),&b,&p));assert(p==0);
+uint8_t buttons[]={3,1,0,128};
+assert(frf_hid_gamepad_decode_buttons(&m,buttons,sizeof(buttons),&b,&p));
+assert(b==0x800001u && p==0xffffffu);
+buttons[1]=0;buttons[3]=0;
+assert(frf_hid_gamepad_decode_buttons(&m,buttons,sizeof(buttons),&b,&p));
+assert(b==0 && p==0xffffffu);
+struct frf_hid_map sm={0};assert(frf_hid_gamepad_parse(&sm,sparse_desc,sizeof(sparse_desc)));
+uint8_t sparse_report[]={0x02}; /* second physical bit, HID Usage 5 */
+assert(frf_hid_gamepad_decode_buttons(&sm,sparse_report,sizeof(sparse_report),&b,&p));
+assert(b==0x10u); /* usage-number model: sparse bit 4 */
+assert(frf_hid_gamepad_decode_buttons_ordered(&sm,sparse_report,sizeof(sparse_report),&b,&p));
+assert(b==0x02u && p==0x07u); /* USPi model: second physical button */
+
+/* Clone-style descriptor with Report Count=2 but only one Usage item.
+   USPi still sees two physical buttons because it consumes the whole Button
+   input field. R41 must do the same. */
+struct frf_hid_map mm={0};assert(frf_hid_gamepad_parse(&mm,missing_usage_desc,sizeof(missing_usage_desc)));
+uint8_t second_only[]={0x02};
+assert(frf_hid_gamepad_decode_buttons_ordered(&mm,second_only,sizeof(second_only),&b,&p));
+assert(b==0x02u && p==0x03u);
+return 0;}
