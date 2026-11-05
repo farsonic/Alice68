@@ -146,7 +146,7 @@ LONG netcheck_main(const char *args, ULONG arglen)
         else { memcpy(devname, w, sizeof devname); explicit_dev = 1; }
     }
 
-    puts_("Alice68-NetCheck 1.4\n");
+    puts_("Alice68-NetCheck 1.5\n");
     APTR port = CreateMsgPort();
     struct IOSana2Req *io = port ? CreateIORequest(port, sizeof *io) : 0;
     struct SSHdr *ss = AllocMem_(sizeof(struct SSHdr) + MAXREC * sizeof(struct SSRec));
@@ -160,8 +160,15 @@ LONG netcheck_main(const char *args, ULONG arglen)
        that name is loaded at all, from DEVS:Networks/ - opening a path while one is
        loaded makes AmigaOS load a second copy, which would drive the same hardware
        behind the stack's back. */
+    /* how many copies are loaded: a stack that opens DEVS:Networks/genet.device by its
+       path can make AmigaOS (before 3.2) load a second one next to a loaded copy */
+    int copies = 0;
     Forbid();
     int loaded = FindName((UBYTE *)SYSBASE + EXEC_DEVICELIST, "genet.device") != 0;
+    for (UBYTE *n = *(UBYTE **)((UBYTE *)SYSBASE + EXEC_DEVICELIST); n && *(UBYTE **)n; n = *(UBYTE **)n) {
+        const char *nm = *(const char **)(n + 10);
+        if (nm && str_eq_ci(nm, "genet.device")) copies++;
+    }
     Permit();
     LONG e = OpenDevice(devname, unit, io, 0);
     if (e && !explicit_dev && !loaded) {
@@ -192,6 +199,17 @@ LONG netcheck_main(const char *args, ULONG arglen)
     }
     if (lib->lib_Version >= 4 && str_eq_ci(lib->lib_Node.ln_Name ? lib->lib_Node.ln_Name : "", "genet.device"))
         puts_("           genet.device 4.x is the netdev driver: on Alice68 use the SANA-II driver, 3.x\n");
+    if (copies > 1) {
+        puts_("           ");
+        dec((ULONG)copies);
+        puts_(" copies of genet.device are loaded. They drive the same Ethernet chip; this\n"
+              "           tool sees only one of them, maybe not the one your TCP/IP stack uses, so its\n"
+              "           counters can read 0 while the network works. Usually the stack opened\n"
+              "           DEVS:Networks/genet.device by its path after another program had loaded it.\n"
+              "           Reboot and start the stack before anything else opens genet.device.\n"
+              "           TEST is not run: it would reset the chip under the stack.\n");
+        test = 0;
+    }
 
     struct Sana2DeviceQuery q;
     memset(&q, 0, sizeof q);
@@ -299,7 +317,10 @@ LONG netcheck_main(const char *args, ULONG arglen)
             if (test && rounds > 0) { puts_("\nWatching for 5 seconds:\n"); goto next; }
           verdict:
             puts_("\nWhat it means:\n");
-            if (irq == ~0u || hwrx == ~0u)
+            if (copies > 1)
+                puts_("  These numbers may belong to a copy of genet.device no stack uses (see above):\n"
+                      "  reboot, start your TCP/IP stack first, then run Alice68-NetCheck again.\n");
+            else if (irq == ~0u || hwrx == ~0u)
                 puts_("  This driver does not report interrupt and hardware counters (genet.device 3.x does).\n");
             else if (!configured)
                 puts_("  The interface is not up yet, so the driver has not switched its interrupts on and\n"

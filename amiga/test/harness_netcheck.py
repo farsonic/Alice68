@@ -45,6 +45,12 @@ def run(hunk, args, dev):
     lvo(SYSBASE, -132, lambda o, p: None)
     lvo(SYSBASE, -138, lambda o, p: None)
     lvo(SYSBASE, -276, lambda o, p: setd0(DEVBASE if dev.get('loaded') and mem.r_cstr(d(R.A1)) == 'genet.device' else 0))
+    # exec's DeviceList: a list head at SysBase+350, nodes with the name at +10
+    prev = SYSBASE + 350
+    for nm in ['timer.device'] + ['genet.device'] * dev.get('copies', 1 if dev.get('loaded') else 0) + ['brcm-emmc.device']:
+        nd = alloc(14); mem.w32(prev, nd); mem.w32(nd + 10, cstr(nm)); prev = nd
+    mem.w32(prev, SYSBASE + 354)   # the tail node: ln_Succ 0
+    mem.w32(SYSBASE + 354, 0)
     st['configured'] = dev.get('configured', False)
     st['paths'] = []
     lvo(DOSBASE, -60, lambda o, p: setd0(1))
@@ -156,6 +162,8 @@ cases = [
      ['genet.device', 'DEVS:Networks/genet.device']),
     ('not configured, MAC counted frames, no interrupts: not blamed on Alice68', '', dict(unloaded, open_by_name=True, loaded=True, hwrx=3),
      ['not configured: no TCP/IP stack', 'not switched its interrupts on', 'Alice68-NetCheck TEST'], None, ['NO interrupt']),
+    ('two copies loaded: warns, refuses TEST', 'TEST', dict(base, configured=False, copies=2),
+     ['2 copies of genet.device are loaded', 'TEST is not run', 'may belong to a copy'], None, ['sending 3', 'bringing the interface up']),
     ('missing', '', dict(unloaded, open_by_path=False), ['cannot open it', 'version 3.x'], None),
     ('netdev 4.x installed', '', dict(base, version=4, revision=4), ['is the netdev driver', 'use the SANA-II driver'], None),
     ('WATCH until Ctrl-C', 'WATCH', dict(base, irq=7, hwrx=9, ctrl_c_after=3), ['Watching', 'irq0 7', '***Break'], None),
