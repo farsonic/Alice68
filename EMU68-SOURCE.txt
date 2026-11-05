@@ -1,0 +1,24 @@
+The AGA-PISTORM kernels are Emu68 1.1.0-beta.1 (https://github.com/michalsc/Emu68,
+git 0ba3a899341dee958332a4182911861420b03bff, MPL-2.0) with arm/emu68-aga.patch
+applied and AGA-PISTORM's core/ and arm/ added. Emu68's submodules, at the
+commits it records: external/capstone accf4df62f1fba6f92cae692985d27063552601c, external/libdeflate bd925ae68e99f65d69f20181cb845aaba5c8f098.
+
+The Emu68 source: AGA-PISTORM-1.106-emu68-src.tar.gz in the package's Source folder
+(made with AGA-PISTORM 1.106, unchanged since), or:
+  git clone https://github.com/michalsc/Emu68 third_party/Emu68
+  git -C third_party/Emu68 checkout 0ba3a89
+  git -C third_party/Emu68 submodule update --init
+  git -C third_party/Emu68 apply ../../arm/emu68-aga.patch
+
+Build: tools/build-wsl.sh (Ubuntu 24.04; its header lists the packages).
+The classic kernels need the Arm GNU Toolchain 15.3.rel2 for big-endian
+AArch64 (aarch64_be-none-linux-gnu) - gcc-14 miscompiles their vector code;
+the Pi 3 kernel is the same with -DAGA_PI3=ON (build-wsl.sh makes both);
+the PiStorm16 kernel: tools/build-wsl.sh ps16, with aarch64-linux-gnu-gcc-14.
+The Amiga tools: tools/agaboot, agastat, ahi and mkicon each have a build.sh
+(m68k-amigaos-gcc from amiga-gcc, in /opt/amiga).
+The boot splash in the patch (include/logo/logo_aga_rgb.h) is made by
+tools/mklogo_rgb.py from package/art/splash-src.webp.
+The CRT look's GPU programs, arm/aga_v3d_code.h, are made by
+tools/v3d/mkcrt.py (Python 3.11 or later) with py-videocore6's assembler
+(Idein Inc., MIT, in tools/v3d/_videocore6).

@@ -1,0 +1,146 @@
+; $VER: Uninstall AGA-PISTORM 1.118 (21.10.2026)
+; SPDX-License-Identifier: GPL-2.0-only
+;
+; Removes AGA-PISTORM and puts back what the installer changed, from the
+; .pre-aga backups and the #AGA-PISTORM-WAS: line it left in config.txt.
+; Same text rule as Install: lines up to 44 characters, about 11 per window.
+
+(set @app-name "AGA-PISTORM")
+(welcome "Remove AGA-PISTORM")
+
+(if (= 0 (askbool
+           (prompt "Remove AGA-PISTORM from this Amiga?\n\n"
+                   "This puts back your previous\n"
+                   "kernel, RTG driver, WHDLoad\n"
+                   "scripts and menu.")
+           (help "Only what the installer added is removed: the kernel line in\n"
+                 "config.txt, VideoCore.card, S:WHDLoad-Startup,\n"
+                 "S:WHDLoad-Cleanup, S:User-Startup and the Chipset menu -\n"
+                 "on AmigaOS 3.x also the SYS:Chipset drawer and the lines it\n"
+                 "switched on in S:WHDLoad.prefs.\n"
+                 "The Emu68 overlay files and the kernel files stay on the boot\n"
+                 "partition, and the settings in ENVARC:AGA_#?; they do nothing\n"
+                 "once config.txt and agaboot stop using them.")
+           (default 0)))
+  (exit "Nothing was changed." (quiet)))
+
+; The package's own agaboot first, as Install does: C:'s is the one the
+; earlier install left, and a 1.112 one there took every line from a block
+; without its end line to the end of config.txt. C:'s only when this
+; drawer has none.
+(set #tool "Files/C/agaboot")
+(if (= 0 (exists #tool (noreq)))
+  (set #tool "C:agaboot"))
+; unpacked on the Amiga, the drawer's copy may lack the e bit (see Install);
+; the Protect command, as there, so a FAT drawer cannot stop the uninstall
+(run (cat "Protect " #tool " +e >NIL:") (safe))
+
+; config.txt is on the Emu68 boot partition: found the way the installer
+; finds it, or shown by the user as it was then. Skip leaves config.txt as it
+; is and removes everything else.
+(run (cat #tool " CHECK >NIL:") (safe))
+(set #boot (getenv "AGAPISTORM_BOOT"))
+(set #skip 0)
+(while (and (= #boot "") (= #skip 0))
+  (if (askbool
+        (prompt "The Emu68 boot partition was\n"
+                "not found.\n\n"
+                "Show where it is, so that\n"
+                "config.txt can be put back?")
+        (help "config.txt, on the SD card's FAT partition, still starts the\n"
+              "AGA-PISTORM kernel. To put the old kernel line back the\n"
+              "uninstaller needs that partition. On AmigaOS 3.x it is often\n"
+              "not mounted, and then it has no disk icon: mount it first\n"
+              "(MOUNTFAT on some cards, or an icon in Storage/DOSDrivers),\n"
+              "then Show it and click Volumes in the requester.\n\n"
+              "Skip removes everything else and leaves config.txt as it is.")
+        (choices "Show it" "Skip")
+        (default 1))
+    ((set #pick
+       (askdir
+         (prompt "Where is the Emu68 boot partition?\n\n"
+                 "Pick the disk with config.txt on\n"
+                 "it, then Proceed.")
+         (help "Pick the disk itself, not a drawer on it.")
+         (default "SYS:")
+         (disk)))
+     (run (cat #tool " CHECK \"" #pick "\" >NIL:") (safe))
+     (set #boot (getenv "AGAPISTORM_BOOT"))
+     (if (= #boot "")
+       (message #pick "\n\n"
+                "has no config.txt on it.")))
+    (set #skip 1)))
+
+(run (cat #tool " AGAGAMES OFF >NIL:"))
+(run (cat #tool " ECSGAMES OFF >NIL:"))
+(set #cfg 10)
+; config.txt under the name the partition has it by (CONFIG.TXT on some
+; cards); an agaboot older than 1.111 does not say, and then it is joined here
+(set #cfgfile (getenv "AGAPISTORM_CFGFILE"))
+(if (= #cfgfile "") (set #cfgfile (tackon #boot "config.txt")))
+(if (<> #boot "")
+  (set #cfg (run (cat #tool " UNINSTALL CONFIG \"" #cfgfile "\" >NIL:"))))
+(run (cat #tool " UNINSTALL HOOKS >NIL:"))
+(run (cat #tool " UNINSTALL MENU >NIL:"))
+; AmigaOS 3.x: the ExecuteStartup/-Cleanup lines it switched on (only its own
+; marked ones - on CaffeineOS there are none), and the Chipset drawer - only
+; when the fucking thing is mine, with its Init script in it (AGA toggle
+; before 1.114)
+(run (cat #tool " UNINSTALL WHDPREFS >NIL:"))
+; AmiKit: the real C:WHDLoad back in place of AGA-PISTORM's stand-in
+; (nothing to do where there is none)
+(run (cat #tool " WHDWRAP UNINSTALL >NIL:"))
+(if (or (<> 0 (exists "SYS:Chipset/Init" (noreq))) (<> 0 (exists "SYS:Chipset/AGA toggle" (noreq))))
+  ((foreach "SYS:Chipset" "#?"
+     (delete (tackon "SYS:Chipset" @each-name) (optional "force")))
+   (delete "SYS:Chipset" (optional "force"))
+   (delete "SYS:Chipset.info" (optional "force"))))
+
+; The RTG driver goes back only if config.txt did too: the old driver belongs
+; with the old kernel, and VideoCore 1.5 with the AGA-PISTORM (Emu68 1.1) one.
+(if (= #cfg 0)
+  ((if (= 1 (exists "SYS:Libs/Picasso96/VideoCore.card.pre-aga" (noreq)))
+     (copyfiles (source "SYS:Libs/Picasso96/VideoCore.card.pre-aga") (dest "SYS:Libs/Picasso96")
+       (newname "VideoCore.card") (optional "force") (nogauge)))
+   ; AGS's and AmiKit's Emu68-VC4.card, which the installer replaced as well
+   (if (= 1 (exists "SYS:Libs/Picasso96/Emu68-VC4.card.pre-aga" (noreq)))
+     (copyfiles (source "SYS:Libs/Picasso96/Emu68-VC4.card.pre-aga") (dest "SYS:Libs/Picasso96")
+       (newname "Emu68-VC4.card") (optional "force") (nogauge)))
+   ; the monitor icons as they were before VC4_LEGACY_ID (nothing to do where
+   ; Install did not change one)
+   (run (cat #tool " UNINSTALL MONITOR >NIL:"))))
+
+; the boot partition put away safely for the power cycle, as the installer
+; does (agaboot DISMOUNT) - before C:agaboot goes, which #tool may be
+(if (<> #boot "")
+  (run (cat #tool " DISMOUNT \"" #boot "\" >NIL:")))
+
+(delete "C:agastat" (optional "force"))
+(delete "C:agaboot" (optional "force"))
+(delete "SYS:Utilities/AGA-SoundMonitor" (optional "force"))
+(delete "SYS:Utilities/AGA-SoundMonitor.info" (optional "force"))
+
+(set #msg (cat "AGA-PISTORM has been removed.\n\n"
+               "POWER CYCLE the Amiga to start\n"
+               "your previous kernel."))
+(set #why "config.txt could not be changed\n(is the boot partition read-only?).\n\n")
+(set #fix (cat "On a PC: in config.txt, delete the\n"
+               "AGA-PISTORM lines and remove\n"
+               "\"#AGA-PISTORM-WAS: \" from the old\n"
+               "kernel= line(s)."))
+; rc 20: its block has lost its end line - agaboot leaves such a file alone.
+; The lines inside that block carry no AGA-PISTORM, so the recipe above
+; would leave them in: the end line goes back instead, and this drawer's
+; agaboot does the rest when Uninstall runs again.
+(if (= #cfg 20)
+  ((set #why "config.txt was left as it is:\nits AGA-PISTORM block has lost\nits end line, # AGA-PISTORM }\n\n")
+   (set #fix (cat "On a PC, put that line back where\n"
+                  "the block ends, then run\n"
+                  "Uninstall again."))))
+(if (= #boot "")
+  (set #why "config.txt was left as it is.\n\n"))
+(if (<> #cfg 0)
+  (set #msg (cat "AGA-PISTORM was removed, but\n"
+                 #why
+                 #fix)))
+(exit #msg (quiet))

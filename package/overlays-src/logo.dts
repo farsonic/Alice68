@@ -1,0 +1,27 @@
+/* logo.dts - the source of package/files/overlays/logo.dtbo.
+ *
+ * Emu68's logo-colour overlay by Michal Schulz, from Emu68 git 3cd482d
+ * (src/overlays/logo.dts, https://github.com/michalsc/Emu68), under the
+ * Mozilla Public License 2.0 (MPL-2.0.txt). Emu68 0ba3a89, which the kernels
+ * are built from, does not have it yet. Everything below this comment is the
+ * file as it is at 3cd482d.
+ *
+ * SPDX-License-Identifier: MPL-2.0
+ */
+/dts-v1/;
+/plugin/;
+
+/ {
+    fragment@0 {
+        target-path = "/";
+        __overlay__ {
+            emu68: emu68 {
+                logo-color = <0x00000000>;
+            };
+        };
+    };
+
+    __overrides__ {
+        color = <&emu68>,"logo-color:0{gray=0,black=1,purple=2,clay=3,regal=4,reef=5,orchid=6,dune=7,ember=8,moss=9,bone=10,wb13=11,wb20=12,wb20i=13,=0}";
+    };
+};

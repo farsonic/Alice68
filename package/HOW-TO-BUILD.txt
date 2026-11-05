@@ -1,0 +1,137 @@
+HOW TO BUILD AGA-PISTORM FROM THIS FOLDER
+=========================================
+
+Everything the package is built from lives in this folder:
+
+  AGA-PISTORM-<version>-src.zip       AGA-PISTORM's own source (GPL-2.0): the
+                                      emulated chipset (core), the Emu68 glue
+                                      (arm) with the patch to Emu68, the Amiga
+                                      tools (agaboot, agastat, the AHI driver,
+                                      the WHDLoad stand-in), the installer, the
+                                      overlay source, the boot splash picture,
+                                      the build and package scripts - and, in
+                                      its VideoCore.card folder, the changes
+                                      to VideoCore.card
+  AGA-PISTORM-1.106-emu68-src.tar.gz  Emu68 (MPL-2.0) at the commit the kernels
+                                      are built from, with its submodules
+                                      capstone and libdeflate (made for 1.106,
+                                      the kernels still use that commit)
+  VideoCore.card-e49193a-src.tar.gz   VideoCore.card (MPL-2.0) at the commit
+                                      my changes are against, with its
+                                      submodules devicetree.resource and
+                                      unicam.resource
+
+Only the compilers aren't in here - they're free downloads. I built everything
+below on Ubuntu 24.04 (a PC, a virtual machine, or WSL on Windows):
+
+  sudo apt install build-essential ninja-build device-tree-compiler xxd \
+       cmake git python3 python3-pil python3-numpy unzip
+  sudo apt install gcc-14-aarch64-linux-gnu g++-14-aarch64-linux-gnu \
+       gcc-14-powerpc-linux-gnu g++-14-powerpc-linux-gnu
+  sudo cp /usr/aarch64-linux-gnu/include/gnu/stubs-lp64.h \
+          /usr/aarch64-linux-gnu/include/gnu/stubs-lp64_be.h
+
+  The Arm GNU Toolchain 15.3.rel2 for big-endian AArch64, unpacked in
+  ~/toolchains/armtc-15.3.rel2 (gcc-14 miscompiles the kernels' vector code):
+    https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads
+    arm-gnu-toolchain-15.3.rel2-x86_64-aarch64_be-none-linux-gnu.tar.xz
+
+  amiga-gcc, the m68k-amigaos cross compiler with the AmigaOS NDK and the
+  AHI headers, installed in /opt/amiga and on the PATH (export
+  PATH=/opt/amiga/bin:$PATH). It is a different compiler from the Arm one
+  above, and has its own version: the package's Amiga tools are built with
+  its GCC 15.2:
+    https://github.com/bebbo/amiga-gcc
+    make all && make sdk=ahi
+
+1. UNPACK
+
+  mkdir aga && cd aga
+  unzip <this folder>/AGA-PISTORM-<version>-src.zip
+  tar xzf <this folder>/AGA-PISTORM-1.106-emu68-src.tar.gz
+  tar xzf <this folder>/VideoCore.card-e49193a-src.tar.gz \
+      --transform 's,^VideoCore.card/,VideoCore.card-upstream/,'
+  mkdir -p AGA-PISTORM/third_party
+  mv Emu68 AGA-PISTORM/third_party/Emu68
+  cd AGA-PISTORM/third_party/Emu68
+  git apply ../../arm/emu68-aga.patch
+  cd ../..
+
+  You're in AGA-PISTORM now; the steps below run from there.
+
+2. THE KERNELS
+
+  AGA_PISTORM_ROOT=$PWD bash tools/build-wsl.sh
+      dist/wsl/Emu68-pistorm-classic-aga-wsl.gz      Files/Kernel/Emu68-classic-aga.gz
+      dist/wsl/Emu68-pistorm-classic-aga-pi3-wsl.gz  Files/Kernel/Emu68-classic-aga-pi3.gz
+  AGA_PISTORM_ROOT=$PWD bash tools/build-wsl.sh ps16
+      dist/ps16/Emu68-pistorm16-aga.gz               Files/Kernel/Emu68-pistorm16-aga.gz
+
+  The same runs build plain Emu68 kernels too - the "stock" ones - as a
+  control; they aren't in the package. Emu68's own overlays (emmc.dtbo,
+  pal.dtbo and the rest) fall out of the same build, in
+  /tmp/aga-build-aga/overlays.
+
+3. THE AMIGA TOOLS
+
+  sh tools/ahi/build.sh            the AHI driver aga-hdmi.audio
+  python3 tools/ahi/mkmode.py      its mode file
+  python3 tools/ahi/mkblob.py      both into tools/agaboot/ahi16_blob.h
+  sh tools/agaboot/build.sh        agaboot.new = Files/C/agaboot,
+                                   whdwrap.new = Files/C/WHDLoad-AGA
+  sh tools/agastat/build.sh        agastat.new = Files/C/agastat
+  sh tools/mkicon/build.sh         mkicon, which makes the Chipset menu's
+                                   icons on the Amiga
+
+  ahi16_blob.h is already in the zip, so agaboot builds without the AHI
+  steps too.
+
+4. THE LOGO OVERLAY AND THE BOOT SPLASH
+
+  dtc -o logo.dtbo package/overlays-src/logo.dts      (as Emu68 builds its own)
+  python3 tools/mklogo_rgb.py --version <version>
+      remakes third_party/Emu68/include/logo/logo_aga_rgb.h from
+      package/art/splash-src.webp (the patch carries it already)
+
+5. VIDEOCORE.CARD
+
+  It needs CMake 3.30 or newer (devicetree.resource asks for it - Ubuntu
+  24.04's is 3.28: https://cmake.org/download, or pip install cmake), and
+  amiga-gcc's sfdc and xxd on the PATH. The package's VideoCore.card was
+  built on Windows with amiga-gcc's older Windows build, GCC 6.5.0b, in
+  C:\amiga-gcc. There, amiga-gcc's sfdc is a Perl script cmd.exe cannot
+  start, so a sfdc.bat next to it does the damn job:
+      "C:\Program Files\Git\usr\bin\perl.exe" "C:\amiga-gcc\bin\sfdc" %*
+  and Git for Windows' usr\bin brings xxd.
+
+  cd ../VideoCore.card-upstream
+  git apply ../VideoCore.card/VideoCore-AGA-PISTORM.diff
+  cp ../VideoCore.card/overlay.c src/
+  cp ../VideoCore.card/version_gen.h.in cmake/
+  cmake -B build -G Ninja -DCMAKE_C_COMPILER=m68k-amigaos-gcc \
+        -DCMAKE_SYSTEM_NAME=Generic -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY
+  ninja -C build
+      VideoCore.card = Files/Libs/Picasso96/VideoCore.card
+  Built from this folder, its version string says "git:" and nothing
+  more (git describe needs a checkout); the package's says
+  "git:e49193a,dirty". The VideoCore.card folder's README.txt has more.
+
+WHAT COMES OUT THE SAME
+
+  Built this way from this folder (I checked 1.120 in an empty folder),
+  agaboot, the WHDLoad stand-in, the Sound monitor's launcher
+  (AGA-SoundMonitor), agastat and all ten overlays come out byte for byte
+  the package's. The kernels and VideoCore.card build too and differ only
+  in what the build stamps in: the date and time, the build folder, the
+  git description.
+
+6. THE PACKAGE
+
+  tools/mkpackage.py puts it all together the way it is published (it runs
+  on Windows with WSL, as I build it). By hand: package/amiga
+  holds the installer and the Chipset menu scripts, package/icons their
+  icons, package/README.txt the read-me, package/pc the SD-Setup helper.
+
+The CPLD folder next to Source holds the PiStorm project's own firmware
+files, unchanged - AGA-PISTORM doesn't build them. Their source is the
+PiStorm project's: https://github.com/captain-amygdala/pistorm

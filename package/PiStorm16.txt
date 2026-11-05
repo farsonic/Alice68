@@ -1,0 +1,79 @@
+AGA-PISTORM ON A PISTORM16
+==========================
+
+This package installs on either kind of PiStorm. README.txt covers all of it;
+this file is only what differs on a PiStorm16. By Astair86.
+
+Tested on an A600 with a CM4 and 2 MB of chip RAM: AGA WHDLoad games run.
+1.107's RGB port picture (Chipset menu -> Output -> RGB port), 1.110's
+picture settings (flicker fixer, brightness, TV border, NTSC, a picture per
+game) and 1.112's sound over HDMI (Chipset menu -> Sound, see README.txt) are
+in the PiStorm16 kernel too, but nobody has tried them on a PiStorm16 yet -
+tell me how it goes.
+
+TWO KERNELS, ONE INSTALLER
+  classic PiStorm (the A500 one, the PiStorm600)   Emu68-classic-aga.gz
+  PiStorm16                                        Emu68-pistorm16-aga.gz
+  A kernel only drives its own kind of board. The classic one stops on the
+  logo on a PiStorm16, and the other way round.
+
+  CaffeineOS picks the kernel in config.txt by board:
+      [gpio24=1]  PiStorm16          [gpio17=0]  classic
+  A classic board matches both, and [gpio17=0] comes later in the file, so it
+  wins there. The installer sets BOTH sections and copies both kernels,
+  whichever Amiga it runs on, so one card boots AGA-PISTORM on either board.
+
+  It works out which board it is on by itself. If it cannot - an older Emu68
+  gives the same name to more than one board - it asks you.
+
+WHAT THE INSTALLER CHANGES IN CONFIG.TXT ON A PISTORM16
+  The kernel= line, and nothing else: your clocks, gpu_mem and overlays stay
+  as they are, and it asks no Framethrower or PAL/NTSC question. A card set
+  up by hand, with no board sections, has its own kernel= line taken over.
+  The one exception: a card with no emmc line at all - a stock CaffeineOS
+  card has only the sdhc one - gets, under [pi4] (a CM4 reads that section
+  too),
+      dtoverlay=emmc,unit0=rw
+  because without it Emu68 1.1 cannot find the SD card. A card that already
+  boots Emu68 1.1 has it. Uninstall takes out exactly what was added.
+
+WHICH AMIGA TO RUN THE INSTALLER ON
+  - A fresh CaffeineOS card: either kind.
+  - A card already set up by an older, classic-only AGA-PISTORM package: run
+    it on the classic-PiStorm Amiga. A PiStorm16 cannot boot that card until
+    its kernel line is set, because the lines Emu68 1.1 needs stop an older
+    stock kernel right after its splash.
+  - If it says the boot partition is READ-ONLY on the PiStorm16, run it on a
+    classic-PiStorm Amiga instead, or set the card up by hand.
+
+BY HAND, WITHOUT THE INSTALLER
+  1. On a PC, copy Emu68-pistorm16-aga.gz out of the package's
+     Amiga/AGA-Pistorm/Files/Kernel/ into the card's KERNEL folder.
+  2. In config.txt, section [gpio24=1], leave one active kernel= line:
+         #kernel=kernel/Emu68-pistorm16
+         kernel=kernel/Emu68-pistorm16-aga.gz
+  3. POWER CYCLE. Ctrl-Amiga-Amiga does not load a new kernel.
+  Uninstall knows nothing about a hand edit: to go back, put
+  kernel=kernel/Emu68-pistorm16 into [gpio24=1] again yourself.
+
+  A card that has no emmc line also needs the one above, under [pi4].
+
+SMOOTHER SCROLLING: 50 Hz
+  AGA games run at 50 Hz (PAL). On a 60 Hz HDMI mode the picture keeps up but
+  scrolling judders now and then. For smooth scrolling use 1080p50, in
+  config.txt:
+      hdmi_group=1
+      hdmi_mode=31
+      hdmi_force_mode=1
+  and comment out any other hdmi_group= / hdmi_mode= lines. Newer CaffeineOS
+  configs have these three ready, commented out, under "UNIVERSAL 50Hz
+  OUTPUT". A screen that cannot do 50 Hz falls back to its own mode.
+
+IF THE PISTORM16 STOPS ON THE LOGO
+  Put the stock kernel back in [gpio24=1]:
+      kernel=kernel/Emu68-pistorm16
+  and power cycle.
+    - it boots  -> the fault is mine: a photo of the screen and your
+                   config.txt, please
+    - it hangs too -> the card itself is not booting; check config.txt against
+                   the lines listed above

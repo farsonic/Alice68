@@ -1,0 +1,9 @@
+[submodule "third_party/Emu68/external/capstone"]
+	path = third_party/Emu68/external/capstone
+	url = https://github.com/michalsc/capstone.git
+[submodule "third_party/Emu68/external/libdeflate"]
+	path = third_party/Emu68/external/libdeflate
+	url = https://github.com/ebiggers/libdeflate.git
+[submodule "third_party/Emu68/external/tiny-stl"]
+	path = third_party/Emu68/external/tiny-stl
+	url = https://github.com/michalsc/tiny-std.git

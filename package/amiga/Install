@@ -1,0 +1,821 @@
+; $VER: Install AGA-PISTORM 1.120 (31.10.2026)
+; SPDX-License-Identifier: GPL-2.0-only
+;
+; Installer script for AGA-PISTORM: AGA WHDLoad games on a classic PiStorm
+; or a PiStorm16. Each damn board has its own kernel and its own config.txt
+; section. Every change is backed up first (.pre-aga) and Uninstall undoes the
+; whole bloody lot. The file edits are agaboot's job (INSTALL CONFIG / HOOKS),
+; because the Installer language cannot edit a text file in place - useless
+; bastard that it is.
+;
+; Text rule: the Installer centres every line, wraps at its window width
+; (about 50 characters in the default font) and does not scroll - so I keep
+; no line over 44 characters and no window over about 11 lines. The details
+; go in the (help) texts.
+
+(set @app-name "AGA-PISTORM")
+(set #ver "1.120")
+(set #tool "Files/C/agaboot")
+; An archive unpacked on the Amiga (7z keeps no Amiga protection bits) leaves
+; the tools without the e bit, and the shell will not run the buggers. agaboot
+; CHECK then never ran, and a tester got told the boot partition was "not the
+; Emu68 boot partition" (2026-10-02). Set it first, in pretend mode too, for
+; fuck's sake. Through the Protect command, whose failure is only a return
+; code: a drawer on a FAT partition (SD-Setup puts it there) may not take
+; protection bits, and the Installer's own (protect) would stop the install
+; over that shit.
+(run "Protect Files/C/agaboot +e >NIL:" (safe))
+(run "Protect Files/C/agastat +e >NIL:" (safe))
+
+(welcome (cat "AGA-PISTORM " #ver))
+
+(message
+  "AGA-PISTORM runs AGA WHDLoad games\n"
+  "on an A500, A500+, A600 or A2000\n"
+  "with a classic PiStorm or a\n"
+  "PiStorm16, and a Pi 4, CM4, Pi 3\n"
+  "or Pi Zero 2 W.\n\n"
+  "It installs the AGA-PISTORM kernel,\n"
+  "the VideoCore 1.5 RTG driver, the\n"
+  "WHDLoad hooks and the Chipset menu.\n\n"
+  "Everything it changes is backed up\n"
+  "first, and Uninstall puts it back."
+  (all)
+)
+
+; ---- 0. which system? ---------------------------------------------------------
+; CaffeineOS brings everything AGA-PISTORM hooks into: config.txt's board
+; sections, the WHDLoad scripts already switched on, the ToolsDaemon and DOpus
+; menus. A plain AmigaOS 3.x has none of that shit: then the scripts are made
+; if missing and switched on in S:WHDLoad.prefs, config.txt's own kernel= line
+; is taken over (agaboot does it when there is no board section), and the
+; Chipset menu goes into Workbench's own menu bar (agaboot WBMENU, which
+; agaboot MENU starts at every boot) and into a drawer, SYS:Chipset.
+(set #sysdef 1)
+(if (<> 0 (exists "CaffeineOS:" (noreq))) (set #sysdef 0))
+; AmiKit (its own card, or the one on MultibootOS): everything as on AmigaOS
+; 3.x, and config.txt may lack a [gpio17=0] section - AmiKit's own card keeps
+; its classic kernel under [gpio24=1] - so agaboot appends an AGA-PISTORM one
+; at the end (INSTALL CONFIG AMIKIT). Nothing else differs from AmigaOS 3.x.
+(if (<> 0 (exists "SYS:S/AmiKit-Startup" (noreq))) (set #sysdef 2))
+(set #plain
+  (askchoice
+    (prompt "Which system is this Amiga\n"
+            "running?")
+    (help "CaffeineOS comes with everything AGA-PISTORM hooks into: its\n"
+          "WHDLoad scripts, its config.txt sections and the ToolsDaemon\n"
+          "and DOpus menus.\n\n"
+          "On any other AmigaOS 3.x (3.1.4, 3.2 ...) the installer makes\n"
+          "the WHDLoad scripts if they are missing, switches them on in\n"
+          "S:WHDLoad.prefs, takes over config.txt's own kernel= line, and\n"
+          "adds the Chipset menu to Workbench's menu bar and to a drawer,\n"
+          "SYS:Chipset.\n\n"
+          "AmiKit is installed as AmigaOS 3.x, with the Chipset menu in\n"
+          "Directory Opus too, and a config.txt without a [gpio17=0]\n"
+          "section (AmiKit's own card) gets one for the classic PiStorm.\n"
+          "Its VideoCore driver is replaced by this package's (kept\n"
+          "as Emu68-VC4.card.pre-aga).\n\n"
+          "WHDLoad and Picasso96 must be installed already.")
+    (choices "CaffeineOS" "AmigaOS 3.x" "AmiKit")
+    (default #sysdef)))
+(set #amikit 0)
+(if (= #plain 2)
+  ((set #amikit 1)
+   (set #plain 1)))
+
+; ---- 1. can this Amiga run it? ------------------------------------------------
+(working "Checking your Amiga...")
+; CHECK always returns 0: anything else means agaboot did not run at all,
+; and I will be damned if that gets reported as a missing boot partition
+(if (<> 0 (run (cat #tool " CHECK >NIL:") (safe)))
+  (abort "The installer's own tool,\n"
+         "Files/C/agaboot, could not run.\n\n"
+         "Unpack the AGA-PISTORM archive\n"
+         "again, or in a Shell in this\n"
+         "drawer type:\n"
+         "Protect Files/C/agaboot +e\n\n"
+         "Nothing was changed."))
+; the Emu68 boot partition - EMU68: on CaffeineOS, but that is only its label.
+; agaboot looks on every mounted partition for config.txt and the Pi firmware.
+; When none has them I make the user show me which one it is, as often as it
+; takes; Abort Install in the requester stops without a change.
+(set #boot (getenv "AGAPISTORM_BOOT"))
+(while (= #boot "")
+  (set #pick
+    (askdir
+      (prompt "Where is the Emu68 boot partition?\n\n"
+              "It is the SD card's FAT partition\n"
+              "with config.txt on it. Pick that\n"
+              "disk in the list, then Proceed.")
+      (help "The installer looks for a partition with config.txt and the\n"
+            "Pi firmware (start4.elf or start.elf) on it, and found none.\n"
+            "On CaffeineOS it is EMU68; on a card you set up yourself it\n"
+            "has whatever name you gave it.\n\n"
+            "On AmigaOS 3.x it is often not mounted, and then it has no\n"
+            "disk icon either: mount it first - with the icon that mounts\n"
+            "it (MOUNTFAT on some cards, or one in Storage/DOSDrivers;\n"
+            "the README's mountlist) - then click Volumes in this\n"
+            "requester to see it in the list.\n\n"
+            "Pick the disk itself, not a drawer on it.\n\n"
+            "Abort Install stops without changing anything.")
+      (default "SYS:")
+      (disk)))
+  (run (cat #tool " CHECK \"" #pick "\" >NIL:") (safe))
+  (set #boot (getenv "AGAPISTORM_BOOT"))
+  (if (= #boot "")
+    (message #pick "\n\n"
+             "is not the Emu68 boot partition:\n"
+             "there is no config.txt on it.\n\n"
+             "Pick the disk itself - the one\n"
+             "with config.txt on it.")))
+; config.txt and the kernel drawer under the names the partition already has
+; them by, in whatever case (CONFIG.TXT on some cards): a FAT handler that
+; matches case exactly would not find, or would duplicate, a name joined here.
+; Case-sensitive FAT, for fuck's sake.
+(set #cfgfile (getenv "AGAPISTORM_CFGFILE"))
+(if (= #cfgfile "") (set #cfgfile (tackon #boot "config.txt")))
+(set #kdir (getenv "AGAPISTORM_KDIR"))
+(if (= #kdir "") (set #kdir (tackon #boot "kernel")))
+
+(set #classic (getenv "AGAPISTORM_CLASSIC"))
+(set #ps16    (getenv "AGAPISTORM_PS16"))
+(set #pi4     (getenv "AGAPISTORM_PI4"))
+(set #pi3     (getenv "AGAPISTORM_PI3"))
+(set #chip    (getenv "AGAPISTORM_CHIP2M"))
+(set #write   (getenv "AGAPISTORM_WRITABLE"))
+(set #config  (getenv "AGAPISTORM_CONFIG"))
+(set #config16 (getenv "AGAPISTORM_CONFIG16"))
+(set #ntsc    (getenv "AGAPISTORM_NTSC"))
+(set #unicam  (getenv "AGAPISTORM_UNICAM"))
+(set #palovl  (getenv "AGAPISTORM_PALOVL"))
+; 1: config.txt has the AGA-PISTORM block start without its end line (see step 5)
+(set #cfgopen (getenv "AGAPISTORM_CFGOPEN"))
+; 0: no DEVS:Monitors icon has BOARDTYPE=VideoCore, so Picasso96 never starts
+; VideoCore.card (Picasso96 from Aminet on a plain 3.x); I say so at the end
+(set #vcmon   (getenv "AGAPISTORM_VCMON"))
+; MultibootOS: the other systems, whose config_<os>.txt has nothing of
+; AGA-PISTORM - their names (ags2, amikit...) on up to three lines ("" none,
+; or not such a card); I say so before step 2
+(set #mbo1 (getenv "AGAPISTORM_MBO1"))
+(set #mbo2 (getenv "AGAPISTORM_MBO2"))
+(set #mbo3 (getenv "AGAPISTORM_MBO3"))
+; the HDMI settings as they are (1.119), the questions' defaults in step 2:
+; the rate ("50", "60", "50.2", "" config.txt's own), sound on HDMI, full
+; range colours, and a first install (config.txt with nothing of AGA-PISTORM's)
+(set #rate   (getenv "AGAPISTORM_RATE"))
+(set #hsound (getenv "AGAPISTORM_HSOUND"))
+(set #full   (getenv "AGAPISTORM_FULL"))
+(set #fresh  (getenv "AGAPISTORM_FRESH"))
+
+; "?" means the board could not be told: no C:Emu68Info to ask, or an older
+; PiStorm16 kernel that calls itself "pistorm32lite" - then I ask the user
+(if (and (<> #classic "1") (and (<> #ps16 "1") (or (= #classic "?") (= #ps16 "?"))))
+  ((set #which
+     (askchoice
+       (prompt "Could not detect the PiStorm.\n\n"
+               "Which one is in this Amiga?")
+       (help "AGA-PISTORM works on the classic PiStorm (the CPLD one for\n"
+             "the A500, A500+, A600 and A2000 - the PiStorm600 is one too)\n"
+             "and on the PiStorm16. Each gets its own kernel. The\n"
+             "PiStorm32-lite is for the A1200, which has AGA already.")
+       (choices "Classic PiStorm" "PiStorm16" "Another one")
+       (default 0)))
+   (set #classic "0")
+   (set #ps16 "0")
+   (if (= #which 0) (set #classic "1"))
+   (if (= #which 1) (set #ps16 "1"))))
+(if (and (<> #classic "1") (<> #ps16 "1"))
+  (abort "AGA-PISTORM needs a classic\n"
+         "PiStorm (A500 / A500+ / A600 /\n"
+         "A2000) or a PiStorm16, and this\n"
+         "Amiga has neither.\n\n"
+         "Nothing was changed."))
+
+; each board boots its own kernel from its own config.txt section; this one's
+; section has to be there, or it is all fucked (both get their kernel line -
+; see step 5)
+(set #board "")
+(set #sect  "[gpio17=0]")
+(set #cfgok #config)
+(if (= #ps16 "1")
+  ((set #board " PS16")
+   (set #sect  "[gpio24=1]")
+   (set #cfgok #config16)))
+
+; "?" means C:Emu68Info could not name the Pi - then I ask. The classic
+; PiStorm kernel comes in two builds, one per Pi; step 5 copies the one
+; that matches under the name config.txt boots.
+(if (= #pi4 "?")
+  ((set #piwhich
+     (askchoice
+       (prompt "Could not detect the Raspberry Pi\n"
+               "(C:Emu68Info is missing).\n\n"
+               "Which one is on the PiStorm?")
+       (help "AGA-PISTORM has a kernel for the Raspberry Pi 4 (also the\n"
+             "Pi 400 and the Compute Module 4) and one for the Pi 3\n"
+             "(also the Pi Zero 2 W, the same chip family).\n"
+             "If you swap the Pi later, run this installer again.")
+       (choices "Pi 4 / Pi 400 / CM4" "Pi 3 / Zero 2 W" "Another one")
+       (default 0)))
+   (set #pi4 "0")
+   (set #pi3 "0")
+   (if (= #piwhich 0) (set #pi4 "1"))
+   (if (= #piwhich 1) (set #pi3 "1"))))
+(if (and (<> #pi4 "1") (<> #pi3 "1"))
+  (abort "AGA-PISTORM needs a Raspberry Pi 4\n"
+         "(or a Pi 400 / Compute Module 4)\n"
+         "or a Raspberry Pi 3 / Zero 2 W.\n\n"
+         "Nothing was changed."))
+(if (and (= #pi3 "1") (= #ps16 "1"))
+  (abort "On a PiStorm16, AGA-PISTORM\n"
+         "needs a Pi 4 or a Compute Module 4.\n\n"
+         "Nothing was changed."))
+
+; 1 MB machines: the games get 2 MB from the Pi, agaboot lends the OS the rest - lucky buggers
+
+; CaffeineOS: this board's section must be there, full stop. A plain card has
+; none and agaboot takes over its own kernel= line instead.
+(if (and (= #plain 0) (<> #cfgok "1"))
+  (abort (cat #cfgfile "\n"
+              "has no " #sect " section, so it\n"
+              "cannot be set up.\n\n"
+              "Nothing was changed.")))
+
+(if (<> #write "1")
+  (abort "The Emu68 boot partition is\n"
+         "READ-ONLY.\n\n"
+         "On a PC, run SD-Setup.cmd from the\n"
+         "AGA-PISTORM package once, then run\n"
+         "this installer again.\n\n"
+         "Nothing was changed."))
+
+; The AGA-PISTORM block without its end line, a hand edit gone wrong:
+; agaboot leaves such a file alone (rc 20 from INSTALL CONFIG), so I stop
+; here, before step 3 has copied a damn thing. Stopped only at step 5, the
+; kernels were overwritten by then - on a card installed before, the next
+; boot ran the new kernel with the old config.txt.
+(if (= #cfgopen "1")
+  (abort "config.txt has its AGA-PISTORM\n"
+         "block without the end line,\n"
+         "# AGA-PISTORM }\n\n"
+         "On a PC, put that line back where\n"
+         "the block ends (or delete the\n"
+         "block), then run Install again.\n\n"
+         "Nothing was changed."))
+
+(if (= #plain 0)
+  (if (= 0 (exists "S:WHDLoad-Startup" (noreq)))
+    (abort "S:WHDLoad-Startup was not found.\n"
+           "AGA-PISTORM needs CaffeineOS's\n"
+           "WHDLoad setup - or choose\n"
+           "AmigaOS 3.x at the start.\n\n"
+           "Nothing was changed."))
+  ((if (= 0 (exists "SYS:Libs/Picasso96" (noreq)))
+     (abort "Picasso96 was not found\n"
+            "(SYS:Libs/Picasso96).\n\n"
+            "AGA-PISTORM needs the Pi's RTG\n"
+            "desktop: install Picasso96 first.\n\n"
+            "Nothing was changed."))
+   (if (= 0 (exists "C:WHDLoad" (noreq)))
+     (if (= 0 (askbool
+                (prompt "WHDLoad was not found in C:.\n\n"
+                        "AGA-PISTORM switches WHDLoad\n"
+                        "games to the AGA chipset.\n\n"
+                        "Install anyway?")
+                (help "Choose No, install WHDLoad (it goes to C: by default) and\n"
+                      "run this installer again. Choose Yes if your WHDLoad is\n"
+                      "somewhere else on the path.")
+                (default 0)
+                (choices "Yes" "No")))
+       (abort "Install WHDLoad first, then run\n"
+              "this installer again.\n\n"
+              "Nothing was changed.")))))
+
+; MultibootOS: the install goes into this system only; the others keep
+; booting their own kernel (RGB2RTG 33b67b0: a driver copied into AGS by
+; hand ran there without the kernel). I say it here, before anything is
+; copied, so this window's Abort Install changes nothing - RGB2RTG had the
+; note in its closing window first, where it fell under the Proceed button
+; (fresh MultibootOS 2.1, 307a441), and mine has no room either.
+(if (<> #mbo1 "")
+  (message (cat "MultibootOS: AGA-PISTORM goes into\n"
+                "this system only. These boot their\n"
+                "own kernel and stay as they are:\n"
+                "  " #mbo1 "\n"
+                (if (<> #mbo2 "") (cat "  " #mbo2 "\n") "")
+                (if (<> #mbo3 "") (cat "  " #mbo3 "\n") "")
+                "\nFor AGA in one of them too, pick it\n"
+                "in the boot menu later and run\n"
+                "Install there.")
+           (all)))
+
+; ---- 2. two questions about the hardware ----------------------------------------
+; Each is skipped when the card's own config.txt answers it (CHECK: 1): the
+; installer only ever ADDS lines, so an overlay of the card's stays either
+; way. An overlay in the AGA-PISTORM block (CHECK: 2) is asked about again,
+; the last answer the default: INSTALL CONFIG builds the block anew, and up to
+; 1.119 an update skipped the question and dropped a Framethrower line (a
+; tester). With dtoverlay=pal in place the Agnus runs as PAL (Emu68 sets
+; BEAMCON0), so the detection would say PAL even on an NTSC chip - one more
+; reason to skip the damn question.
+(set #opts "")
+(set #hdmiopts "")
+(if (= #amikit 1) (set #opts " AMIKIT"))
+(set #ftdef 0)
+(if (= #unicam "2") (set #ftdef 1))
+(set #seen "Your Amiga reports: PAL")
+(set #agdef 0)
+(if (= #ntsc "1")
+  ((set #seen "Your Amiga reports: NTSC")
+   (set #agdef 1)))
+(if (= #palovl "2")
+  ((set #seen "The last install made an NTSC\nAgnus run as PAL (dtoverlay=pal).")
+   (set #agdef 1)))
+
+; A PiStorm16 is not asked: its config.txt gets its kernel line and nothing
+; else (setup.c), as its tester asked - and that is that.
+(if (<> #ps16 "1")
+  ((if (<> #unicam "1")
+     (if (askbool
+           (prompt "Do you have a Framethrower?\n\n"
+                   "(The board on the Pi's camera\n"
+                   "port that shows the Amiga's own\n"
+                   "picture on the HDMI output.)")
+           (help "YES adds dtoverlay=unicam,boot,smooth to config.txt, so\n"
+                 "the Framethrower picture is used for the native (non-RTG)\n"
+                 "screens. AGA games do not need it - the Pi draws those\n"
+                 "itself.")
+           (default #ftdef)
+           (choices "Yes" "No"))
+       (set #opts (cat #opts " FT"))))
+
+   (if (<> #palovl "1")
+     (if (= 1 (askchoice
+                (prompt "Is your Agnus chip PAL or NTSC?\n\n" #seen)
+                (help "With an NTSC Agnus, Emu68 is told to run the system as PAL\n"
+                      "(dtoverlay=pal, placed before the Framethrower line), which\n"
+                      "is what almost every game expects and what the Framethrower\n"
+                      "needs. AGA games always get a PAL AGA chipset either way.")
+                (choices "PAL" "NTSC")
+                (default #agdef)))
+       (set #opts (cat #opts " PAL"))))
+
+   ; HDMI (1.119, RGB2RTG 0.79): its rate, its colours, sound on it - asked
+   ; always, each answer's default what is set now (the rate: the one kept or
+   ; the AGA-PISTORM block's; 50 Hz on a first install, the display's own on
+   ; another that had none of mine). INSTALL CONFIG writes config.txt once with
+   ; all of them, and keeps the answers only when it could.
+   (set #ratedef 0)
+   (if (= #rate "50.2") (set #ratedef 1))
+   (if (= #rate "60") (set #ratedef 2))
+   (if (and (= #rate "") (= #fresh "0")) (set #ratedef 3))
+   (set #ratepick
+     (askchoice
+       (prompt "Which rate for HDMI?\n\n"
+               "PAL games and demos run at 50 Hz,\n"
+               "and only at that rate is every\n"
+               "frame shown exactly once.")
+       (help "1080p at 50 Hz adds hdmi_group=1, hdmi_mode=31 and\n"
+             "hdmi_force_mode=1 to config.txt (in the AGA-PISTORM block,\n"
+             "removed again by Uninstall). The RTG desktop then runs at 50 Hz\n"
+             "too. Nearly every TV and monitor takes 1080p at 50 Hz.\n\n"
+             "1080p at 50.2 Hz is the same picture on a slightly faster clock,\n"
+             "a custom mode. HDMI sync (HDMI's frames following the game's) can\n"
+             "only make an HDMI frame longer: at 50.2 Hz it also follows games\n"
+             "whose frames are a line short. PC monitors take it; a TV may\n"
+             "not - then pick 50 Hz.\n\n"
+             "1080p at 60 Hz is a PC monitor's mode, for NTSC games.\n\n"
+             "Keep the display's own setting adds nothing. At 60 Hz a 50 Hz\n"
+             "game shows every fifth frame twice, which judders.\n\n"
+             "RTG Image (the Chipset menu) changes it later: HDMI rate.")
+       (choices "1080p at 50 Hz (recommended)" "1080p at 50.2 Hz (room for sync)"
+                "1080p at 60 Hz" "Keep the display's own setting")
+       (default #ratedef)))
+   (set #hdmiopts " HDMIRATE=50")
+   (if (= #ratepick 1) (set #hdmiopts " HDMIRATE=ROOM"))
+   (if (= #ratepick 2) (set #hdmiopts " HDMIRATE=60"))
+   (if (= #ratepick 3) (set #hdmiopts " HDMIRATE=OWN"))
+
+   (if (= 1 (askchoice
+              (prompt "Is the display a PC monitor\n"
+                      "or a TV?\n\n"
+                      "HDMI's colours are set for it.")
+              (help "PC monitor adds hdmi_pixel_encoding=2 to config.txt with 1080p\n"
+                    "at 50 Hz (in the AGA-PISTORM block): HDMI sends the colours' full\n"
+                    "range, black at 0 and white at 255, as PC monitors - and every\n"
+                    "DVI one - expect. Without it the Pi sends a TV's limited range\n"
+                    "in that TV mode, and a PC monitor shows it grey and pale.\n\n"
+                    "TV adds nothing: the TV's own limited range, black at 16 and\n"
+                    "white at 235. A TV that expects it shows the full range with\n"
+                    "the dark parts too dark and the bright ones too bright.\n\n"
+                    "If the picture looks grey and pale, or too dark, pick the other\n"
+                    "one: RTG Image (the Chipset menu), HDMI colours.")
+              (choices "PC monitor (full range)" "TV (limited range)")
+              (default (if (= #full "0") 1 0))))
+     (set #hdmiopts (cat #hdmiopts " HDMICOLOURS=LIMITED"))
+     (set #hdmiopts (cat #hdmiopts " HDMICOLOURS=FULL")))
+
+   (if (askbool
+         (prompt "Play the Amiga's sound on HDMI\n"
+                 "as well?\n\n"
+                 "For the display's speakers, or an\n"
+                 "HDMI audio extractor. The Amiga's\n"
+                 "own audio outputs play either way.")
+         (help "YES sends the Amiga's sound over HDMI as well, from the next\n"
+               "power cycle on, and adds hdmi_drive=2 to config.txt (in the\n"
+               "AGA-PISTORM block): HDMI mode, which carries sound, whatever the\n"
+               "display says - a PC monitor, or an audio extractor, can ask for\n"
+               "DVI, which carries none.\n\n"
+               "NO leaves HDMI silent.\n\n"
+               "The Chipset menu's Sound changes it later, with the volume and\n"
+               "the rest.")
+         (choices "Yes" "No")
+         (default (if (= #hsound "1") 1 0)))
+     (set #hdmiopts (cat #hdmiopts " HDMISOUND=ON"))
+     (set #hdmiopts (cat #hdmiopts " HDMISOUND=OFF")))
+
+   ; A Pi 3 B+ / 3 A+ slows from 1.4 to 1.2 GHz at 60 C unless config.txt says
+   ; otherwise. temp_soft_limit=70 only if the player wants it (1.115): agaboot
+   ; keeps the answer (ENVARC:AGA_SOFTLIMIT), and that is the next default.
+   (if (= #pi3 "1")
+     ((set #tsldef 1)
+      (if (= (getenv "AGA_SOFTLIMIT") "OFF") (set #tsldef 0))
+      (if (askbool
+            (prompt "Let the Pi 3 keep its full speed\n"
+                    "up to 70 C?\n\n"
+                    "(temp_soft_limit=70 in config.txt.\n"
+                    "Without it a Pi 3 B+ or 3 A+ slows\n"
+                    "from 1.4 to 1.2 GHz at 60 C.)")
+            (help "YES adds temp_soft_limit=70 under [pi3] in config.txt: games\n"
+                  "keep their speed for longer once the Pi has warmed up. Give\n"
+                  "the Pi a heatsink, and a fan if you can.\n"
+                  "NO keeps the Pi 3's own 60 C: cooler, but slower after a\n"
+                  "long session.\n"
+                  "A temp_soft_limit line of your own in config.txt is always\n"
+                  "kept instead.")
+            (default #tsldef)
+            (choices "Yes" "No"))
+        (set #opts (cat #opts " SOFTLIMIT"))
+        (set #opts (cat #opts " NOSOFTLIMIT")))))
+
+   ; The Pi 4's SD card at 25 MHz instead of 50 (1.116, RGB2RTG 924ba03):
+   ; some cards lose single writes at 50 MHz. agaboot puts emmc.low_speed into
+   ; the command line file config.txt names (the AGA-PISTORM kernel reads it
+   ; there) and Uninstall takes it out. A card already at 25 MHz of its own is
+   ; not asked (AGAPISTORM_SLOW 2); the default is the last answer (1: the
+   ; AGA-PISTORM one), else No.
+   (if (and (= #pi4 "1") (<> (getenv "AGAPISTORM_SLOW") "2"))
+     ((set #slowdef 0)
+      (if (= (getenv "AGAPISTORM_SLOW") "1") (set #slowdef 1))
+      (if (askbool
+            (prompt "Run the SD card at 25 MHz\n"
+                    "instead of 50?\n\n"
+                    "(Only if files on the card got\n"
+                    "damaged now and then: some SD\n"
+                    "cards lose writes at 50 MHz on\n"
+                    "a Pi 4. Loading is slower.)")
+            (help "YES puts emmc.low_speed into the command line file that\n"
+                  "config.txt names (cmdline.txt): from the next power cycle\n"
+                  "the Pi 4 talks to its SD card at 25 MHz. On RGB2RTG's Pi 4\n"
+                  "two cheap cards lost single writes at 50 MHz and were clean\n"
+                  "at 25; a good card (a SanDisk Ultra) was fine at 50.\n"
+                  "NO keeps 50 MHz. Run Install again to change it; Uninstall\n"
+                  "takes the word out again.")
+            (default #slowdef)
+            (choices "Yes" "No"))
+        (set #opts (cat #opts " LOWSPEED"))
+        (set #opts (cat #opts " NOLOWSPEED")))))))
+
+; The game's picture on the Amiga's own RGB port as well, as HAM6 (1.118):
+; what the Chipset menu's Output - RGB port sets, asked here so that it is
+; on from the first game. Not config.txt but ENVARC:AGA_RGBPORT, so I ask
+; every bloody board. On with the settings that work best (agaboot RGBPORT,
+; applied in step 8): the frame rate Auto - a steady 25 when 50 does not
+; get through, judder otherwise (1.115) - exact colours and all 4096 of
+; HAM6; the size and the monitor position set before are kept. The default
+; is what is set now.
+(set #rgbnow (substr (getenv "AGA_RGBPORT") 0 4))
+(set #rgbdef 0)
+(if (= #rgbnow "HAM6") (set #rgbdef 1))
+(if (= #rgbnow "ONLY") (set #rgbdef 2))
+(set #rgb
+  (askchoice
+    (prompt "Show games on the Amiga's own RGB\n"
+            "port too, as HAM6?\n\n"
+            "(For a monitor on the Amiga's RGB\n"
+            "socket - a 1084, or a scaler.)")
+    (help "RGB PORT AND HDMI: while a game runs, the Pi draws its picture\n"
+          "as HAM6 (4096 colours) on the Amiga's own RGB port too, with\n"
+          "the settings that work best: the whole frame, frame rate Auto\n"
+          "(a steady 25 a second when 50 does not get through), exact\n"
+          "colours. A monitor position you set before is kept.\n"
+          "RGB PORT ONLY: the same, and the HDMI picture stays black.\n"
+          "NO: the RGB port stays dark while a game runs.\n\n"
+          "It works once AGA is on (Chipset menu - Init). To change it\n"
+          "later, or to centre the picture on your monitor (Position...):\n"
+          "Chipset menu - Output - RGB port.")
+    (choices "No - HDMI only" "RGB port and HDMI" "RGB port only (HDMI black)")
+    (default #rgbdef)))
+(set #rgbset "OFF")
+(if (= #rgb 1) (set #rgbset "HAM6 AUTO EXACT 4096COLOURS"))
+(if (= #rgb 2) (set #rgbset "ONLY AUTO EXACT 4096COLOURS"))
+(complete 10)
+
+; ---- 3. the Amiga tools -------------------------------------------------------
+(copyfiles (prompt "Installing agaboot") (help @copyfiles-help)
+  (source #tool) (dest "C:") (optional "force") (nogauge))
+(copyfiles (prompt "Installing agastat") (help @copyfiles-help)
+  (source "Files/C/agastat") (dest "C:") (optional "force") (nogauge))
+; the copies keep the source's bits: I make sure the WHDLoad hooks and the
+; menu can run the buggers
+(run "Protect C:agaboot +e >NIL:")
+(run "Protect C:agastat +e >NIL:")
+; the Sound monitor as a program of its own (1.118): SYS:Utilities/
+; AGA-SoundMonitor, with the system's default tool icon - it starts agaboot's
+(if (= 0 (exists "SYS:Utilities" (noreq)))
+  (makedir "SYS:Utilities" (infos)))
+(copyfiles (prompt "Installing AGA-SoundMonitor") (help @copyfiles-help)
+  (source "Files/Utilities/AGA-SoundMonitor") (dest "SYS:Utilities") (optional "force") (nogauge))
+(run "Protect SYS:Utilities/AGA-SoundMonitor +e >NIL:")
+(if (= 0 (exists "SYS:Utilities/AGA-SoundMonitor.info" (noreq)))
+  ((set #ti "ENV:Sys/def_tool.info")
+   (if (= 0 (exists #ti (noreq))) (set #ti "ENVARC:Sys/def_tool.info"))
+   (if (<> 0 (exists #ti (noreq)))
+     (copyfiles (source #ti) (dest "SYS:Utilities") (newname "AGA-SoundMonitor.info") (nogauge)))))
+(complete 20)
+
+; ---- 4. Emu68 overlays: every one this card is missing --------------------------
+(working "Adding the Emu68 overlays...")
+; agaboot compares the names in any case, so an OVERLAYS drawer holding
+; EMMC.DTBO gets no second copy beside it, and it makes the drawer if
+; missing - no hand-holding needed
+(set #ovl (getenv "AGAPISTORM_OVLDIR"))
+(if (= #ovl "") (set #ovl (tackon #boot "overlays")))
+(run (cat "C:agaboot INSTALL OVERLAYS Files/Overlays \"" #ovl "\" >NIL:"))
+(complete 35)
+
+; ---- 5. the kernels, then config.txt ------------------------------------------
+; Both boards' kernels, and agaboot gives both sections their kernel line: the
+; overlay block it adds stops a stock Emu68 1.0.x right after its splash, so a
+; section left on one would hang this card on the other kind of PiStorm. Nasty.
+(working "Copying the AGA-PISTORM kernels...")
+; CaffeineOS keeps its kernels in a kernel drawer; a card set up by hand has
+; its kernel in the root and no such drawer, so I make one (#kdir: see above)
+(if (= 0 (exists #kdir (noreq)))
+  (makedir #kdir))
+; the classic PiStorm kernel: the Pi 3 build or the Pi 4 one, always under
+; the name its config.txt line points at. No cleverness.
+(set #ckern "Files/Kernel/Emu68-classic-aga.gz")
+(if (= #pi3 "1") (set #ckern "Files/Kernel/Emu68-classic-aga-pi3.gz"))
+(set #pkern "Files/Kernel/Emu68-pistorm16-aga.gz")
+; Each copied as <name>.new first, read back and compared with the package's
+; (agaboot INSTALL VERIFY, 1.119, RGB2RTG 0.78): a Pi 4's card at 50 MHz - the
+; 25 MHz chosen above applies from the next boot - can lose a write (a copy
+; lost 4 KB on a fresh MultibootOS 2.1 card, RGB2RTG 2026-10-24). Up to three
+; copies each; only when both are the same do they replace the kernels. Else
+; nothing of them changes - the kernels and config.txt stay as they were -
+; and the Install stops here. Losing writes on an SD card is a bastard.
+(set #cnew (tackon #kdir "Emu68-classic-aga.gz.new"))
+(set #pnew (tackon #kdir "Emu68-pistorm16-aga.gz.new"))
+(set #kv 5)
+(set #tries 0)
+(while (and (<> #kv 0) (< #tries 3))
+  (copyfiles (prompt "Installing the kernel") (help @copyfiles-help)
+    (source #ckern) (dest #kdir) (newname "Emu68-classic-aga.gz.new") (optional "force") (nogauge))
+  (set #kv (run (cat #tool " INSTALL VERIFY \"" #ckern "\" \"" #cnew "\" >NIL:")))
+  (set #tries (+ #tries 1)))
+(set #kv2 5)
+(set #tries 0)
+(while (and (= #kv 0) (and (<> #kv2 0) (< #tries 3)))
+  (copyfiles (prompt "Installing the kernel") (help @copyfiles-help)
+    (source #pkern) (dest #kdir) (newname "Emu68-pistorm16-aga.gz.new") (optional "force") (nogauge))
+  (set #kv2 (run (cat #tool " INSTALL VERIFY \"" #pkern "\" \"" #pnew "\" >NIL:")))
+  (set #tries (+ #tries 1)))
+(if (or (<> #kv 0) (<> #kv2 0))
+  ((if (<> 0 (exists #cnew (noreq))) (delete #cnew (optional "force")))
+   (if (<> 0 (exists #pnew (noreq))) (delete #pnew (optional "force")))
+   (abort "A kernel copied to the SD card was\n"
+          "not the same as the package's,\n"
+          "three times: the card lost writes.\n\n"
+          "The kernels and config.txt are as\n"
+          "they were. Run Install again.")))
+; both good: each goes in place of the one there - kept as .old until the
+; new one has its name
+(set #kold (tackon #kdir "Emu68-classic-aga.gz"))
+(if (<> 0 (exists (cat #kold ".old") (noreq))) (delete (cat #kold ".old") (optional "force")))
+(if (<> 0 (exists #kold (noreq))) (rename #kold (cat #kold ".old")))
+(rename #cnew #kold)
+(if (<> 0 (exists (cat #kold ".old") (noreq))) (delete (cat #kold ".old") (optional "force")))
+(set #kold (tackon #kdir "Emu68-pistorm16-aga.gz"))
+(if (<> 0 (exists (cat #kold ".old") (noreq))) (delete (cat #kold ".old") (optional "force")))
+(if (<> 0 (exists #kold (noreq))) (rename #kold (cat #kold ".old")))
+(rename #pnew #kold)
+(if (<> 0 (exists (cat #kold ".old") (noreq))) (delete (cat #kold ".old") (optional "force")))
+
+; the config.txt found or picked above, by name: agaboot's own search would
+; not find a partition the user had to pick, the awkward sod
+; agaboot runs with >NIL:, so its reason shows only in a Shell: rc 20 is a
+; block whose end line was deleted by hand, which agaboot will not touch.
+; Step 1 stops on that already; this is in case CHECK could not tell. The
+; kernels above are copied by now, so no promise of an unchanged boot.
+(set #cfgrc (run (cat "C:agaboot INSTALL CONFIG" #opts #board #hdmiopts " \"" #cfgfile "\" >NIL:")))
+(if (= #cfgrc 20)
+  (abort "config.txt was left as it is: its\n"
+         "AGA-PISTORM block has lost its end\n"
+         "line, # AGA-PISTORM }\n\n"
+         "On a PC, put that line back where\n"
+         "the block ends (or delete the\n"
+         "block), then run Install again."))
+(if (<> 0 #cfgrc)
+  (abort "config.txt could not be changed.\n\n"
+         "Your Amiga will start exactly\n"
+         "as before.\n\n"
+         "Nothing else was changed."))
+(complete 55)
+
+; ---- 6. the RTG driver ----------------------------------------------------------
+; Only now, once config.txt boots the matching kernel: VideoCore 1.5 needs
+; Emu68 1.1, and on CaffeineOS's stock Emu68 1.0.x it can reboot-loop. Fuck
+; that. Mine goes in over a newer one too (1.120): a higher number may be
+; another project's build for its own kernel - RGB2RTG's 1.14, AmiKit's 1.9 -
+; and up to 1.119 a driver like that stayed. The one replaced is kept: the
+; first time as VideoCore.card.pre-aga, which Uninstall puts back; after that,
+; if it is not mine (agaboot INSTALL VERIFY: 0 the same, 5 not), as
+; VideoCore.card.replaced.
+; First, while the old driver is still there: VideoCore 1.5 names the board
+; to Picasso96 as BT_PiStorm, 1.2.x said uaegfx, and screen modes made with an
+; old driver no longer match - the Workbench would come up on the native
+; screen. agaboot INSTALL LEGACY decides whether the monitor icons need the
+; tooltype VC4_LEGACY_ID, INSTALL MONITOR below puts it there (RGB2RTG
+; 6c01a17).
+(run "C:agaboot INSTALL LEGACY >NIL:")
+(if (= 1 (exists "SYS:Libs/Picasso96/VideoCore.card" (noreq)))
+  (if (= 0 (exists "SYS:Libs/Picasso96/VideoCore.card.pre-aga" (noreq)))
+    (copyfiles (source "SYS:Libs/Picasso96/VideoCore.card") (dest "SYS:Libs/Picasso96")
+      (newname "VideoCore.card.pre-aga") (nogauge))
+    (if (= 5 (run "C:agaboot INSTALL VERIFY Files/Libs/Picasso96/VideoCore.card SYS:Libs/Picasso96/VideoCore.card >NIL:"))
+      (copyfiles (source "SYS:Libs/Picasso96/VideoCore.card") (dest "SYS:Libs/Picasso96")
+        (newname "VideoCore.card.replaced") (optional "force") (nogauge)))))
+(copyfiles (prompt "Installing the VideoCore 1.5 RTG driver") (help @copyfiles-help)
+  (source "Files/Libs/Picasso96/VideoCore.card") (dest "SYS:Libs/Picasso96") (optional "force") (nogauge))
+; AGS and AmiKit run the same driver as Emu68-VC4.card, for a monitor whose
+; BOARDTYPE is Emu68-VC4: that one is replaced too, kept the same way, or
+; Picasso96 goes on starting the old driver there (RGB2RTG 6c01a17). Bollocks
+; to that.
+(if (= 1 (exists "SYS:Libs/Picasso96/Emu68-VC4.card" (noreq)))
+  ((if (= 0 (exists "SYS:Libs/Picasso96/Emu68-VC4.card.pre-aga" (noreq)))
+     (copyfiles (source "SYS:Libs/Picasso96/Emu68-VC4.card") (dest "SYS:Libs/Picasso96")
+       (newname "Emu68-VC4.card.pre-aga") (nogauge))
+     (if (= 5 (run "C:agaboot INSTALL VERIFY Files/Libs/Picasso96/VideoCore.card SYS:Libs/Picasso96/Emu68-VC4.card >NIL:"))
+       (copyfiles (source "SYS:Libs/Picasso96/Emu68-VC4.card") (dest "SYS:Libs/Picasso96")
+         (newname "Emu68-VC4.card.replaced") (optional "force") (nogauge))))
+   (copyfiles (source "Files/Libs/Picasso96/VideoCore.card") (dest "SYS:Libs/Picasso96")
+     (newname "Emu68-VC4.card") (optional "force") (nogauge))))
+; VC4_LEGACY_ID where INSTALL LEGACY found the screen modes made for the old
+; driver (each icon kept first in DEVS:Monitors.pre-aga; Uninstall puts it
+; back, as it damn well should)
+(run "C:agaboot INSTALL MONITOR >NIL:")
+(complete 75)
+
+; ---- 7. WHDLoad hooks and the Chipset menu ------------------------------------
+; AmigaOS 3.x: CREATE makes the scripts that are missing first, the lazy sods
+(set #hooks "C:agaboot INSTALL HOOKS >NIL:")
+(if (= #plain 1) (set #hooks "C:agaboot INSTALL HOOKS CREATE >NIL:"))
+; AmiKit: no hooks in the WHDLoad scripts (an earlier install's go) - the
+; stand-in below switches the sandbox on before WHDLoad and off after it.
+; WHDLoad starts S:WHDLoad-Startup in the background and does not wait: on
+; AmiKit the hook came seconds late, after WHDLoad had refused the game as
+; needing AGA (2026-10-16). Timing is a bitch.
+(if (= #amikit 1) (set #hooks "C:agaboot INSTALL HOOKS CREATE NOWHD >NIL:"))
+(if (<> 0 (run #hooks))
+  (message "A WHDLoad script could not be\n"
+           "changed, so AGA may not switch on\n"
+           "for games.\n\n"
+           "In a Shell, C:agaboot INSTALL HOOKS\n"
+           "shows which one."
+           (all)))
+(if (= #amikit 1)
+  (if (<> 0 (run "C:agaboot WHDWRAP INSTALL Files/C/WHDLoad-AGA >NIL:"))
+    (message "C:WHDLoad could not be replaced\n"
+             "by AGA-PISTORM's stand-in, so\n"
+             "AGA games may be refused as\n"
+             "needing AGA.\n\n"
+             "In a Shell, C:agaboot WHDWRAP\n"
+             "INSTALL Files/C/WHDLoad-AGA says\n"
+             "why (run it in this drawer)."
+             (all))))
+(if (= #plain 1)
+  ; WHDLoad runs the two scripts only when its prefs name them (not needed
+  ; with AmiKit's stand-in, thank fuck)
+  ((if (= #amikit 0)
+     (if (<> 0 (run "C:agaboot INSTALL WHDPREFS >NIL:"))
+       (message "S:WHDLoad.prefs already runs\n"
+                "another startup or cleanup\n"
+                "command, so AGA may not switch on\n"
+                "for games.\n\n"
+                "In a Shell, C:agaboot INSTALL\n"
+                "WHDPREFS says what to do."
+                (all))))
+   ; the Chipset menu as a drawer: one script per item, run by IconX, each
+   ; icon made from the system's default project icon - no fancy artwork
+   (set #cs "SYS:Chipset")
+   (if (= 0 (exists #cs (noreq)))
+     (makedir #cs (infos)))
+   (set #tmpl "ENV:Sys/def_project.info")
+   (if (= 0 (exists #tmpl (noreq))) (set #tmpl "ReadMe.txt.info"))
+   ; the items of the menu before it was shortened (1.113): gone, with icons
+   (set #n 0)
+   (while (< #n 8)
+     (set #old (select #n "AGA toggle" "AGA toggle.info" "RTG Image" "RTG Image.info"
+                          "RGB port" "RGB port.info" "System wide" "System wide.info"))
+     (if (<> 0 (exists (tackon #cs #old) (noreq)))
+       (delete (tackon #cs #old) (optional "force")))
+     (set #n (+ #n 1)))
+   ; the items by name, not a (foreach) over Files/Chipset: on AmiKit the
+   ; first install hung in that drawer scan on the FAT (its own fat95 3.18
+   ; mount, Installer 47.19, 2026-10-16) - copying named files works there,
+   ; as RGB2RTG's install does it. Keep the names in step with Files/Chipset,
+   ; or this whole thing goes tits up.
+   (set #n 0)
+   (while (< #n 6)
+     (set #it (select #n "About" "Expert" "Init" "Output" "Sound" "Monitor"))
+     (copyfiles (source (tackon "Files/Chipset" #it)) (dest #cs) (nogauge))
+     (copyfiles (source #tmpl) (dest #cs) (newname (cat #it ".info")) (nogauge))
+     (tooltype (dest (tackon #cs #it))
+       (setdefaulttool "C:IconX")
+       (settooltype "WINDOW" "NIL:")
+       (setstack 16384)
+       (noposition))
+     (set #n (+ #n 1)))))
+
+; The Chipset menu now, in every desktop menu this Amiga has - ToolsDaemon's
+; file, Directory Opus 5's user menu, Workbench's own menu bar - as the
+; User-Startup block's agaboot MENU does at every boot. It says where, so
+; look at the last window if you care.
+(run "C:agaboot MENU >NIL:")
+(set #menus (getenv "AGAPISTORM_MENUS"))
+
+; The chipset choices start from a known state on a new installation. AGA
+; off: games run on the real chipset until the Chipset menu's Init switches
+; it on (Automatic). Per game: the emulated chipset is chosen from the
+; WHDLoad slave, which is what stops an ECS game coming out very dark; Init's
+; ECS mode overrides that for a game the slave gets wrong.
+; An upgrade with AGA on keeps it on, and keeps Init's mode with it: games
+; run as they did before. Until 1.118 every install switched it off, and a
+; user's games ran on his A500+'s real chipset after each upgrade - black on
+; the RGB port, noise for sound - until he went through the menus again
+; (2026-10-18). That was a right shit show.
+(set #kept (= (getenv "AGA_SANDBOX") "1"))
+(if (= #kept 0)
+  ((run "C:agaboot AGAGAMES OFF >NIL:")
+   (run "C:agaboot ECSGAMES AUTO >NIL:")))
+
+; ---- 8. the RGB port, as asked in step 2 ----------------------------------------
+; saved in ENVARC:AGA_RGBPORT, used from the next game - simple as that
+(run (cat "C:agaboot RGBPORT " #rgbset " >NIL:"))
+(complete 100)
+
+; Last, the boot partition put away safely for the power cycle, like a safe
+; remove: everything written out, the disk let go, the partition gone until
+; the next boot (agaboot DISMOUNT - a tester's idea, and a bloody good one).
+; Only written out when this installer runs from it, as it does where
+; SD-Setup put it.
+(run (cat "C:agaboot DISMOUNT \"" #boot "\" >NIL:"))
+(set #away "")
+(if (= (getenv "AGAPISTORM_PUTAWAY") "1")
+  (set #away (cat "(" #boot " is put away safely for it.)\n")))
+
+; No monitor for VideoCore.card: the driver is in, but Picasso96 will not
+; start it. I say it in the last window, not a window of its own: every
+; (message) has Abort Install, and that skipped the power cycle and Init
+; steps below and reported a finished install as aborted. The README says
+; how to make the monitor (Requirements).
+; Keep it short: the Installer's last window has room for about fifteen lines
+; on a PAL Workbench, and a longer text ran on behind its Proceed button (a
+; plain 3.2, 1.119) - twelve in the usual case, fifteen at most, and bugger
+; all room after that.
+(set #head "AGA-PISTORM is installed.\n\n")
+(if (= #vcmon "0")
+  (set #head (cat "Installed - but no RTG desktop on\n"
+                  "HDMI until DEVS:Monitors has a\n"
+                  "VideoCore monitor (see README).\n\n")))
+
+(set #also "")
+(if (= #plain 1) (set #also "(also in the drawer SYS:Chipset)\n"))
+; AGA kept on from before (above): nothing to switch on, so I leave it be
+(set #init "Then switch AGA on: Chipset\nmenu - Init - Automatic.\n")
+(if (= #kept 1) (set #init "AGA stays on, as it was.\n"))
+; where agaboot MENU put the title, e.g. "(in ToolsDaemon, Directory Opus)"
+(set #in "")
+(if (<> #menus "") (set #in (cat "(in " #menus ")\n")))
+(exit
+  #head
+  "Now POWER CYCLE the Amiga: off,\n"
+  "a few seconds, then on again -\n"
+  "Ctrl-Amiga-Amiga is not enough.\n"
+  #away "\n"
+  #init
+  #in
+  #also "\n"
+  "ECS game too dark? Init - ECS mode."
+  (quiet))
