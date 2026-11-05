@@ -282,11 +282,20 @@ unsigned fm_ssid_params(uint8_t *b, const char *ssid, unsigned n, const uint8_t 
     return 52;
 }
 
+static int hexval(char c) { return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1; }
+
 unsigned fm_pmk(uint8_t *b, const char *pass, unsigned n, int short_form)
 {
     unsigned keymax = short_form ? 65 : 128, size = short_form ? 70 : 132;
-    if (n > keymax - 1) n = keymax - 1;
     memset(b, 0, size);
+    int hex = n == 64;
+    for (unsigned i = 0; hex && i < 64; i++) if (hexval(pass[i]) < 0) hex = 0;
+    if (hex) {                              /* 64 hex digits: the PMK itself, as binary (flags 0) */
+        for (unsigned i = 0; i < 32; i++) b[4 + i] = (uint8_t)(hexval(pass[2 * i]) << 4 | hexval(pass[2 * i + 1]));
+        fm_put16(b, 32);
+        return size;
+    }
+    if (n > keymax - 1) n = keymax - 1;
     fm_put16(b, (uint16_t)n);
     fm_put16(b + 2, 1);                     /* WSEC_PASSPHRASE */
     cpy(b + 4, pass, n);

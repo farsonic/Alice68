@@ -172,7 +172,9 @@ static int erom_regaddr(struct chip *c, uint32_t *erom, uint32_t *base, uint32_t
     else if ((type & ~8u) == 0x5) wraptype = 2;                  /* address: slave wrapper */
     else return 1;
     for (int guard = 0; guard < 64 && (*base == 0 || *wrap == 0); guard++) {
+        int inner = 0;
         do {
+            if (++inner > 64) return 1;
             v = chip_r32(c, *erom);
             type = v & 0xf;
             if (type == 0x1) return 0;                           /* next component */
@@ -388,7 +390,7 @@ int chip_load(struct chip *c, const uint8_t *fw, uint32_t fwlen, const uint8_t *
     } while (!(v & 4));
     wifi_log("firmware running (%u ms)\n", (wifi_usecs() - t0) / 1000);
 
-    chip_w32(c, c->sdio_base + SD_HOSTINTMASK, I_HMB_SW_MASK);
+    chip_w32(c, c->sdio_base + SD_HOSTINTMASK, I_HMB_SW_MASK | I_CHIPACTIVE);
     if (c->id == 0x4345) {
         chip_w8(c, F1_WATERMARK, 0x60);
         chip_w8(c, F1_DEVICE_CTL, chip_r8(c, F1_DEVICE_CTL) | DEVCTL_F2WM_ENAB);

@@ -156,13 +156,13 @@ void sdh_pins(void)
         f = (f & ~(7u << s)) | (7u << s);
     }
     g[0x0c / 4] = swap32(f);
-    /* BCM2711 pulls (GPIO_PUP_PDN_CNTRL_REG2 for 32-47): CLK none, CMD/DAT up */
-    uint32_t p = swap32(g[0xe8 / 4]);
+    /* BCM2711 pulls (GPIO_PUP_PDN_CNTRL_REG2 at 0xec, GPIO 32-47): CLK none, CMD/DAT up */
+    uint32_t p = swap32(g[0xec / 4]);
     for (int pin = 34; pin <= 39; pin++) {
         int s = (pin - 32) * 2;
         p = (p & ~(3u << s)) | ((pin == 34 ? 0u : 1u) << s);
     }
-    g[0xe8 / 4] = swap32(p);
+    g[0xec / 4] = swap32(p);
 }
 
 int sdh_init(struct sdhost *h, uint32_t base_hz)
@@ -305,5 +305,5 @@ void sdh_card_irq(struct sdhost *h, int enable)
 
 int sdh_card_irq_pending(struct sdhost *h)
 {
-    return (rd(h, R_INTERRUPT) & INT_CARD) != 0;
+    return (rd(h, R_INTERRUPT) & rd(h, R_IRPT_EN) & INT_CARD) != 0;
 }

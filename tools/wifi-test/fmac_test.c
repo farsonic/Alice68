@@ -181,6 +181,12 @@ static void t_join(void)
     n = fm_pmk(k, "secret123", 9, 0);
     CHECK(n == 132 && fm_le16(k) == 9 && fm_le16(k + 2) == 1 && !memcmp(k + 4, "secret123", 9) && k[13] == 0, "PMK");
     CHECK(fm_pmk(k, "secret123", 9, 1) == 70, "short PMK");
+    static const char hex[] = "00112233445566778899aabbccddeeff00112233445566778899AABBCCDDEEFF";
+    n = fm_pmk(k, hex, 64, 0);
+    CHECK(n == 132 && fm_le16(k) == 32 && fm_le16(k + 2) == 0 && k[4] == 0x00 && k[5] == 0x11 && k[19] == 0xff && k[35] == 0xff,
+          "64 hex digits: binary PMK, flags 0");
+    n = fm_pmk(k, "0011223344556677889900112233445566778899001122334455667788990g1z", 64, 0);
+    CHECK(fm_le16(k) == 64 && fm_le16(k + 2) == 1, "64 characters that are not hex: a passphrase");
     CHECK(fm_sae_password(k, "pw", 2) == 130 && fm_le16(k) == 2 && k[2] == 'p', "SAE password");
     CHECK(fm_country(k, "GB") == 12 && !memcmp(k, "GB\0\0\0\0\0\0GB\0\0", 12), "country");
 }

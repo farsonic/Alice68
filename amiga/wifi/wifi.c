@@ -41,7 +41,10 @@ struct WifiBase {
     APTR    dos, gic, mbox;
     struct Task *task, *waiter;
     ULONG   sig_irq, sig_kick, sig_port;
-    volatile UBYTE quit, running;
+    volatile UBYTE quit, running, alive, rxskip;
+    ULONG   sem[12];                /* struct SignalSemaphore (46 bytes): process start */
+    UBYTE   fcstate, flowctl;
+    ULONG   rxskip_t0;
     UBYTE   poll, irq_on, chip_up, pad1;
     struct Interrupt irq;
     volatile ULONG irqs, spurious;
@@ -93,7 +96,7 @@ struct WifiBase {
     ULONG   ms, last_us, traffic_ms;
 
     /* prefs */
-    char    ssid[33], pass[64], country[3], fwdir[96];
+    char    ssid[33], pass[65], country[3], fwdir[96];
     ULONG   sdclock;
     UBYTE   pm, force_poll;
 
@@ -204,13 +207,14 @@ static void say(struct WifiBase *w, const char *m)
 
 /* ---- control messages (ioctls and iovars) ---------------------------------- */
 static void rx_all(struct WifiBase *w);
+static void tx_fail(struct WifiBase *w);
 
 static void ctl_rx(struct WifiBase *w, const UBYTE *m, unsigned len)
 {
     struct bcdc_reply r;
     if (bcdc_parse_reply(m, len, &r) || r.reqid != w->ctl_wait || w->ctl_got) return;
     unsigned n = r.len < w->ctl_outmax ? r.len : w->ctl_outmax;
-    if (w->ctl_out) memcpy(w->ctl_out, r.data, n);
+    if (w->ctl_out) { memcpy(w->ctl_out, r.data, n); memset(w->ctl_out + n, 0, w->ctl_outmax - n); }
     w->ctl_status = r.error ? (r.status ? r.status : -1) : 0;
     w->ctl_got = 1;
 }
@@ -238,9 +242,9 @@ static LONG ctl(struct WifiBase *w, ULONG cmd, int set, void *buf, unsigned len,
     bcdc_dcmd(f + SDPCM_HDRLEN, cmd, set, id, 0, plen);
     if (wait_credit(w)) { wifi_log("no credit for command %u\n", cmd); return -102; }
     unsigned n = sdpcm_frame(f, SDPCM_CHAN_CONTROL, w->txseq, BCDC_DCMD_HDR + plen);
-    w->txseq++;
     w->ctl_wait = id; w->ctl_got = 0; w->ctl_out = buf; w->ctl_outmax = outmax; w->ctl_status = 0;
-    if (chip_frame(&w->c, f, n, 1)) { wifi_log("command %u not sent\n", cmd); return -103; }
+    if (chip_frame(&w->c, f, n, 1)) { tx_fail(w); wifi_log("command %u not sent\n", cmd); return -103; }
+    w->txseq++;
     ULONG t0 = wifi_usecs();
     while (!w->ctl_got) {
         rx_all(w);
@@ -379,14 +383,36 @@ static void rx_payload(struct WifiBase *w, UBYTE *b, const UBYTE *p, unsigned le
     if (w->nrxd >= w->rxbatch_max) rx_flush(w);
 }
 
+static void f2_abort(struct WifiBase *w)
+{
+    UBYTE v = 2;                                    /* CCCR I/O abort: function 2 */
+    sdh_cmd52(&w->h, 1, 0, 0x06, &v);
+}
+
+/* as Linux brcmf_sdio_rxfail: abort, terminate the frame, ask for it again and
+   read nothing until the firmware says it has (NAKHANDLED) */
 static void rx_fail(struct WifiBase *w)
 {
-    chip_w8(&w->c, 0x1000d, 1);                     /* FRAMECTRL: terminate the read */
+    f2_abort(w);
+    chip_w8(&w->c, 0x1000d, 1);                     /* FRAMECTRL: RF_TERM */
     for (int i = 0; i < 100; i++) {
         if (!chip_r8(&w->c, 0x1001b) && !chip_r8(&w->c, 0x1001c)) break;
         wifi_udelay(10);
     }
-    chip_w32(&w->c, w->c.sdio_base + SD_TOSBMAILBOX, 1);     /* NAK: send it again */
+    chip_w32(&w->c, w->c.sdio_base + SD_TOSBMAILBOX, 1);     /* NAK */
+    w->rxskip = 1;
+    w->rxskip_t0 = now_ms(w);
+}
+
+/* as Linux brcmf_sdio_txfail */
+static void tx_fail(struct WifiBase *w)
+{
+    f2_abort(w);
+    chip_w8(&w->c, 0x1000d, 2);                     /* FRAMECTRL: WF_TERM */
+    for (int i = 0; i < 100; i++) {
+        if (!chip_r8(&w->c, 0x10019) && !chip_r8(&w->c, 0x1001a)) break;
+        wifi_udelay(10);
+    }
 }
 
 static void rx_glom(struct WifiBase *w, const UBYTE *desc, unsigned dlen)
@@ -413,6 +439,10 @@ static void rx_glom(struct WifiBase *w, const UBYTE *desc, unsigned dlen)
 static void rx_all(struct WifiBase *w)
 {
     unsigned nextlen = 0;
+    if (w->rxskip) {                                /* waiting for the NAK to be handled */
+        if (now_ms(w) - w->rxskip_t0 < 200) return;
+        w->rxskip = 0;
+    }
     for (int guard = 0; guard < 64; guard++) {
         UBYTE *b = (w->attached && w->started) ? pool_get(w) : 0;
         UBYTE *buf = b ? b : w->rxbuf;
@@ -427,7 +457,9 @@ static void rx_all(struct WifiBase *w)
             rx_fail(w);
             break;
         }
-        w->maxseq = r.maxseq;
+        /* the window, sanity-checked as Linux does */
+        w->maxseq = (UBYTE)(r.maxseq - w->txseq) > 0x40 ? (UBYTE)(w->txseq + 2) : r.maxseq;
+        w->flowctl = r.flowctl;
         if (r.len > BUFSZ) { if (b) pool_put(w, b); rx_fail(w); break; }
         unsigned total = (r.len + 3) & ~3u;
         if (total > first && chip_frame(&w->c, buf + first, total - first, 0)) { if (b) pool_put(w, b); break; }
@@ -471,7 +503,7 @@ static void tx_done_flush(struct WifiBase *w)
 static void tx_all(struct WifiBase *w)
 {
     while (w->tx_tail != w->tx_head) {
-        if (!sdpcm_credit(w->txseq, w->maxseq)) break;
+        if (!sdpcm_credit(w->txseq, w->maxseq) || w->fcstate || (w->flowctl & 1)) break;
         struct txent *t = &w->tx[w->tx_tail % TXRING];
         ULONG len = 0;
         for (UWORD i = 0; i < t->nseg; i++) len += t->sg[i].nsg_Len;
@@ -480,9 +512,8 @@ static void tx_all(struct WifiBase *w)
             UBYTE *f = w->txbuf, *q = f + SDPCM_HDRLEN + BCDC_DATA_HDR;
             for (UWORD i = 0; i < t->nseg; i++) { memcpy(q, t->sg[i].nsg_Data, t->sg[i].nsg_Len); q += t->sg[i].nsg_Len; }
             unsigned n = sdpcm_frame(f, SDPCM_CHAN_DATA, w->txseq, len);
-            w->txseq++;
-            if (chip_frame(&w->c, f, n, 1)) w->tx_err++;
-            else { w->tx_pkts++; w->tx_bytes += len; }
+            if (chip_frame(&w->c, f, n, 1)) { w->tx_err++; tx_fail(w); }
+            else { w->txseq++; w->tx_pkts++; w->tx_bytes += len; }
         }
         w->done[w->ndone++] = t->cookie;
         w->tx_tail++;
@@ -521,7 +552,7 @@ static LONG ndo_TxSubmit(APTR ctx, const struct NetDevTxDesc *d, ULONG count)
     Enable();
     return (LONG)n;
 }
-static VOID ndo_TxKick(APTR ctx) { struct WifiBase *w = ctx; if (w->task) Signal(w->task, w->sig_kick); }
+static VOID ndo_TxKick(APTR ctx) { struct WifiBase *w = ctx; Disable(); if (w->task) Signal(w->task, w->sig_kick); Enable(); }
 static VOID ndo_RxRelease(APTR ctx, APTR cookie) { pool_put(ctx, cookie); }
 static APTR ndo_DmaAlloc(APTR ctx, ULONG size, ULONG align)
 {
@@ -784,6 +815,15 @@ static void retry(struct WifiBase *w, const char *why)
     w->retry_at = now_ms(w) + w->backoff;
 }
 
+static int hex64(const char *s)
+{
+    for (int i = 0; i < 64; i++) {
+        char c = s[i];
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) return 0;
+    }
+    return 1;
+}
+
 static void join(struct WifiBase *w, const struct fm_bss *b)
 {
     struct fm_bss any;
@@ -830,7 +870,7 @@ static void join(struct WifiBase *w, const struct fm_bss *b)
         if (sae) {
             n = fm_sae_password(k, w->pass, pl);
             if (iov_set(w, "sae_password", k, n)) { retry(w, "SAE password not accepted"); return; }
-        } else if (pl < 8 || pl > 64) {
+        } else if (pl < 8 || pl > 64 || (pl == 64 && !hex64(w->pass))) {
             retry(w, "the password must have 8 to 63 characters (or 64 hex digits)");
             return;
         } else {
@@ -1118,6 +1158,7 @@ static int command(struct WifiBase *w, struct IOStdReq *io)
         break;
     case WIFI_CMD_LOG: {
         char *d = io->io_Data;
+        if (!d) { err = NDERR_BADPARAMS; break; }
         ULONG max = io->io_Length, have = w->logpos < LOGSZ ? w->logpos : LOGSZ;
         if (have > max) have = max;
         for (ULONG i = 0; i < have; i++) d[i] = w->log[(w->logpos - have + i) % LOGSZ];
@@ -1140,6 +1181,7 @@ static int command(struct WifiBase *w, struct IOStdReq *io)
         say(w, "disconnected");
         break;
     case WIFI_CMD_OFF:
+        if (w->attached) { say(w, "not switched off: a TCP/IP stack is using it"); err = NDERR_BUSY; break; }
         say(w, "switched off");
         w->quit = 1;
         break;
@@ -1156,6 +1198,8 @@ static void service(struct WifiBase *w)
     if (!w->chip_up) return;
     uint32_t is, mb;
     chip_irq_ack(&w->c, &is, &mb);
+    if (mb & HMB_DATA_NAKHANDLED) w->rxskip = 0;
+    if (is & I_HMB_FC_CHANGE) w->fcstate = (is & I_HMB_FC_STATE) != 0;
     if (mb & HMB_DATA_FWHALT) {
         say(w, "the WiFi firmware stopped");
         w->chip_up = 0;
@@ -1184,6 +1228,7 @@ static void wifi_proc(void)
     w->unit.unit_MsgPort.mp_SigTask = w->task;
     w->unit.unit_MsgPort.mp_Flags = PA_SIGNAL;
     w->running = 1;
+    w->alive = 1;
     Signal(w->waiter, SIGF_SINGLE);
     w->waiter = 0;
     Permit();
@@ -1224,6 +1269,15 @@ static void wifi_proc(void)
 
     /* shut down: chip off, requests answered */
     if (timer_out) { AbortIO(tr); WaitIO(tr); }
+    if (w->attached) { tx_drop_all(w); w->attached = w->started = 0; }
+    {
+        struct IOStdReq *io;
+        Forbid();
+        w->unit.unit_MsgPort.mp_Flags = PA_IGNORE;
+        w->running = 0;                     /* dev_beginio answers from now on */
+        while ((io = GetMsg(&w->unit.unit_MsgPort))) { io->io.io_Error = IOERR_OPENFAIL; ReplyMsg(io); }
+        Permit();
+    }
     if (w->irq_on) { sdh_card_irq(&w->h, 0); RemIntServerEx(w->gic, GIC_IRQ, &w->irq); w->irq_on = 0; }
     if (w->chip_up) { cmd_int(w, WLC_DOWN, 0); w->chip_up = 0; }
     if (w->mbox) MB_SetGPIOState(w->mbox, 1, 0);
@@ -1237,9 +1291,10 @@ static void wifi_proc(void)
     if (tr) DeleteIORequest(tr);
     if (tp) DeleteMsgPort(tp);
     Forbid();
-    w->unit.unit_MsgPort.mp_Flags = PA_IGNORE;
-    w->running = 0;
+    Disable();
     w->task = 0;
+    Enable();
+    w->alive = 0;
     if (w->waiter) Signal(w->waiter, SIGF_SINGLE);
     if (w->dos) CloseLibrary(w->dos);
     /* exits under Forbid: nothing of this process runs after the closer wakes */
@@ -1258,6 +1313,7 @@ ULONG dev_init(struct WifiBase *w, APTR seglist)
     w->unit.unit_MsgPort.mp_Node.ln_Type = NT_MSGPORT;
     w->unit.unit_MsgPort.mp_Flags = PA_IGNORE;
     NewList(&w->unit.unit_MsgPort.mp_MsgList);
+    InitSemaphore(w->sem);
     g_w = w;
     return (ULONG)w;
 }
@@ -1268,6 +1324,12 @@ LONG dev_open(struct WifiBase *w, struct IOStdReq *io, ULONG unit, ULONG flags)
     io->io.io_Error = IOERR_OPENFAIL;
     if (unit != 0) return -1;
     w->lib.lib_OpenCnt++;                   /* no expunge while we wait */
+    ObtainSemaphore(w->sem);                /* one opener starts the process */
+    if (!w->running && w->alive) {          /* still ending after OFF: let it finish */
+        w->waiter = FindTask(0);
+        SetSignal(0, SIGF_SINGLE);
+        while (w->alive) Wait(SIGF_SINGLE);
+    }
     if (!w->running) {
         APTR dos = OpenLibrary("dos.library", 37);
         if (dos) {
@@ -1277,10 +1339,11 @@ LONG dev_open(struct WifiBase *w, struct IOStdReq *io, ULONG unit, ULONG flags)
             w->waiter = FindTask(0);
             w->quit = 0;
             SetSignal(0, SIGF_SINGLE);
-            if (CreateNewProc(dos, t)) Wait(SIGF_SINGLE);
+            if (CreateNewProc(dos, t)) while (!w->running) Wait(SIGF_SINGLE);
             CloseLibrary(dos);
         }
     }
+    ReleaseSemaphore(w->sem);
     if (!w->running) { w->lib.lib_OpenCnt--; return -1; }
     io->io.io_Unit = &w->unit;
     io->io.io_Error = 0;
@@ -1291,7 +1354,7 @@ LONG dev_open(struct WifiBase *w, struct IOStdReq *io, ULONG unit, ULONG flags)
 
 static ULONG do_expunge(struct WifiBase *w)
 {
-    if (w->lib.lib_OpenCnt || w->running) { w->lib.lib_Flags |= LIBF_DELEXP; return 0; }
+    if (w->lib.lib_OpenCnt || w->alive) { w->lib.lib_Flags |= LIBF_DELEXP; return 0; }
     ULONG seg = (ULONG)w->seglist;
     Remove(&w->lib.lib_Node);
     g_w = 0;
@@ -1308,13 +1371,15 @@ ULONG dev_close(struct WifiBase *w, struct IOStdReq *io)
     /* The chip stays on after the last close (a tool run before the TCP/IP stack
        must not drop the connection); Alice68-WiFi OFF stops the process, and
        the last close then waits for it to end. */
-    if (!w->lib.lib_OpenCnt && w->running && w->quit) {
+    if (!w->lib.lib_OpenCnt && w->alive && w->quit) {
         Forbid();
-        if (w->running) {
+        if (w->alive) {
             w->waiter = FindTask(0);
             SetSignal(0, SIGF_SINGLE);
-            Signal(w->task, SIGBREAKF_CTRL_C);
-            while (w->running) Wait(SIGF_SINGLE);
+            Disable();
+            if (w->task) Signal(w->task, SIGBREAKF_CTRL_C);
+            Enable();
+            while (w->alive) Wait(SIGF_SINGLE);
         }
         Permit();
     }
@@ -1339,6 +1404,11 @@ void dev_beginio(struct WifiBase *w, struct IOStdReq *io)
             q->SupportedCommands = cmds;
             io->io_Actual = sizeof *q;
         }
+        if (!(io->io.io_Flags & IOF_QUICK)) ReplyMsg(io);
+        return;
+    }
+    if (!w->running) {                      /* the process has ended (OFF): nobody to answer */
+        io->io.io_Error = IOERR_OPENFAIL;
         if (!(io->io.io_Flags & IOF_QUICK)) ReplyMsg(io);
         return;
     }

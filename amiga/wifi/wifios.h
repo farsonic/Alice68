@@ -53,6 +53,9 @@ static inline void WaitIO(APTR io)                        { lvo(SYSBASE, -474, 0
 static inline void AbortIO(APTR io)                       { lvo(SYSBASE, -480, 0, 0, 0, (ULONG)io); }
 static inline APTR CreateIORequest(APTR port, ULONG n)    { return (APTR)lvo(SYSBASE, -654, n, 0, (ULONG)port, 0); }
 static inline void DeleteIORequest(APTR io)               { lvo(SYSBASE, -660, 0, 0, (ULONG)io, 0); }
+static inline void InitSemaphore(APTR s)                  { lvo(SYSBASE, -558, 0, 0, (ULONG)s, 0); }
+static inline void ObtainSemaphore(APTR s)                { lvo(SYSBASE, -564, 0, 0, (ULONG)s, 0); }
+static inline void ReleaseSemaphore(APTR s)               { lvo(SYSBASE, -570, 0, 0, (ULONG)s, 0); }
 static inline APTR CreateMsgPort(void)                    { return (APTR)lvo(SYSBASE, -666, 0, 0, 0, 0); }
 static inline void DeleteMsgPort(APTR p)                  { lvo(SYSBASE, -672, 0, 0, (ULONG)p, 0); }
 

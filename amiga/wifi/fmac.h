@@ -164,7 +164,8 @@ unsigned fm_build_wpaie(uint8_t *buf, const struct fm_bss *b, int sae);
 unsigned fm_join_params(uint8_t *buf, const char *ssid, unsigned ssid_len, const uint8_t *bssid, uint16_t chanspec);
 /* WLC_SET_SSID value (plain join params), the fallback. Returns its length (52). */
 unsigned fm_ssid_params(uint8_t *buf, const char *ssid, unsigned ssid_len, const uint8_t *bssid);
-/* WLC_SET_WSEC_PMK value: the passphrase for the firmware supplicant. Returns its length. */
+/* WLC_SET_WSEC_PMK value: the passphrase for the firmware supplicant, or with 64 hex
+ * digits the PMK itself. Returns its length. */
 unsigned fm_pmk(uint8_t *buf, const char *pass, unsigned len, int short_form);
 /* "sae_password" value. Returns its length. */
 unsigned fm_sae_password(uint8_t *buf, const char *pass, unsigned len);
