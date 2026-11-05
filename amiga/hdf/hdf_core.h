@@ -66,6 +66,7 @@ struct hdf_part {
 struct hdf_opts {
     int  off;                       /* hdf=off */
     int  readonly;                  /* hdf.readonly */
+    int  noboot;                    /* hdf.noboot: mount every hardfile, boot from none (but hdf.boot) */
     char boot[HDF_NAME];            /* hdf.boot=NAME: this hardfile boots and wins name clashes */
 };
 

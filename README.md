@@ -98,6 +98,9 @@ for read-only.
   layout is worked out from the file size and checked against the FFS root block. The
   partition is mounted as the first free `DH0`, `DH1`, and so on, and is not bootable
   unless chosen with `hdf.boot=`.
+- **Same volume twice:** if a hardfile holds a copy of the volume on your SD card's
+  partition (two volumes both called `Workbench`, say), AmigaOS can mix them up. Rename
+  one of the volumes, or use `hdf.boot=` so that only one of them is mounted.
 - **Writing:** writes go straight into the file's own clusters on the card and nowhere
   else. The FAT itself is never changed, so the file keeps its size and place. Back up
   hardfiles you care about before writing to them here.
@@ -111,6 +114,7 @@ Options in `cmdline.txt`:
 |---|---|
 | `hdf.boot=NAME` | This hardfile boots, ahead of the other drives. A partition named like a drive that's already mounted (the SD card's `DH0`, say) takes its name, and the other drive is not mounted. `NAME` is the file name with or without `.hdf`, in any case; write a space as `_` (e.g. `hdf.boot=Workbench_3.1`). |
 | *(no `hdf.boot`)* | Drives already mounted keep their names: a hardfile partition with the same name is left out, so no drive is ever there twice. Hardfiles boot only as their RDB says. |
+| `hdf.noboot` | Every hardfile is mounted, none boots. A partition named like a drive that's already mounted gets a name of its own (`HF<unit><partition>`, e.g. `HF10`). With `hdf.boot=` as well, only that hardfile boots. |
 | `hdf.readonly` | No writes: the drives show as write-protected. |
 | `hdf=off` | No hardfiles at all. |
 

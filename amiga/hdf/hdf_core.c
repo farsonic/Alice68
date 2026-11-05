@@ -316,6 +316,7 @@ void hdf_parse_opts(const char *c, struct hdf_opts *o)
         unsigned n = (unsigned)(c - t);
         if (tok_eq(t, n, "hdf=off")) o->off = 1;
         else if (tok_eq(t, n, "hdf.readonly") || tok_eq(t, n, "hdf.ro")) o->readonly = 1;
+        else if (tok_eq(t, n, "hdf.noboot")) o->noboot = 1;
         else if (n > 9 && tok_eq(t, 9, "hdf.boot=")) {
             unsigned k = 0;
             for (; k + 9 < n && k < HDF_NAME - 1; k++) o->boot[k] = t[9 + k];

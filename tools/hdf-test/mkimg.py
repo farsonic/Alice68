@@ -149,7 +149,8 @@ def main():
     card(out + "/card16.img", 16, out)
     # the same card with other options in cmdline.txt
     for name, line in (("boot", "aga.look=0 hdf.boot=workbench_3.1.hdf aga.scale=1"),
-                       ("raw", "hdf.boot=RAW"), ("off", "hdf=off"), ("ro", "hdf.readonly aga.look=0")):
+                       ("raw", "hdf.boot=RAW"), ("off", "hdf=off"), ("ro", "hdf.readonly aga.look=0"),
+                       ("noboot", "hdf.noboot"), ("bootnb", "hdf.noboot hdf.boot=raw.hdf")):
         img = "%s/card32_%s.img" % (out, name)
         with open(out + "/card32.img", "rb") as a, open(img, "wb") as b:
             b.write(a.read())

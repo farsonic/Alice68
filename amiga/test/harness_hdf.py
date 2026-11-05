@@ -252,7 +252,9 @@ for b in boots:
 
 nunits = mem.r32(DEVBASE + 40)
 m = re.search(r'cmdline.txt:(.*)', logtxt)
-scen = 'boot' if m and 'hdf.boot=workbench' in m.group(1) else 'raw' if m and 'hdf.boot=RAW' in m.group(1) else \
+scen = 'bootnb' if m and 'hdf.noboot' in m.group(1) and 'hdf.boot=raw' in m.group(1) else \
+       'noboot' if m and 'hdf.noboot' in m.group(1) else \
+       'boot' if m and 'hdf.boot=workbench' in m.group(1) else 'raw' if m and 'hdf.boot=RAW' in m.group(1) else \
        'off' if m and 'hdf=off' in m.group(1) else 'ro' if (m and 'hdf.readonly' in m.group(1)) else 'default'
 G = [] if no_fsres else [('GAMES', None, -5)]
 if scen in ('default', 'ro'):
@@ -262,6 +264,14 @@ if scen in ('default', 'ro'):
 elif scen == 'boot':
     order = ['Workbench 3.1.hdf', 'games.hdf', 'frag.hdf', 'raw.hdf', 'extra.hdf']
     want = [('DH0', 0, 5), ('DH1', 1, -128)] + [(n, 1, -128) for n, _, p in G] + [('FR0', 2, -128), ('DH2', 3, -128)]
+elif scen == 'noboot':
+    # everything mounted, nothing bootable; clashing names become HF<unit><part>
+    order = ['games.hdf', 'Workbench 3.1.hdf', 'frag.hdf', 'raw.hdf', 'extra.hdf']
+    want = [('DH1', 0, -128)] + [(n, 0, -128) for n, _, p in G] + [('HF10', 1, -128), ('FR0', 2, -128), ('DH2', 3, -128), ('HF40', 4, -128)]
+elif scen == 'bootnb':
+    # raw.hdf chosen: boots as DH0 (the SD card's DH0 not mounted); the rest mounted, none bootable
+    order = ['raw.hdf', 'games.hdf', 'Workbench 3.1.hdf', 'frag.hdf', 'extra.hdf']
+    want = [('DH0', 0, 0), ('DH1', 1, -128)] + [(n, 1, -128) for n, _, p in G] + [('HF20', 2, -128), ('FR0', 3, -128), ('HF40', 4, -128)]
 elif scen == 'raw':
     order = ['raw.hdf', 'games.hdf', 'Workbench 3.1.hdf', 'frag.hdf', 'extra.hdf']
     want = [('DH0', 0, 0), ('DH1', 1, -128)] + [(n, 1, -128) for n, _, p in G] + [('FR0', 3, -128)]
@@ -284,7 +294,7 @@ ml, nodes = EXPBASE + 74, []
 n_ = mem.r32(ml)
 while mem.r32(n_): nodes.append(n_); n_ = mem.r32(n_)
 sd_there = any(mem.r32(x + 16) == existing for x in nodes)
-if sd_there != (scen in ('default', 'ro')): die('%s: the SD card DH0 is %s the mount list' % (scen, 'in' if sd_there else 'not in'))
+if sd_there != (scen in ('default', 'ro', 'noboot')): die('%s: the SD card DH0 is %s the mount list' % (scen, 'in' if sd_there else 'not in'))
 print('%s: boot list OK, SD DH0 %s; %d units; task OK; %d card reads at init' % (scen, 'kept' if sd_there else 'replaced', nunits, stats['reads']))
 
 # ---- I/O through BeginIO and the task's service routine -------------------------

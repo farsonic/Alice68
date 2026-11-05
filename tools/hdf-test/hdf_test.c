@@ -66,7 +66,7 @@ int main(int argc, char **argv)
     struct hdf_opts o;
     hdf_parse_opts(cmd, &o);
     if (!strstr(cmd, "hdf")) CHECK(!o.off && !o.readonly && !o.boot[0], "default cmdline.txt parsed as options");
-    else CHECK(o.off || o.readonly || o.boot[0], "cmdline.txt options not parsed: %s", cmd);
+    else CHECK(o.off || o.readonly || o.noboot || o.boot[0], "cmdline.txt options not parsed: %s", cmd);
     hdf_parse_opts("aga.look=0  hdf.boot=Workbench_3.1.hdf\thdf.readonly\n", &o);
     CHECK(o.readonly && !strcmp(o.boot, "Workbench_3.1.hdf"), "options parse");
     CHECK(hdf_name_match("Workbench 3.1.hdf", o.boot) && !hdf_name_match("Workbench 3.1.hdf", "workbench"), "name match");

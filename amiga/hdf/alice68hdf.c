@@ -388,6 +388,14 @@ static void mount_unit(struct HdfBase *db, struct card *c, APTR eb, APTR cd, str
             set_name(name, p->name[0] ? p->name : "DH0");
             other = find_drive(eb, name);
         }
+        if (other && !hu->chosen && db->opts.noboot) {    /* it never boots: mount it under a name of its own */
+            char old[32];
+            set_name(old, name);
+            name[0] = 'H'; name[1] = 'F'; name[2] = (char)('0' + hu->index % 10); name[3] = (char)('0' + i % 10); name[4] = 0;
+            for (char x = 'A'; find_drive(eb, name) && x <= 'Z'; x++) { name[4] = x; name[5] = 0; }
+            hdf_log(&io, "  %s: a drive of that name is mounted already - mounted as %s (hdf.noboot)", old, name);
+            other = 0;
+        }
         if (other) {
             if (!hu->chosen) {
                 char hint[HDF_NAME];                    /* cmdline.txt splits at spaces: '_' stands for ' ' */
@@ -422,7 +430,7 @@ static void mount_unit(struct HdfBase *db, struct card *c, APTR eb, APTR cd, str
                 if (pri > 127) pri = 127;
             }
         } else {                                        /* its RDB decides, unless another one was chosen */
-            boot = (p->flags & 1) && !hu->single && !any_chosen;
+            boot = (p->flags & 1) && !hu->single && !any_chosen && !db->opts.noboot;
             pri = (LONG)ev[15];
         }
         if (!boot) pri = -128;
@@ -486,9 +494,9 @@ APTR dev_init(struct HdfBase *db, APTR seglist)
     hdf_parse_opts(cmdline ? cmdline : "", &db->opts);
     if (cmdline) FreeMem(cmdline, 1024);
     db->readonly = db->opts.readonly || card_ro;
-    if (db->opts.off || db->opts.readonly || db->opts.boot[0])
-        hdf_log(&io, "cmdline.txt:%s%s%s%s", db->opts.off ? " hdf=off" : "", db->opts.readonly ? " hdf.readonly" : "",
-                db->opts.boot[0] ? " hdf.boot=" : "", db->opts.boot);
+    if (db->opts.off || db->opts.readonly || db->opts.noboot || db->opts.boot[0])
+        hdf_log(&io, "cmdline.txt:%s%s%s%s%s", db->opts.off ? " hdf=off" : "", db->opts.readonly ? " hdf.readonly" : "",
+                db->opts.noboot ? " hdf.noboot" : "", db->opts.boot[0] ? " hdf.boot=" : "", db->opts.boot);
     if (db->opts.off) {
         hdf_log(&io, "hardfiles turned off (hdf=off)");
         for (int i = 0; i < n; i++) hdf_file_free(&io, &files[i]);
