@@ -63,10 +63,16 @@ def rdb_hdf(path, tag, cyls, heads, secs, parts, rdb_at=0):
 
 
 def raw_hdf(path, tag, nblocks):
+    """a single-partition hardfile as WinUAE makes them: FFS from block 0,
+    geometry 32 sectors, 1 surface, 2 reserved; the root block (type 2,
+    secondary type 1) at (2 + last block) / 2"""
     data = bytearray()
     for b in range(nblocks):
         data += struct.pack(">I4s", b, tag) * (BS // 8)
     data[0:4] = b"DOS\x01"
+    root = (2 + (nblocks // 32) * 32 - 1) // 2
+    struct.pack_into(">I", data, root * BS, 2)
+    struct.pack_into(">I", data, root * BS + 508, 1)
     open(path, "wb").write(data)
 
 
@@ -92,6 +98,7 @@ def card(img, fat, out):
         run("mkfs.fat", "-F", "16", "-s", "4", fs)
     m = "-i", fs
     run("mcopy", *m, out + "/kernel8.bin", "::kernel8.img")
+    run("mcopy", *m, out + "/cmdline.txt", "::cmdline.txt")
     run("mcopy", *m, out + "/filler1.bin", "::filler1.bin")
     run("mcopy", *m, out + "/filler2.bin", "::filler2.bin")
     run("mdel", *m, "::filler1.bin")                          # a hole: games.hdf goes in pieces
@@ -137,8 +144,17 @@ def main():
     rdb_hdf(out + "/extra.hdf", b"XTRA", 64, 1, 32, [("DH0", 2, 63, True, 0, ffs)])
     raw_hdf(out + "/raw.hdf", b"RAWW", 2048)
     rdb_hdf(out + "/frag.hdf", b"FRAG", 64, 2, 32, [("FR0", 2, 63, False, 0, ffs)])
+    open(out + "/cmdline.txt", "w").write("aga.look=0 aga.scale=1\n")
     card(out + "/card32.img", 32, out)
     card(out + "/card16.img", 16, out)
+    # the same card with other options in cmdline.txt
+    for name, line in (("boot", "aga.look=0 hdf.boot=workbench_3.1.hdf aga.scale=1"),
+                       ("raw", "hdf.boot=RAW"), ("off", "hdf=off"), ("ro", "hdf.readonly aga.look=0")):
+        img = "%s/card32_%s.img" % (out, name)
+        with open(out + "/card32.img", "rb") as a, open(img, "wb") as b:
+            b.write(a.read())
+        open(out + "/cmdline.txt", "w").write(line + "\n")
+        run("mcopy", "-o", "-i", "%s@@%d" % (img, 8192 * BS), out + "/cmdline.txt", "::cmdline.txt")
     print("ok:", ", ".join(sorted(f for f in os.listdir(out) if f.endswith((".img", ".hdf")))))
 
 

@@ -22,6 +22,8 @@ struct hdf_io {
     void *ctx;
     /* read count 512-byte sectors of the whole card, from sector; 0 = ok */
     int  (*read)(void *ctx, uint32_t sector, uint32_t count, void *buf);
+    /* write; 0 = ok, -2 = the card is write-protected, -1 = failed (may be 0 when never used) */
+    int  (*write)(void *ctx, uint32_t sector, uint32_t count, const void *buf);
     void *(*alloc)(void *ctx, uint32_t size);           /* zeroed */
     void (*free)(void *ctx, void *p, uint32_t size);
     void (*log)(void *ctx, const char *line);
@@ -51,12 +53,20 @@ struct fat {
     uint8_t *buf;                   /* FAT window, FAT_WIN sectors */
     uint32_t buf_first;             /* first FAT sector in buf, ~0 = none */
     uint8_t *sec;                   /* one sector, for directories and the BPB */
+    uint32_t cmd_clus, cmd_size;    /* cmdline.txt in the root directory, if any */
 };
 
 struct hdf_part {
     char     name[32];              /* DOS device name, e.g. DH0 */
     uint32_t flags;                 /* PART pb_Flags: 1 bootable, 2 no-mount */
     uint32_t envec[20];             /* DosEnvec, de_TableSize first */
+};
+
+/* options from cmdline.txt */
+struct hdf_opts {
+    int  off;                       /* hdf=off */
+    int  readonly;                  /* hdf.readonly */
+    char boot[HDF_NAME];            /* hdf.boot=NAME: this hardfile boots and wins name clashes */
 };
 
 struct hdf_rdb {
@@ -79,6 +89,18 @@ void hdf_file_free(struct hdf_io *io, struct hdf_file *h);
    contiguously; 0 = ok, -1 = outside the file */
 int  hdf_map(const struct hdf_file *h, uint32_t blk, uint32_t *card_sec, uint32_t *run);
 int  hdf_read(struct hdf_io *io, const struct hdf_file *h, uint32_t blk, uint32_t count, void *buf);
+/* 0 ok, -1 outside the file or failed, -2 write-protected card */
+int  hdf_write(struct hdf_io *io, const struct hdf_file *h, uint32_t blk, uint32_t count, const void *buf);
+
+/* cmdline.txt from the root directory (after fat_find_hdfs), NUL-terminated;
+   returns its length, or -1 if there is none */
+int  fat_read_cmdline(struct fat *f, char *buf, uint32_t max);
+void hdf_parse_opts(const char *cmdline, struct hdf_opts *o);
+/* a file name as given in cmdline.txt: no case, and '_' stands for ' ' */
+int  hdf_name_match(const char *file, const char *want);
+/* a single-partition hardfile (a filesystem from block 0, as WinUAE makes
+   them): 1 found, with one nameless partition in r; 0 not one */
+int  hdf_single(struct hdf_io *io, const struct hdf_file *h, struct hdf_rdb *r);
 
 /* 1: a Rigid Disk Block was found and parsed; 0: none; -1: broken */
 int  hdf_rdb(struct hdf_io *io, const struct hdf_file *h, struct hdf_rdb *r);

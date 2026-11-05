@@ -85,29 +85,38 @@ Shell.
 - **Leaving the USB-A ports to AmigaOS:** `frf_usb=neptune` in `cmdline.txt` keeps the
   kernel off them, so rondoval's `xhci.device` can drive them instead.
 
-## Hardfiles (`.hdf`) on the SD card (test, read-only)
+## Hardfiles (`.hdf`) on the SD card (test)
 
-Copy WinUAE-style full-disk hardfiles onto the SD card's FAT boot partition. Put them
-in the root folder or in a folder named `HDF`. At start, `alice68hdf.device` (in
-Emu68's ROM board) finds every `*.hdf` there. It reads each file's Rigid Disk Block
-and adds its partitions with their own names and boot priorities, so a Workbench
-hardfile can boot.
+Copy hardfiles onto the SD card's FAT boot partition, in the root folder or in a folder
+named `HDF`. At start, `alice68hdf.device` (in Emu68's ROM board) finds every `*.hdf`
+there and mounts it. It needs `dtoverlay=emmc,unit0=rw` in `config.txt`; use `unit0=ro`
+for read-only.
 
-- **Needs** `dtoverlay=emmc,unit0=ro` (or `rw`) in `config.txt`, which lets the driver
-  read the whole card.
-- **Phase 1 is read-only.** Writes are refused as "write protected", so a Workbench
-  booted from a hardfile behaves like one booted from a write-protected floppy.
-- **Full-disk hardfiles only.** The file must start with an `RDSK` block.
-  Single-partition hardfiles (starting `DOS\x`) come in phase 2.
-- **Filesystems:** FFS (`DOS\0` to `DOS\7`) works from Kickstart. Partitions using
-  PFS3, SFS and the like mount only if that filesystem is already loaded, for
-  example from an SD card partition. Loading it from the hardfile itself comes in
-  phase 3.
-- **Name clashes:** a partition whose name is already taken (say `DH0` on an SD
-  partition) is mounted as `HF<unit><partition>`, e.g. `HF10`.
-- **Limits:** FAT32 caps each file at 4 GB. Copy files only while the Pi is off.
-- **Diagnostics:** `C:Alice68-HDF` lists the hardfiles found and the driver's log.
-  `tools/hdf-test/run.sh` runs the tests on a PC.
+- **Full-disk hardfiles** (WinUAE "hard drive" images, starting with an `RDSK` block):
+  each partition is mounted with its own name and boot priority.
+- **Single-partition hardfiles** (a filesystem from block 0, starting `DOS\x`): the
+  layout is worked out from the file size and checked against the FFS root block. The
+  partition is mounted as the first free `DH0`, `DH1`, and so on, and is not bootable
+  unless chosen with `hdf.boot=`.
+- **Writing:** writes go straight into the file's own clusters on the card and nowhere
+  else. The FAT itself is never changed, so the file keeps its size and place. Back up
+  hardfiles you care about before writing to them here.
+- **Filesystems:** FFS (`DOS\0` to `DOS\7`) works from Kickstart. PFS3, SFS and the
+  like mount only if that filesystem is already loaded, for example from an SD card
+  partition. Loading it from the hardfile itself is still to come.
+
+Options in `cmdline.txt`:
+
+| Option | Effect |
+|---|---|
+| `hdf.boot=NAME` | This hardfile boots, ahead of the other drives. A partition named like a drive that's already mounted (the SD card's `DH0`, say) takes its name, and the other drive is not mounted. `NAME` is the file name with or without `.hdf`, in any case; write a space as `_` (e.g. `hdf.boot=Workbench_3.1`). |
+| *(no `hdf.boot`)* | Drives already mounted keep their names: a hardfile partition with the same name is left out, so no drive is ever there twice. Hardfiles boot only as their RDB says. |
+| `hdf.readonly` | No writes: the drives show as write-protected. |
+| `hdf=off` | No hardfiles at all. |
+
+Limits: FAT32 holds files up to 4 GB. Copy files only while the Pi is off. `C:Alice68-HDF`
+lists the hardfiles found and the driver's log, including why anything was left out.
+`tools/hdf-test/run.sh` runs the tests on a PC.
 
 ## Picture options (`cmdline.txt`)
 

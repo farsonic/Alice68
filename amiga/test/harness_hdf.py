@@ -25,7 +25,11 @@ hunk, elf, card_path, hdfdir = sys.argv[1:5]
 opts = sys.argv[5:]
 no_fsres = 'nofsres' in opts
 no64 = 'no64' in opts
-card = open(card_path, 'rb')
+card_ro = 'cardro' in opts                          # brcm-emmc unit0=ro
+card = bytearray(open(card_path, 'rb').read())     # writes go to this copy
+card0 = bytes(card)
+cmdline = ''
+import re
 
 done = {'flag': False}
 exc = {'hit': None}
@@ -81,6 +85,10 @@ def putmsg(o, p):
     addtail(port + 20, msg)
     signals.append((mem.r32(port + 16), mem.r8(port + 15)))
 lvo(SYSBASE, -366, putmsg)
+def remove(o, p):
+    n = d(R.A1); succ, pred = mem.r32(n), mem.r32(n + 4)
+    mem.w32(pred, succ); mem.w32(succ + 4, pred)
+lvo(SYSBASE, -252, remove)
 lvo(SYSBASE, -372, lambda o, p: setd0(remhead(d(R.A0) + 20)))
 replied = []
 lvo(SYSBASE, -378, lambda o, p: replied.append(d(R.A1)))
@@ -102,7 +110,7 @@ lvo(SYSBASE, -498, lambda o, p: setd0(FSRES if mem.r_cstr(d(R.A1)) == 'FileSyste
 # ---- the fake brcm-emmc.device -------------------------------------------------
 CMDS = alloc(16)
 for i, c in enumerate([2, 3, 0x4000, 0xc000, 0]): mem.w16(CMDS + 2 * i, c)
-stats = {'reads': 0, 'bytes': 0}
+stats = {'reads': 0, 'bytes': 0, 'writes': 0}
 def openDev(o, p):
     name, unit, io = mem.r_cstr(d(R.A0)), d(R.D0), d(R.A1)
     if name == 'brcm-emmc.device' and unit == 0:
@@ -116,8 +124,17 @@ def doio(o, p):
     if mem.r32(io + 20) != EMMC: die('DoIO on an unknown device')
     cmd, data, length, off, act = mem.r16(io + 28), mem.r32(io + 40), mem.r32(io + 36), mem.r32(io + 44), mem.r32(io + 32)
     err = 0
-    if no64 and cmd in (0x4000, 24, 0xc000):
+    if no64 and cmd in (0x4000, 24, 0xc000, 25, 0xc001):
         err = -3
+    elif cmd == 15:
+        mem.w32(io + 32, 1 if card_ro else 0)
+    elif cmd in (3, 25, 0xc001):
+        pos = off | ((act << 32) if cmd != 3 else 0)
+        if card_ro: err = 28
+        elif pos % 512 or length % 512 or pos + length > len(card): err = -4
+        else:
+            card[pos:pos + length] = bytes(mem.r_block(data, length)); mem.w32(io + 32, length)
+            stats['writes'] += 1
     elif cmd == 0x4000:
         mem.w32(data, 0); mem.w32(data + 4, 16); mem.w16(data + 8, 5); mem.w16(data + 10, 0); mem.w32(data + 12, CMDS)
         mem.w32(io + 32, 16)
@@ -125,7 +142,7 @@ def doio(o, p):
         pos = off | ((act << 32) if cmd != 2 else 0)
         if pos % 512 or length % 512: err = -4
         else:
-            card.seek(pos); b = card.read(length)
+            b = bytes(card[pos:pos + length])
             if len(b) != length: err = 20
             else:
                 mem.w_block(data, b); mem.w32(io + 32, length)
@@ -234,25 +251,44 @@ for b in boots:
     print('  %-6s unit %d pri %4d dostype %08x seglist %x cd %x' % (b['name'], b['unit'], b['pri'], b['env'][16], b['seglist'], b['cd']))
 
 nunits = mem.r32(DEVBASE + 40)
-want = [('DH1', 0, -128), ('HF10', 1, 5), ('FR0', 2, -128), ('HF30', 3, 0)]
-if not no_fsres: want.insert(1, ('GAMES', 0, -5))
+m = re.search(r'cmdline.txt:(.*)', logtxt)
+scen = 'boot' if m and 'hdf.boot=workbench' in m.group(1) else 'raw' if m and 'hdf.boot=RAW' in m.group(1) else \
+       'off' if m and 'hdf=off' in m.group(1) else 'ro' if (m and 'hdf.readonly' in m.group(1)) else 'default'
+G = [] if no_fsres else [('GAMES', None, -5)]
+if scen in ('default', 'ro'):
+    # SD card's DH0 wins: Workbench's and extra's DH0 are left out; raw.hdf takes the first free DHn
+    order = ['games.hdf', 'Workbench 3.1.hdf', 'frag.hdf', 'raw.hdf', 'extra.hdf']
+    want = [('DH1', 0, -128)] + [(n, 0, p) for n, _, p in G] + [('FR0', 2, -128), ('DH2', 3, -128)]
+elif scen == 'boot':
+    order = ['Workbench 3.1.hdf', 'games.hdf', 'frag.hdf', 'raw.hdf', 'extra.hdf']
+    want = [('DH0', 0, 5), ('DH1', 1, -128)] + [(n, 1, -128) for n, _, p in G] + [('FR0', 2, -128), ('DH2', 3, -128)]
+elif scen == 'raw':
+    order = ['raw.hdf', 'games.hdf', 'Workbench 3.1.hdf', 'frag.hdf', 'extra.hdf']
+    want = [('DH0', 0, 0), ('DH1', 1, -128)] + [(n, 1, -128) for n, _, p in G] + [('FR0', 3, -128)]
+else:
+    order, want = [], []
 got = [(b['name'], b['unit'], b['pri']) for b in boots]
-if got != want: die('boot list %s, want %s' % (got, want))
+if got != want: die('%s: boot list %s, want %s' % (scen, got, want))
 if any(b['cd'] != CONFIGDEV or b['flags'] != 1 or b['dev'] != 'alice68hdf.device' for b in boots): die('boot node device/flags/configdev')
 g = [b for b in boots if b['name'] == 'GAMES']
 if g and (g[0]['seglist'] != 0x1234 or g[0]['gv'] != 0xffffffff): die('PFS\\3 not patched from FileSystem.resource')
-if nunits != 4: die('%d units, want 4' % nunits)
+if nunits != len(order): die('%s: %d units, want %d' % (scen, nunits, len(order)))
+if scen == 'off':
+    if tasks: die('hdf=off started a task')
+    print('hdf=off: no units, no boot nodes, no task'); print('ALL OK'); sys.exit(0)
 if len(tasks) != 1: die('no I/O task')
 task, initpc = tasks[0]
 if mem.r32(task + 88) != DEVBASE or initpc != syms['task_entry']: die('task set up wrong')
-want64 = 'NSD 64-bit' if not no64 else '32-bit only'
-if want64 not in logtxt: die('64-bit command probe: want %s' % want64)
-print('boot list OK; %d units; task OK; %d card reads at init' % (nunits, stats['reads']))
+# the SD card's DH0 is still mounted unless a hardfile took its name over
+ml, nodes = EXPBASE + 74, []
+n_ = mem.r32(ml)
+while mem.r32(n_): nodes.append(n_); n_ = mem.r32(n_)
+sd_there = any(mem.r32(x + 16) == existing for x in nodes)
+if sd_there != (scen in ('default', 'ro')): die('%s: the SD card DH0 is %s the mount list' % (scen, 'in' if sd_there else 'not in'))
+print('%s: boot list OK, SD DH0 %s; %d units; task OK; %d card reads at init' % (scen, 'kept' if sd_there else 'replaced', nunits, stats['reads']))
 
 # ---- I/O through BeginIO and the task's service routine -------------------------
 VEC = lambda off: DEVBASE + off
-def mkio(unit_io=None):
-    a = alloc(48); return a
 def open_unit(unit):
     io = alloc(48)
     call(VEC(-6), {R.A6: DEVBASE, R.A1: io, R.D0: unit, R.D1: 0}, name='Open')
@@ -260,55 +296,80 @@ def open_unit(unit):
     return io
 cardio = alloc(48); mem.w32(cardio + 20, EMMC)
 cardctx = alloc(8); mem.w32(cardctx, DEVBASE); mem.w32(cardctx + 4, cardio)
-taskport = DEVBASE + 44 + 4 * 16 + 4 + 4096 + 8          # struct HdfBase.port
 
-def io_req(io, cmd, off, length, hi=0, quick=1):
+def io_req(io, cmd, off, length, hi=0, quick=1, data=BUF):
     mem.w16(io + 28, cmd); mem.w8(io + 30, quick); mem.w8(io + 31, 0x55)
-    mem.w32(io + 32, hi); mem.w32(io + 36, length); mem.w32(io + 40, BUF); mem.w32(io + 44, off)
+    mem.w32(io + 32, hi); mem.w32(io + 36, length); mem.w32(io + 40, data); mem.w32(io + 44, off)
     replied.clear()
     call(VEC(-30), {R.A6: DEVBASE, R.A1: io}, name='BeginIO %x' % cmd)
-    if mem.r16(io + 28) in (2, 24, 0xc000):
-        if mem.r8(io + 30) & 1: die('read left IOF_QUICK set')
+    if not (mem.r8(io + 30) & 1):                     # queued for the task
         call(syms['hdf_service'], args=(DEVBASE, cardctx), name='service')
-        if io not in replied: die('read not replied')
-    return mem.r8s(io + 31) if hasattr(mem, 'r8s') else ((mem.r8(io + 31) ^ 0x80) - 0x80), mem.r32(io + 32)
+        if io not in replied: die('request %x not replied' % cmd)
+    return mem.r8s(io + 31), mem.r32(io + 32)
 
 def orig(name, blk, n):
     with open('%s/%s' % (hdfdir, name), 'rb') as f:
         f.seek(blk * 512); return f.read(n * 512)
 
 checks = 0
-io1 = open_unit(1)
-if mem.r8(io1 + 31): die('Open unit 1 failed')
+U = {name: i for i, name in enumerate(order)}
+wb, fr = U['Workbench 3.1.hdf'], U['frag.hdf']
+io1 = open_unit(wb)
+if mem.r8(io1 + 31): die('Open Workbench unit failed')
 e, act = io_req(io1, 2, 1000 * 512, 8 * 512)
-if e or act != 4096 or bytes(mem.r_block(BUF, 4096)) != orig('Workbench 3.1.hdf', 1000, 8): die('CMD_READ unit 1: err %d act %d' % (e, act))
-checks += 1
+if e or act != 4096 or bytes(mem.r_block(BUF, 4096)) != orig('Workbench 3.1.hdf', 1000, 8): die('CMD_READ: err %d act %d' % (e, act))
 e, act = io_req(io1, 24, 5 * 512, 512, hi=0)
 if e or bytes(mem.r_block(BUF, 512)) != orig('Workbench 3.1.hdf', 5, 1): die('TD_READ64')
-checks += 1
 e, act = io_req(io1, 0xc000, 10239 * 512, 512)
 if e or bytes(mem.r_block(BUF, 512)) != orig('Workbench 3.1.hdf', 10239, 1): die('NSCMD_TD_READ64 last block')
-checks += 1
 e, act = io_req(io1, 2, 10240 * 512, 512)
 if e != -5: die('read past the end: err %d, want -5' % e)
 e, act = io_req(io1, 2, 100, 512)
 if e != -4: die('unaligned read: err %d, want -4' % e)
-e, act = io_req(io1, 3, 0, 512)
-if e != 28: die('CMD_WRITE: err %d, want 28 (write protected)' % e)
-e, act = io_req(io1, 15, 0, 0)
-if e or act != 1: die('TD_PROTSTATUS')
 geo = alloc(32)
 mem.w16(io1 + 28, 22); mem.w8(io1 + 30, 1); mem.w32(io1 + 36, 32); mem.w32(io1 + 40, geo)
 call(VEC(-30), {R.A6: DEVBASE, R.A1: io1}, name='GETGEOMETRY')
 g = [mem.r32(geo + 4 * i) for i in range(6)]
 if g != [512, 10240, 160, 64, 2, 32]: die('TD_GETGEOMETRY %s' % g)
-checks += 4
-io2 = open_unit(2)                                      # frag.hdf: 25 pieces, read whole in one request
+io2 = open_unit(fr)
 e, act = io_req(io2, 2, 0, 4096 * 512)
 if e or bytes(mem.r_block(BUF, 4096 * 512)) != orig('frag.hdf', 0, 4096): die('whole fragmented file')
-checks += 1
+checks += 7
+
+# ---- writes ----------------------------------------------------------------------
+ro = scen == 'ro' or card_ro
+e, act = io_req(io1, 15, 0, 0)
+if e or act != (1 if ro else 0): die('TD_PROTSTATUS %d, want %d' % (act, 1 if ro else 0))
+pat = bytes((0xa5 ^ (i * 7) ^ (i >> 9)) & 0xff for i in range(512 * 400))
+WBUF = BUF + 0x300000
+mem.w_block(WBUF, pat)
+e1, _ = io_req(io1, 3, 2000 * 512, 16 * 512, data=WBUF)                      # CMD_WRITE
+e2, _ = io_req(io2, 25, 50 * 512, 400 * 512, hi=0, data=WBUF)                # TD_WRITE64 across frag's pieces
+e3, _ = io_req(io1, 0xc001, 10239 * 512, 512, data=WBUF)                     # NSCMD_TD_WRITE64, the last block
+e4, _ = io_req(io1, 3, 10239 * 512, 1024, data=WBUF)                        # past the end
+if ro:
+    if (e1, e2, e3) != (28, 28, 28): die('read-only: writes answered %s, want 28' % ((e1, e2, e3),))
+    if bytes(card) != card0: die('read-only: the card changed')
+    print('read-only: writes refused (28), card unchanged')
+else:
+    if (e1, e2, e3) != (0, 0, 0): die('writes failed: %s' % ((e1, e2, e3),))
+    if e4 != -5: die('write past the end: err %d, want -5' % e4)
+    e, act = io_req(io1, 2, 2000 * 512, 16 * 512)
+    if e or bytes(mem.r_block(BUF, 16 * 512)) != pat[:16 * 512]: die('Workbench write read-back')
+    e, act = io_req(io2, 2, 0, 4096 * 512)
+    want_frag = orig('frag.hdf', 0, 50) + pat + orig('frag.hdf', 450, 4096 - 450)
+    if e or bytes(mem.r_block(BUF, 4096 * 512)) != want_frag: die('frag write read-back (whole file)')
+    changed = sum(1 for s_ in range(0, len(card), 512) if card[s_:s_ + 512] != card0[s_:s_ + 512])
+    if changed != 16 + 400 + 1: die('%d sectors changed on the card, want 417' % changed)
+    for other in [n for n in order if n not in ('Workbench 3.1.hdf', 'frag.hdf')]:
+        ioo = open_unit(U[other])
+        blocks = len(open('%s/%s' % (hdfdir, other), 'rb').read()) // 512
+        e, act = io_req(ioo, 2, 0, blocks * 512)
+        if e or bytes(mem.r_block(BUF, blocks * 512)) != orig(other, 0, blocks): die('%s changed by writes to other files' % other)
+    print('writes OK: %d sectors changed on the card (417), other hardfiles untouched' % changed)
+checks += 4
 io9 = alloc(48)
 call(VEC(-6), {R.A6: DEVBASE, R.A1: io9, R.D0: 9, R.D1: 0}, name='Open 9')
 if mem.r8(io9 + 31) == 0: die('Open of a unit that does not exist succeeded')
-print('I/O OK: %d checks, %d card reads in all' % (checks + 1, stats['reads']))
+print('I/O OK: %d checks, %d card reads, %d writes' % (checks + 1, stats['reads'], stats['writes']))
 print('ALL OK')

@@ -256,6 +256,14 @@ static void scan_dir(struct fat *f, struct scan *sc, uint32_t dir_clus, int top)
                         sc->hdf_dir = le16(e + 26) | (f->fat32 ? le16(e + 20) << 16 : 0);
                 } else if ((e[8] == 'H' || e[8] == 'h') && (e[9] == 'D' || e[9] == 'd') && (e[10] == 'F' || e[10] == 'f')) {
                     take(f, sc, e, ln);
+                } else if (top && !f->cmd_clus) {
+                    static const char cmd[11] = { 'C', 'M', 'D', 'L', 'I', 'N', 'E', ' ', 'T', 'X', 'T' };
+                    int k = 0;
+                    while (k < 11 && (e[k] == cmd[k] || (e[k] >= 'a' && e[k] <= 'z' && e[k] - 32 == cmd[k]))) k++;
+                    if (k == 11) {
+                        f->cmd_clus = le16(e + 26) | (f->fat32 ? le16(e + 20) << 16 : 0);
+                        f->cmd_size = le32(e + 28);
+                    }
                 }
             }
             lname[0] = 0;
@@ -269,6 +277,65 @@ int fat_find_hdfs(struct fat *f, struct hdf_file *files, int max)
     scan_dir(f, &sc, f->fat32 ? f->root_clus : 0, 1);
     if (sc.hdf_dir) scan_dir(f, &sc, sc.hdf_dir, 0);
     return sc.n;
+}
+
+int fat_read_cmdline(struct fat *f, char *buf, uint32_t max)
+{
+    if (!max) return -1;
+    buf[0] = 0;
+    if (!f->cmd_clus || f->cmd_clus < 2) return -1;
+    uint32_t n = f->cmd_size < max - 1 ? f->cmd_size : max - 1, got = 0, c = f->cmd_clus, guard = 64;
+    while (got < n && c && guard--) {
+        for (uint32_t i = 0; i < f->spc && got < n; i++) {
+            if (f->io->read(f->io->ctx, clus_sec(f, c) + i, 1, f->sec)) { buf[got] = 0; return -1; }
+            uint32_t k = n - got < 512 ? n - got : 512;
+            copy(buf + got, f->sec, k);
+            got += k;
+        }
+        if (got < n) c = fat_next(f, c);
+    }
+    buf[got] = 0;
+    return (int)got;
+}
+
+static int is_space(char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }
+static int tok_eq(const char *t, unsigned n, const char *w)
+{
+    unsigned k = 0;
+    while (k < n && w[k] && t[k] == w[k]) k++;
+    return k == n && !w[k];
+}
+
+void hdf_parse_opts(const char *c, struct hdf_opts *o)
+{
+    zero(o, sizeof *o);
+    while (c && *c) {
+        while (is_space(*c)) c++;
+        const char *t = c;
+        while (*c && !is_space(*c)) c++;
+        unsigned n = (unsigned)(c - t);
+        if (tok_eq(t, n, "hdf=off")) o->off = 1;
+        else if (tok_eq(t, n, "hdf.readonly") || tok_eq(t, n, "hdf.ro")) o->readonly = 1;
+        else if (n > 9 && tok_eq(t, 9, "hdf.boot=")) {
+            unsigned k = 0;
+            for (; k + 9 < n && k < HDF_NAME - 1; k++) o->boot[k] = t[9 + k];
+            o->boot[k] = 0;
+        }
+    }
+}
+
+int hdf_name_match(const char *a, const char *b)
+{
+    if (!a[0] || !b[0]) return 0;
+    for (; *a && *b; a++, b++) {
+        char x = *a, y = *b;
+        if (x >= 'A' && x <= 'Z') x += 32;
+        if (y >= 'A' && y <= 'Z') y += 32;
+        if (x == '_') x = ' ';
+        if (y == '_') y = ' ';
+        if (x != y) return 0;
+    }
+    return !*a && !*b;
 }
 
 /* ---- hardfile blocks -------------------------------------------------------- */
@@ -296,6 +363,22 @@ int hdf_read(struct hdf_io *io, const struct hdf_file *h, uint32_t blk, uint32_t
         if (hdf_map(h, blk, &sec, &run)) return -1;
         if (run > count) run = count;
         if (io->read(io->ctx, sec, run, p)) return -1;
+        blk += run; count -= run; p += run * HDF_BLOCK;
+    }
+    return 0;
+}
+
+int hdf_write(struct hdf_io *io, const struct hdf_file *h, uint32_t blk, uint32_t count, const void *buf)
+{
+    const uint8_t *p = buf;
+    if (!io->write) return -2;
+    if (blk > h->blocks || count > h->blocks - blk) return -1;   /* all of it inside the file, or nothing */
+    while (count) {
+        uint32_t sec, run;
+        if (hdf_map(h, blk, &sec, &run)) return -1;           /* never outside the file's own clusters */
+        if (run > count) run = count;
+        int r = io->write(io->ctx, sec, run, p);
+        if (r) return r == -2 ? -2 : -1;
         blk += run; count -= run; p += run * HDF_BLOCK;
     }
     return 0;
@@ -344,6 +427,51 @@ int hdf_rdb(struct hdf_io *io, const struct hdf_file *h, struct hdf_rdb *r)
         }
         next = be32(b + 16);
     }
+    ret = 1;
+out:
+    io->free(io->ctx, b, HDF_BLOCK);
+    return ret;
+}
+
+/* ---- single-partition hardfiles ----------------------------------------------- */
+/* WinUAE's hardfile geometry is 32 sectors, 1 surface, 2 reserved blocks;
+   others are tried too. The right one puts FFS's root block - type 2 (T_SHORT),
+   secondary type 1 (ST_ROOT) - at (reserved + last block) / 2. */
+int hdf_single(struct hdf_io *io, const struct hdf_file *h, struct hdf_rdb *r)
+{
+    static const uint8_t geo[][3] = { { 1, 32, 2 }, { 1, 32, 1 }, { 4, 32, 2 }, { 16, 63, 2 }, { 1, 63, 2 } };
+    uint8_t *b = io->alloc(io->ctx, HDF_BLOCK);
+    if (!b) return 0;
+    int ret = 0;
+    if (hdf_read(io, h, 0, 1, b)) goto out;
+    uint32_t dostype = be32(b);
+    int letters = 1;
+    for (int i = 0; i < 3; i++) if (b[i] < 'A' || b[i] > 'Z') letters = 0;
+    /* "DOS\1", "PFS\3", "SFS\0": three letters and a version, never an RDB's "RDSK" */
+    if (!letters || b[3] > 9 || dostype == 0x5244534bu) goto out;   /* not formatted, or not a filesystem */
+    int ffs = (dostype & 0xffffff00u) == 0x444f5300u && (dostype & 0xff) <= 7;
+    int pick = -1;
+    for (unsigned g = 0; g < sizeof geo / sizeof geo[0]; g++) {
+        uint32_t bpc = (uint32_t)geo[g][0] * geo[g][1], cyl = h->blocks / bpc;
+        if (cyl < 2) continue;
+        uint32_t root = (geo[g][2] + cyl * bpc - 1) / 2;
+        if (!ffs) { pick = 0; break; }                        /* other filesystems: WinUAE's default */
+        if (hdf_read(io, h, root, 1, b)) break;
+        if (be32(b) == 2 && be32(b + 508) == 1) { pick = (int)g; break; }
+    }
+    if (pick < 0) {
+        hdf_log(io, "%s: DOS type %c%c%c\\%lu, but no FFS root block where a known geometry puts it", h->name,
+                (int)(dostype >> 24), (int)((dostype >> 16) & 0xff), (int)((dostype >> 8) & 0xff), dostype & 0xff);
+        goto out;
+    }
+    zero(r, sizeof *r);
+    uint32_t heads = geo[pick][0], secs = geo[pick][1], cyl = h->blocks / (heads * secs);
+    r->cylinders = cyl; r->heads = heads; r->sectors = secs;
+    r->nparts = 1;
+    struct hdf_part *p = &r->part[0];
+    p->flags = 0;
+    uint32_t env[17] = { 16, 128, 0, heads, 1, secs, geo[pick][2], 0, 0, 0, cyl - 1, 30, 1, 0x1fe00, 0x7ffffffe, 0, dostype };
+    for (int i = 0; i < 17; i++) p->envec[i] = env[i];
     ret = 1;
 out:
     io->free(io->ctx, b, HDF_BLOCK);
