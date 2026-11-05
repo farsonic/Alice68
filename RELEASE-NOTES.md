@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **WiFi (new, not yet tested on a Pi): `DEVS:alice68wifi.device` and `C:Alice68-WiFi`.**
+  The Pi 4's built-in WiFi as a `netdev` device for rondoval's lwip-amiga stack. Written
+  from scratch for Alice68 with Linux's brcmfmac and OpenBSD's bwfm (ISC) as references:
+  the SD host and SDIO, the chip's bring-up and firmware download, its FullMAC protocol,
+  scanning, and joining with the firmware's own WPA2/WPA3 supplicant. The card interrupt
+  (through `gic400.library`) wakes it; without one it polls. `Alice68-WiFi JOIN "name"
+  "password"` sets the network up; `Alice68-WiFi`, `SCAN` and `LOG` show what it does. The
+  chip firmware comes from Raspberry Pi OS (see the README). The protocol layer is tested
+  on the PC (`tools/wifi-test`); the hardware side needs a Pi to confirm.
 - **Emu68's data-cache range opcodes** (Emu68 `582253e` by Lukasz Winczura, from Emu68's
   development branch `1_1_wip`; not in an Emu68 release yet). The kernel advertises
   `dcache-range-ops`, so the faster **`-rangeops`** archives of rondoval's driver stack

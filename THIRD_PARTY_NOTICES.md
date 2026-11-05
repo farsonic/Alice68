@@ -43,15 +43,36 @@ was copied from them, but they deserve the credit:
 * **xHCI specification** (Intel) and the USB 2.0/3.x specifications.
 * **py-videocore6** (Idein Inc., MIT) – the V3D assembler AGA-PiStorm's
   `tools/v3d` uses at build time (`tools/v3d/_videocore6`).
+* **Linux brcmfmac** (Broadcom Corporation and contributors, ISC) and **OpenBSD bwfm**
+  (Copyright (c) 2010-2016 Broadcom Corporation, Copyright (c) 2016,2017 Patrick Wildt,
+  ISC) – the references for `alice68wifi.device`: the SDIO bring-up sequence, the chip's
+  register and core layout, the SDPCM/BCDC protocol, the firmware's message layouts and
+  the 43455 watermark settings. The driver is new code (`amiga/wifi/`); where it follows
+  their sequences closely, their ISC permission notice applies: "Permission to use, copy,
+  modify, and/or distribute this software for any purpose with or without fee is hereby
+  granted, provided that the above copyright notice and this permission notice appear in
+  all copies. THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES..."
+* The SD Host Controller and SDIO Simplified Specifications (SD Association) for the
+  Arasan host and the SDIO commands.
+* `gic400.library` and `mailbox.resource` (Michal Schulz, rondoval; MPL-2.0), which
+  Emu68's ROM provides: `alice68wifi.device` calls them, it does not contain them.
 * **DejaVu Sans** fonts (Bitstream Vera licence) – rendered once by
   `tools/mklogo_alice.py` into the splash picture; no font file is shipped.
+
+## In alice68wifi.device
+
+* `amiga/wifi/netdev.h` – the netdev driver interface of
+  [lwip-amiga](https://github.com/rondoval/lwip-amiga), copied unchanged. BSD-3-Clause,
+  Copyright (c) 2026, lwip-amiga contributors; the licence text is in
+  `amiga/wifi/LICENSE-netdev.txt`.
 
 ## Not included
 
 Kickstart ROMs and other AmigaOS files, the Raspberry Pi firmware
 (`start4.elf`, `fixup4.dat`, `bcm2711-*.dtb` – from
 [raspberrypi/firmware](https://github.com/raspberrypi/firmware)), Neptune and
-its classes, TCP/IP stacks, games. You supply these.
+its classes, TCP/IP stacks, the WiFi chip's firmware (Cypress/Broadcom), games. You
+supply these.
 
 ## Licence compatibility notes
 
@@ -75,6 +96,8 @@ its classes, TCP/IP stacks, games. You supply these.
   `tools/mklogo_alice.py`, `tools/splash-preview/` – the boot splash.
 * `amiga/` – `alice68-usb.device`, `Alice68-USBLog`, `alice68hdf.device` and
   `Alice68-HDF` (68k), and the 68k test harnesses.
-* `tools/hdf-test/` – test SD card images and the hardfile tests.
+* `amiga/wifi/` – `alice68wifi.device` and `Alice68-WiFi` (except `netdev.h`, above).
+* `tools/hdf-test/` – test SD card images and the hardfile tests; `tools/wifi-test/` –
+  the WiFi protocol tests.
 * `tools/build-emu68aga-pi4.sh` and the Pi 4 changes to the files above
   (changes inside Emu68's MPL-2.0 files are MPL-2.0).

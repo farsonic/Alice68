@@ -241,6 +241,61 @@ Shell.
 - **Leaving the USB-A ports to AmigaOS:** `frf_usb=neptune` in `cmdline.txt` keeps the
   kernel off them, so rondoval's `xhci.device` can drive them instead.
 
+## WiFi (new, not yet tested on a Pi)
+
+`alice68wifi.device` drives the Pi 4's built-in WiFi (the Cypress CYW43455 chip) for
+rondoval's **lwip-amiga** TCP/IP stack, the one in the
+[driver stack](https://github.com/rondoval/emu68-driver-stack/releases)'s archives. It
+speaks lwip-amiga's fast `netdev` interface, not SANA-II, so Roadshow, AmiTCP, Miami and
+Riptide cannot use it. The chip's own firmware does the WPA2 handshake (and WPA3 where the
+firmware supports it): no separate supplicant program is needed.
+
+1. **Firmware.** Alice68 does not include it. Take these from Raspberry Pi's
+   [firmware-nonfree](https://github.com/RPi-Distro/firmware-nonfree) repository
+   (`debian/added-firmware/`), or from `/lib/firmware/` on a Raspberry Pi OS card, and copy
+   them, names unchanged, into **`DEVS:Firmware/`**:
+   - `cypress/cyfmac43455-sdio-standard.bin`
+   - `cypress/cyfmac43455-sdio.clm_blob`
+   - `brcm/brcmfmac43455-sdio.txt`
+
+   (Compute Module 4: `brcm/brcmfmac43456-sdio.bin`, `.clm_blob` and `.txt` instead.)
+2. Copy `amiga/DEVS/alice68wifi.device` to `DEVS:` and `amiga/C/Alice68-WiFi` to `C:`.
+3. Choose the network:
+   ```
+   Alice68-WiFi JOIN "MyNetwork" "my password"
+   ```
+   This saves `ENV:` and `ENVARC:alice68wifi.prefs` and connects. The file can also be
+   written by hand:
+   ```
+   SSID="MyNetwork"
+   PASSWORD="my password"
+   COUNTRY=GB
+   ```
+   `COUNTRY` is your two-letter country code (the channels allowed). Optional:
+   `POWERSAVE=1`, `SDCLOCK=50000000` (SDIO at 50 MHz instead of 25), `POLL=1` (no
+   interrupt), `FIRMWARE=dir/` (another firmware folder).
+4. Tell lwip-amiga about it: a file `DEVS:NetInterfaces/wifi` with
+   ```
+   DEVICE=alice68wifi.device
+   UNIT=0
+   TYPE=NETDEV
+   ADDRESS=DHCP
+   ```
+   (`AddNetInterface` in `S:Network-Startup` adds the files in that folder). lwip-amiga
+   carries one interface at a time: WiFi or the Ethernet port, so give the other file
+   `STATE=DOWN`. Keep the driver in `DEVS:` itself (not `DEVS:Networks/`): that is where
+   `Alice68-WiFi` looks for it.
+
+`Alice68-WiFi` on its own shows the state, the network, the signal and the counters;
+`Alice68-WiFi SCAN` lists the networks in range; `Alice68-WiFi LOG` shows the driver's log
+(the same lines go to the serial log as `[alice68wifi] ...`) - send that if WiFi does not
+come up. `DISCONNECT`, `RECONNECT` (after editing the prefs) and `OFF` (chip off) do what
+they say. The chip stays on when the last program closes the device, so a scan or JOIN
+before the TCP/IP stack starts does not drop the connection.
+
+Not supported: WEP, WPA-Enterprise, hidden networks only by name (they are tried when
+not seen in a scan), access-point mode.
+
 ## Hardfiles (`.hdf`) on the SD card
 
 Copy hardfiles onto the SD card's FAT boot partition, in the root folder or in a folder
