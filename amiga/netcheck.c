@@ -3,7 +3,7 @@
  * about itself, as text in a Shell: no ReAction classes needed, so it runs on any
  * AmigaOS from 3.1 on.
  *
- *   Alice68-NetCheck [DEVICE <name>] [UNIT <n>] [WATCH]
+ *   Alice68-NetCheck [DEVICE <name>] [UNIT <n>] [WATCH] [TEST]
  *
  * It opens the driver (by name first, which finds the one a TCP/IP stack has
  * loaded, then from DEVS:Networks/), asks the standard SANA-II questions -
@@ -12,6 +12,9 @@
  * irq0_count (interrupts that reached AmigaOS) and hw_rx_pkts (packets the
  * Ethernet hardware received): together they tell a missing interrupt from a
  * missing link. WATCH repeats the key counters every second until Ctrl-C.
+ * TEST brings an unconfigured interface up itself (S2_CONFIGINTERFACE with the
+ * factory address), so the hardware can be checked without a TCP/IP stack, and
+ * watches it for five seconds.
  *
  * SANA-II structures and command numbers: devices/sana2.h. */
 #include "amiga.h"
@@ -21,6 +24,7 @@ void *memset(void *d, int c, unsigned long n) { UBYTE *a = d; while (n--) *a++ =
 
 #define S2_DEVICEQUERY        (CMD_NONSTD + 0)
 #define S2_GETSTATIONADDRESS  (CMD_NONSTD + 1)
+#define S2_CONFIGINTERFACE    (CMD_NONSTD + 2)
 #define S2_GETSPECIALSTATS    (CMD_NONSTD + 12)
 #define S2_GETGLOBALSTATS     (CMD_NONSTD + 13)
 #define SIGBREAKF_CTRL_C      (1u << 12)
@@ -120,18 +124,19 @@ LONG netcheck_main(const char *args, ULONG arglen)
 
     char devname[96] = "genet.device";
     ULONG unit = 0;
-    int watch = 0, explicit_dev = 0;
+    int watch = 0, explicit_dev = 0, test = 0;
     char w[96];
     const char *p = args;
     while (nextword(&p, w, sizeof w)) {
         if (str_eq_ci(w, "WATCH")) watch = 1;
+        else if (str_eq_ci(w, "TEST")) test = 1;
         else if (str_eq_ci(w, "UNIT") && nextword(&p, w, sizeof w)) { unit = 0; for (char *c = w; *c >= '0' && *c <= '9'; c++) unit = unit * 10 + (ULONG)(*c - '0'); }
         else if (str_eq_ci(w, "DEVICE") && nextword(&p, w, sizeof w)) { memcpy(devname, w, sizeof devname); explicit_dev = 1; }
-        else if (w[0] == '?') { puts_("Alice68-NetCheck [DEVICE <name>] [UNIT <n>] [WATCH]\n"); CloseLibrary(dos); return 0; }
+        else if (w[0] == '?') { puts_("Alice68-NetCheck [DEVICE <name>] [UNIT <n>] [WATCH] [TEST]\n"); CloseLibrary(dos); return 0; }
         else { memcpy(devname, w, sizeof devname); explicit_dev = 1; }
     }
 
-    puts_("Alice68-NetCheck 1.0\n");
+    puts_("Alice68-NetCheck 1.2\n");
     APTR port = CreateMsgPort();
     struct IOSana2Req *io = port ? CreateIORequest(port, sizeof *io) : 0;
     struct SSHdr *ss = AllocMem_(sizeof(struct SSHdr) + MAXREC * sizeof(struct SSRec));
@@ -139,18 +144,31 @@ LONG netcheck_main(const char *args, ULONG arglen)
     if (!io || !ss) { puts_("out of memory\n"); goto out; }
     io->ios2_BufferManagement = (APTR)nobuf;
 
-    /* by name first: finds the copy a TCP/IP stack has loaded; then from DEVS:Networks/ */
+    /* By name first: that is the copy a TCP/IP stack has loaded. Only if no driver of
+       that name is loaded at all, from DEVS:Networks/ - opening a path while one is
+       loaded makes AmigaOS load a second copy, which would drive the same hardware
+       behind the stack's back. */
+    Forbid();
+    int loaded = FindName((UBYTE *)SYSBASE + EXEC_DEVICELIST, "genet.device") != 0;
+    Permit();
     LONG e = OpenDevice(devname, unit, io, 0);
-    if (e && !explicit_dev) {
+    if (e && !explicit_dev && !loaded) {
         memcpy(devname, "DEVS:Networks/genet.device", 27);
         e = OpenDevice(devname, unit, io, 0);
     }
     puts_("Device:    "); puts_(devname); puts_(" unit "); dec(unit);
     if (e) {
-        puts_(" - cannot open it ("); dec((ULONG)e); puts_(")\n");
-        puts_("           Is the driver in DEVS:Networks/? A SANA-II genet.device is version 3.x.\n");
+        puts_(" - cannot open it (error "); dec((ULONG)(LONG)e); puts_(")\n");
+        if (loaded && !explicit_dev)
+            puts_("           genet.device is loaded - your TCP/IP stack has it - but refused a second\n"
+                  "           opener: the stack probably opened it for itself alone (exclusive).\n"
+                  "           The driver is running; check the network from the stack's own status.\n");
+        else
+            puts_("           Is the driver in DEVS:Networks/? A SANA-II genet.device is version 3.x.\n");
         goto out;
     }
+    if (!loaded && !explicit_dev)
+        puts_(" (not loaded before: no TCP/IP stack had it open)");
     struct Library *lib = io->ios2_Req.io_Device;
     puts_(", version "); dec(lib->lib_Version); puts_("."); dec(lib->lib_Revision); puts_("\n");
     if (lib->lib_IdString) { puts_("           "); puts_((const char *)lib->lib_IdString); }
@@ -176,17 +194,38 @@ LONG netcheck_main(const char *args, ULONG arglen)
         puts_("\n");
     }
 
+    /* SANA-II: SrcAddr is the address in use - zero until a stack configures the
+       interface (S2_CONFIGINTERFACE) - and DstAddr the factory one */
+    int configured = 0;
+    UBYTE factory[16];
+    int bytes = (q.AddrFieldSize ? q.AddrFieldSize : 48) / 8;
+    if (bytes > 16) bytes = 16;
+    memset(factory, 0, sizeof factory);
     puts_("Address:   ");
     e = ask(io, S2_GETSTATIONADDRESS, 0);
     if (e) err(e, io->ios2_WireError);
     else {
-        int bytes = (q.AddrFieldSize ? q.AddrFieldSize : 48) / 8;
-        if (bytes > 16) bytes = 16;
-        for (int i = 0; i < bytes; i++) { if (i) puts_(":"); hex2(io->ios2_SrcAddr[i]); }
-        int dflt = 1;
-        for (int i = 0; i < bytes; i++) if (io->ios2_DstAddr[i] != io->ios2_SrcAddr[i]) dflt = 0;
-        puts_(dflt ? " (the hardware's own)\n" : "\n");
+        for (int i = 0; i < bytes; i++) { factory[i] = io->ios2_DstAddr[i]; if (io->ios2_SrcAddr[i]) configured = 1; }
+        puts_("factory ");
+        for (int i = 0; i < bytes; i++) { if (i) puts_(":"); hex2(factory[i]); }
+        if (configured) {
+            puts_(", in use ");
+            for (int i = 0; i < bytes; i++) { if (i) puts_(":"); hex2(io->ios2_SrcAddr[i]); }
+            puts_("\n");
+        } else {
+            puts_("\n           not configured: no TCP/IP stack has brought this interface up\n");
+        }
     }
+    if (test && !e && !configured) {
+        puts_("Test:      bringing the interface up with the factory address... ");
+        memcpy(io->ios2_SrcAddr, factory, 16);
+        int ce = ask(io, S2_CONFIGINTERFACE, 0);
+        if (ce) err(ce, io->ios2_WireError);
+        else { puts_("online\n"); configured = 1; }
+    } else if (test && configured) {
+        puts_("Test:      already configured by a TCP/IP stack - watching it as it is\n");
+    }
+    int rounds = test ? 6 : -1;
 
     for (int round = 0;; round++) {
         struct Sana2DeviceStats g;
@@ -215,12 +254,17 @@ LONG netcheck_main(const char *args, ULONG arglen)
                     puts_("  "); pad(r[i].String ? r[i].String : "?", 20); dec(r[i].Count); puts_("\n");
                 }
             }
+            if (test && rounds > 0) { puts_("\nWatching for 5 seconds:\n"); goto next; }
+          verdict:
             puts_("\nWhat it means:\n");
             if (irq == ~0u || hwrx == ~0u)
                 puts_("  This driver does not report interrupt and hardware counters (genet.device 3.x does).\n");
+            else if (hwrx == 0 && hwtx == 0 && !configured)
+                puts_("  The interface is not up yet: bring it up in your TCP/IP stack (genet.device, unit 0),\n"
+                      "  or run Alice68-NetCheck TEST to bring it up here and check the hardware.\n");
             else if (hwrx == 0 && hwtx == 0)
-                puts_("  Nothing sent or received yet. Check the cable and the port's LEDs, and that your\n"
-                      "  TCP/IP stack has the interface online (the hardware counters start when it does).\n");
+                puts_("  The interface is up but nothing was sent or received: check the cable and the\n"
+                      "  port's LEDs (a busy network sends some broadcasts within seconds).\n");
             else if (irq == 0)
                 puts_("  The Ethernet hardware has traffic, but NO interrupt reached AmigaOS.\n"
                       "  That is an Alice68 problem: please report it with this output.\n");
@@ -230,10 +274,15 @@ LONG netcheck_main(const char *args, ULONG arglen)
             if (!watch) break;
             puts_("\nWatching (Ctrl-C stops):\n");
         }
+      next:
         if (round > 0 || watch) {
             puts_("  irq0 "); dec(irq == ~0u ? 0 : irq); puts_("   hw rx "); dec(hwrx == ~0u ? 0 : hwrx);
             puts_("   hw tx "); dec(hwtx == ~0u ? 0 : hwtx); puts_("   received "); dec(g.PacketsReceived);
             puts_("   sent "); dec(g.PacketsSent); puts_("\n");
+        }
+        if (rounds > 0 && --rounds == 0) {           /* TEST: the verdict on what the five seconds showed */
+            rounds = -1;
+            goto verdict;
         }
         Delay(dos, 50);
         if (SetSignal(0, SIGBREAKF_CTRL_C) & SIGBREAKF_CTRL_C) { puts_("***Break\n"); break; }

@@ -42,6 +42,11 @@ def run(hunk, args, dev):
         st['rounds'] += 1
         setd0(0x1000 if dev.get('ctrl_c_after') and st['rounds'] >= dev['ctrl_c_after'] else 0)
     lvo(SYSBASE, -306, setsignal)
+    lvo(SYSBASE, -132, lambda o, p: None)
+    lvo(SYSBASE, -138, lambda o, p: None)
+    lvo(SYSBASE, -276, lambda o, p: setd0(DEVBASE if dev.get('loaded') and mem.r_cstr(d(R.A1)) == 'genet.device' else 0))
+    st['configured'] = dev.get('configured', False)
+    st['paths'] = []
     lvo(DOSBASE, -60, lambda o, p: setd0(1))
     lvo(DOSBASE, -48, lambda o, p: (st['out'].append(bytes(mem.r_block(d(R.D2), d(R.D3))).decode('latin1')), setd0(d(R.D3))))
     lvo(DOSBASE, -198, lambda o, p: None)
@@ -51,6 +56,7 @@ def run(hunk, args, dev):
     names = {k: cstr(k) for k in ('rx_overruns', 'irq0_count', 'irq0_rx_count', 'hw_rx_pkts', 'hw_tx_pkts')}
     def opendev(o, p):
         name, io = mem.r_cstr(d(R.A0)), d(R.A1)
+        st['paths'].append(name)
         ok = (name == 'genet.device' and dev['open_by_name']) or (name == 'DEVS:Networks/genet.device' and dev['open_by_path'])
         if ok:
             if mem.r32(io + 84) == 0: fails.append('opened without a buffer-management tag list')
@@ -65,10 +71,17 @@ def run(hunk, args, dev):
             if mem.r32(stat) < 30: err = 3
             else:
                 mem.w32(stat + 4, 30); mem.w16(stat + 16, 48); mem.w32(stat + 18, 1500); mem.w32(stat + 22, dev['bps']); mem.w32(stat + 26, 1)
-        elif cmd == 10:
-            for i, b in enumerate([0xdc, 0xa6, 0x32, 1, 2, 3]): mem.w8(io + 40 + i, b); mem.w8(io + 56 + i, b)
+        elif cmd == 10:                                   # SrcAddr: in use (0 until configured), DstAddr: factory
+            for i, b in enumerate([0xdc, 0xa6, 0x32, 1, 2, 3]):
+                mem.w8(io + 40 + i, b if st['configured'] else 0); mem.w8(io + 56 + i, b)
+        elif cmd == 11:
+            if st['configured']: err = 4
+            else:
+                st['configured'] = True; st['cfg_addr'] = bytes(mem.r_block(io + 40, 6))
         elif cmd == 22:
             for i, v in enumerate([dev['hwrx'], dev['hwtx'], 0, 0, 0, 2, 1]): mem.w32(stat + 4 * i, v)
+            if dev.get('grow') and st['configured']:          # traffic once the interface is up
+                dev['hwrx'] += 7; dev['hwtx'] += 1; dev['irq'] += (7 if dev['grow'] == 'irq' else 0)
         elif cmd == 21:
             mx = mem.r32(stat); recs = [('rx_overruns', 0), ('irq0_count', dev['irq']), ('irq0_rx_count', dev['irq']),
                                        ('hw_rx_pkts', dev['hwrx']), ('hw_tx_pkts', dev['hwtx'])][:mx]
@@ -97,28 +110,42 @@ def run(hunk, args, dev):
     return ''.join(st['out']), st
 
 hunk = sys.argv[1]
-base = dict(open_by_name=True, open_by_path=True, version=3, revision=17, irq=0, hwrx=0, hwtx=0, bps=1000000000, ctrl_c_after=0)
+base = dict(open_by_name=True, open_by_path=True, loaded=True, configured=True, version=3, revision=17,
+            irq=0, hwrx=0, hwtx=0, bps=1000000000, ctrl_c_after=0)
+unloaded = dict(base, open_by_name=False, loaded=False, configured=False)
 cases = [
-    ('loaded by a stack, interrupts arrive', '', dict(base, irq=120, hwrx=340, hwtx=200),
-     ['genet.device unit 0, version 3.17', 'line rate 1000 Mbit/s', 'dc:a6:32:01:02:03', 'irq0_count', 'the driver works']),
+    ('loaded and configured by a stack, interrupts arrive', '', dict(base, irq=120, hwrx=340, hwtx=200),
+     ['genet.device unit 0, version 3.17', 'line rate 1000 Mbit/s', 'factory dc:a6:32:01:02:03, in use dc:a6:32:01:02:03',
+      'irq0_count', 'the driver works'], ['genet.device']),
     ('traffic but no interrupts (Alice68 bug)', '', dict(base, irq=0, hwrx=55, hwtx=3),
-     ['NO interrupt reached AmigaOS', 'please report']),
-    ('nothing yet', '', dict(base), ['Nothing sent or received yet']),
-    ('not loaded: falls back to DEVS:Networks/', '', dict(base, open_by_name=False, irq=1, hwrx=1),
-     ['DEVS:Networks/genet.device unit 0, version 3.17']),
-    ('missing', '', dict(base, open_by_name=False, open_by_path=False), ['cannot open it', 'version 3.x']),
-    ('netdev 4.x installed', '', dict(base, version=4, revision=4), ['is the netdev driver', 'use the SANA-II driver']),
-    ('WATCH until Ctrl-C', 'WATCH', dict(base, irq=7, hwrx=9, ctrl_c_after=3), ['Watching', 'irq0 7', '***Break']),
-    ('explicit device and unit', 'DEVICE genet.device UNIT 0', dict(base, irq=1, hwrx=1), ['genet.device unit 0']),
+     ['NO interrupt reached AmigaOS', 'please report'], ['genet.device']),
+    ('configured, no traffic', '', dict(base), ['nothing was sent or received'], ['genet.device']),
+    ('loaded by a stack that holds it exclusively: no second copy', '', dict(base, open_by_name=False),
+     ['refused a second', 'opened it for itself alone'], ['genet.device']),
+    ('not loaded: from DEVS:Networks/, not configured', '', dict(unloaded),
+     ['DEVS:Networks/genet.device unit 0 (not loaded before', 'not configured: no TCP/IP stack', 'Alice68-NetCheck TEST'],
+     ['genet.device', 'DEVS:Networks/genet.device']),
+    ('missing', '', dict(unloaded, open_by_path=False), ['cannot open it', 'version 3.x'], None),
+    ('netdev 4.x installed', '', dict(base, version=4, revision=4), ['is the netdev driver', 'use the SANA-II driver'], None),
+    ('WATCH until Ctrl-C', 'WATCH', dict(base, irq=7, hwrx=9, ctrl_c_after=3), ['Watching', 'irq0 7', '***Break'], None),
+    ('TEST: brings it up, interrupts arrive', 'TEST', dict(unloaded, grow='irq'),
+     ['bringing the interface up with the factory address... online', 'Watching for 5 seconds', 'the driver works'], None),
+    ('TEST: traffic but no interrupts', 'TEST', dict(unloaded, grow='noirq'),
+     ['online', 'NO interrupt reached AmigaOS'], None),
+    ('TEST on a configured interface leaves it alone', 'TEST', dict(base, irq=3, hwrx=4),
+     ['already configured by a TCP/IP stack'], None),
 ]
-for name, args, dev, want in cases:
+for name, args, dev, want, paths in cases:
     out, st = run(hunk, args, dev)
     missing = [w for w in want if w not in out]
     if missing: fails.append('%s: missing %s\n----\n%s----' % (name, missing, out))
+    elif paths is not None and st['paths'] != paths: fails.append('%s: opened %s, want %s' % (name, st['paths'], paths))
+    elif 'TEST' in args and 'online' in out and st.get('cfg_addr') != bytes([0xdc, 0xa6, 0x32, 1, 2, 3]):
+        fails.append('%s: configured with %s, want the factory address' % (name, st.get('cfg_addr')))
     elif st.get('opened') and not st.get('closed'): fails.append('%s: device not closed' % name)
     else: print('ok  %s' % name)
 if fails:
     print('\n'.join('FAIL: ' + f for f in fails)); sys.exit(1)
-print('--- sample (traffic but no interrupts) ---')
-print(run(hunk, '', dict(base, irq=0, hwrx=55, hwtx=3))[0])
+print('--- sample: TEST, traffic but no interrupts ---')
+print(run(hunk, 'TEST', dict(unloaded, grow='noirq'))[0])
 print('ALL OK')
