@@ -156,6 +156,7 @@ aga.look=0 aga.scale=1
 | `aga.look=0` / `1` / `2` | Picture: sharp (default) / smooth / TV |
 | `aga.scale=0` … `7` | Scaling: 0 4:3, 1 integer (default), 2 fill, 3 5:4, 4 16:9, 5 16:10, 6 21:9, 7 32:9 |
 | `aga.nobootlog` | No log panels on the boot splash |
+| `aga.splash=N` | Keep the boot splash updating for `N` seconds after the 68k starts (0–600; default 0: it stops at once) |
 | `hdf.boot=NAME` | Boot from the hardfile `NAME` (see [Hardfiles](#hardfiles-hdf-on-the-sd-card)) |
 | `hdf.readonly` | Hardfiles read-only |
 | `hdf=off` | No hardfiles |
@@ -191,7 +192,10 @@ The splash has five parts:
 - **Credits line.**
 
 Failures show in red, so a photo of the screen is usually enough to diagnose a hang.
-The panels keep updating until 20 s after the 68k starts. `aga.nobootlog` in
+The splash stops drawing as soon as the 68k starts, so nothing is drawn over AmigaOS's
+or the RTG screen. `aga.splash=N` keeps the status strip and panels updating for `N`
+seconds more (e.g. `aga.splash=20`, as before 0.4, to see the hardfile count and the late
+USB lines). `aga.nobootlog` in
 `cmdline.txt` turns the log panels off. `tools/splash-preview/build.sh` renders the
 splash on a PC with the kernel's own drawing code.
 

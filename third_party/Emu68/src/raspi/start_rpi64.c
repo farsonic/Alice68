@@ -926,7 +926,7 @@ static char     ulog[ULOG_LINES][ULOG_COLS + 1];
 static unsigned ulog_cur;
 static char     line_now[BLOG_COLS + 1];
 static unsigned line_len;
-/* both panels stop 20 s after the 68k starts (stage 5): from then on the
+/* both panels stop aga.splash seconds (default 0) after the 68k starts (stage 5): from then on the
    framebuffer may be someone else's (RTG) */
 static uint64_t blog_stop_at;
 
@@ -941,7 +941,7 @@ static int __attribute__((unused)) blog_has(const char *l, const char *w)
 }
 
 #ifdef ALICE_SPLASH
-/* the splash may be drawn until 20 s after the 68k starts; after that the
+/* the splash may be drawn until aga.splash seconds (default 0) after the 68k starts; after that the
    framebuffer may be someone else's (RTG) */
 static int alice_live(void)
 {
@@ -1056,12 +1056,17 @@ static void ulog_line(const char *l)
     }
 }
 
+/* aga.splash=N in cmdline.txt: how many seconds the splash keeps drawing
+   after the 68k starts (0..600). Default 0: it stops at once, so nothing is
+   drawn over AmigaOS's or RTG's picture. */
+unsigned frf_splash_secs;
 void frf_bootlog_start_timer(void)   /* stage 5: the 68k starts */
 {
     uint64_t f, t;
     __asm__ volatile("mrs %0, CNTFRQ_EL0" : "=r"(f));
     __asm__ volatile("mrs %0, CNTVCT_EL0" : "=r"(t));
-    blog_stop_at = t + 20u * f;
+    blog_stop_at = t + (uint64_t)frf_splash_secs * f;
+    if (!blog_stop_at) blog_stop_at = 1;     /* 0 means "no limit set" */
 }
 
 /* called with print_lock held (support_rpi.c putByte) */
@@ -1099,7 +1104,9 @@ void frf_boot_stage(unsigned stage)
             "guest input armed", "68k jump", "CPU1 released", "USB env started",
             "USB init entry", "USB init returned", "USB input ready" };
         if (stage >= 1u && stage <= 10u) kprintf("[STAGE %u] %s\n", stage, what[stage]);
+#ifndef ALICE_SPLASH
         if (stage == 5u) frf_bootlog_start_timer();
+#endif
     }
 #endif
 #ifdef ALICE_SPLASH
@@ -1107,6 +1114,8 @@ void frf_boot_stage(unsigned stage)
         __atomic_fetch_or(&post_flags, 1u << stage, __ATOMIC_ACQ_REL);
         alice_status();
     }
+    /* after "68K running" is on the strip: with aga.splash=0 that is the last thing drawn */
+    if (stage == 5u) frf_bootlog_start_timer();
     return;
 #endif
     if (stage<1u || stage>10u || __atomic_load_n(&post_stop,__ATOMIC_ACQUIRE)) return;

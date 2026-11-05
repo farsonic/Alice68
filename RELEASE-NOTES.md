@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **The boot splash no longer keeps drawing for 20 s** after the 68k starts: it stops at
+  once, so nothing is drawn over AmigaOS's or the RTG screen. `aga.splash=N` in
+  `cmdline.txt` brings the old behaviour back for `N` seconds (0–600), e.g.
+  `aga.splash=20` to watch the hardfile count and late USB lines arrive.
 - **`C:Alice68-NetCheck`** (new): what a SANA-II network driver reports, as text in a
   Shell, on any AmigaOS (rondoval's `genet-stats` needs 3.2's ReAction classes). For
   the Pi's own Ethernet (`genet.device` 3.x) it shows link rate, MAC address, packet and

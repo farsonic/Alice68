@@ -1568,7 +1568,7 @@ static void show(uintptr_t frame_phys)
 {
 #ifdef FRF_VIRTUAL_AGA
     {   /* note the first AGA frame on the boot log (it keeps running until
-           20 s after the 68k starts, start_rpi64.c) */
+           aga.splash seconds after the 68k starts, start_rpi64.c) */
         static int said;
         if (!said) { said = 1; kprintf("[AGA] first AGA frame on HDMI\n"); }
     }
