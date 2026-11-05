@@ -255,7 +255,10 @@ static void scan_dir(struct fat *f, struct scan *sc, uint32_t dir_clus, int top)
                     if (top && !sc->hdf_dir && e[0] == 'H' && e[1] == 'D' && e[2] == 'F' && e[3] == ' ' && e[8] == ' ')
                         sc->hdf_dir = le16(e + 26) | (f->fat32 ? le16(e + 20) << 16 : 0);
                 } else if ((e[8] == 'H' || e[8] == 'h') && (e[9] == 'D' || e[9] == 'd') && (e[10] == 'F' || e[10] == 'f')) {
-                    take(f, sc, e, ln);
+                    /* "._Workbench.hdf" and other dot files: macOS's metadata next to the real
+                       file, never a hardfile. Their 8.3 names start with '_' and lose the dot,
+                       so the long name tells */
+                    if (ln[0] != '.') take(f, sc, e, ln);
                 } else if (top && !f->cmd_clus) {
                     static const char cmd[11] = { 'C', 'M', 'D', 'L', 'I', 'N', 'E', ' ', 'T', 'X', 'T' };
                     int k = 0;

@@ -5,6 +5,8 @@
 - **Hardfiles on the boot splash's status strip**, after INPUT: `HARDFILES 1 bootable 4
   non-bootable`, plus `n left out` in amber when any were skipped (the SYSTEM panel says
   why), or `none`. The hardfile driver sends a summary line; the kernel reads it.
+- **macOS metadata files ignored:** the `._Name.hdf` files a Mac writes next to each
+  file on a FAT card are no longer taken for hardfiles (they showed up as "left out").
 
 ## 0.2.0 — hardfiles on the SD card
 

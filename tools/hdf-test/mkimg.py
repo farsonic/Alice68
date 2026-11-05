@@ -177,6 +177,7 @@ def card(img, fat, out):
             f.write(b"\xff\xff\xff\xff")
     run("mcopy", *m, out + "/frag.hdf", "::frag.hdf")
     run("mcopy", *m, out + "/raw.hdf", "::raw.hdf")
+    run("mcopy", *m, out + "/appledouble.bin", "::._games.hdf")      # macOS metadata: must be ignored
     run("mmd", *m, "::HDF")
     run("mcopy", *m, out + "/extra.hdf", "::HDF/extra.hdf")
     with open(img, "r+b") as f, open(fs, "rb") as s:
@@ -194,6 +195,7 @@ def main():
     open(out + "/filler1.bin", "wb").write(b"\xaa" * 700 * 1024)
     open(out + "/filler2.bin", "wb").write(b"\x55" * 100 * 1024)
     open(out + "/small.bin", "wb").write(b"\x11" * 8 * 1024)
+    open(out + "/appledouble.bin", "wb").write(b"\x00\x05\x16\x07" + b"\x00" * 4092)   # an AppleDouble header
     ffs = 0x444f5303                                          # DOS\3
     rdb_hdf(out + "/Workbench 3.1.hdf", b"WBEN", 160, 2, 32, [("DH0", 2, 159, True, 5, ffs)], vols=["Workbench"])
     rdb_hdf(out + "/games.hdf", b"GAME", 128, 4, 32,
