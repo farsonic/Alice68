@@ -146,7 +146,7 @@ LONG netcheck_main(const char *args, ULONG arglen)
         else { memcpy(devname, w, sizeof devname); explicit_dev = 1; }
     }
 
-    puts_("Alice68-NetCheck 1.5\n");
+    puts_("Alice68-NetCheck 1.6\n");
     APTR port = CreateMsgPort();
     struct IOSana2Req *io = port ? CreateIORequest(port, sizeof *io) : 0;
     struct SSHdr *ss = AllocMem_(sizeof(struct SSHdr) + MAXREC * sizeof(struct SSRec));
@@ -198,7 +198,8 @@ LONG netcheck_main(const char *args, ULONG arglen)
         if (!id || !n || id[n - 1] != '\n') puts_("\n");
     }
     if (lib->lib_Version >= 4 && str_eq_ci(lib->lib_Node.ln_Name ? lib->lib_Node.ln_Name : "", "genet.device"))
-        puts_("           genet.device 4.x is the netdev driver: on Alice68 use the SANA-II driver, 3.x\n");
+        puts_("           genet.device 4.x is the netdev driver: it works only with lwip-amiga's stack.\n"
+              "           Roadshow, AmiTCP, Miami and Riptide need the SANA-II driver, 3.x.\n");
     if (copies > 1) {
         puts_("           ");
         dec((ULONG)copies);

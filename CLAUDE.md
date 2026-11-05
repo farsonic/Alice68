@@ -154,8 +154,10 @@ without asking for each step. Stop and ask only where noted.
        `amiga/test/harness.py`);
      - changes to which archive or driver users need (README's Neptune and Ethernet advice);
      - PCIe/xHCI bring-up changes worth mirroring in `frf_xhci.c`.
-   - **rondoval-emu68:** don't merge the fork. If its data-cache extensions have reached
-     official Emu68, say so: they enable the faster `-rangeops` drivers.
+   - **rondoval-emu68:** don't merge the fork. Its data-cache range opcodes (`582253e`,
+     PR michalsc/Emu68#334, also on Emu68's `1_1_wip`) are already in; when an Emu68
+     release carries them, nothing more is needed. Keep the `dcache-range-ops` property:
+     the `-rangeops` driver archives refuse to load without it.
    - **TinyUSB:** only when FRF moves or a fix is needed (MIT).
    - **Arm toolchain:** try the newer one. Keep 15.x if the kernel misbehaves; GCC 14 is
      known bad.

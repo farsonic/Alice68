@@ -23,5 +23,14 @@ Alice68's history starts with three commits that keep the inputs apart:
    - the 68k driver and log tool;
    - the licensing documents.
 
+Later Emu68 changes are taken on the `upstream` branch and merged into `next`:
+
+- `582253e` (Lukasz Winczura): private LINE-F data-cache range opcodes, the `/emu68`
+  `dcache-range-ops` property and 68040.library 2.0. From rondoval's pull request
+  michalsc/Emu68#334, which Emu68's `1_1_wip` branch carries; not yet in an Emu68 release.
+  Its `start.c` hunk was placed by hand. `1_1_wip`'s follow-ups `9827e5b` (a refactor)
+  and `06d88f7` (the same opcodes for the interpreter, which this tree does not have)
+  are not needed here.
+
 `git log -p` from commit 2 onwards shows every change made to the upstream
 files. `third_party/Emu68/AGA-PISTORM-SOURCE.txt` is AGA-PiStorm's own note.

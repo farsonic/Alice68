@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Emu68's data-cache range opcodes** (Emu68 `582253e` by Lukasz Winczura, from Emu68's
+  development branch `1_1_wip`; not in an Emu68 release yet). The kernel advertises
+  `dcache-range-ops`, so the faster **`-rangeops`** archives of rondoval's driver stack
+  run: `genet.device` (SANA-II 3.x or netdev 4.x), `xhci.device`, NVMe and VideoCore
+  parts do their DMA cache work in one native loop with one barrier, instead of one
+  barrier-wrapped operation per 32-byte line.
+  The built-in `68040.library` is 2.0, which uses them too. `Alice68-NetCheck` 1.6 no
+  longer calls genet.device 4.x wrong for Alice68: it is the driver for lwip-amiga.
 - **The boot splash no longer keeps drawing for 20 s** after the 68k starts: it stops at
   once, so nothing is drawn over AmigaOS's or the RTG screen. `aga.splash=N` in
   `cmdline.txt` brings the old behaviour back for `N` seconds (0–600), e.g.

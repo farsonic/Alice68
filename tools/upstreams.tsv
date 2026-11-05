@@ -10,6 +10,6 @@ frf	branch	https://github.com/futureretrofusion/EMU68AGA-Bare-Metal	refs/heads/m
 frf-releases	tags	https://github.com/futureretrofusion/EMU68AGA-Bare-Metal	-	v0.10.44-AGA1.119-rc3	FRF releases
 neptune	tags	https://github.com/rondoval/neptune-usb-stack	-	v6.3	USB stack that alice68-usb.device serves (USBHardware interface)
 driver-stack	tags	https://github.com/rondoval/emu68-driver-stack	-	v2.3.0	genet/xhci/pcie drivers; README tells users which archive to take
-rondoval-emu68	tags	https://github.com/rondoval/Emu68	-	v1.1-alpha-with-rangeops	Emu68 fork with the data-cache extensions; watch, do not merge the fork
+rondoval-emu68	tags	https://github.com/rondoval/Emu68	-	v1.1-alpha-with-rangeops	Emu68 fork; its data-cache range opcodes (582253e, PR #334, on Emu68 1_1_wip) are taken in; do not merge the fork
 tinyusb	tags	https://github.com/hathach/tinyusb	-	0.21.0	vendored (via FRF) in third_party/Emu68/third_party/tinyusb, USB-C host
 arm-toolchain	manual	https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads	-	15.2.rel1	aarch64_be-none-linux-gnu, builds the kernel

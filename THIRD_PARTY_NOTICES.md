@@ -9,7 +9,7 @@ file's own header disagree, the header wins.
 
 | Component | Authors | Licence | Where |
 |---|---|---|---|
-| **Emu68** 1.1.0-beta.1 (upstream commit `0ba3a89`) | Michal Schulz and contributors | MPL-2.0 | `third_party/Emu68` ([upstream](https://github.com/michalsc/Emu68)) |
+| **Emu68** 1.1.0-beta.1 (upstream commit `0ba3a89`) plus the dcache range opcodes (`582253e`, Lukasz Winczura, from Emu68's `1_1_wip`) | Michal Schulz and contributors | MPL-2.0 | `third_party/Emu68` ([upstream](https://github.com/michalsc/Emu68)) |
 | **AGA-PiStorm** 1.120: virtual AGA chipset, HDMI output, audio, glue | Astair86 and contributors | GPL-2.0-only | `core/`, `arm/`, `tools/`, `package/` ([project page](https://astair86.itch.io/aga-pistorm-10-experimental-prototype)) |
 | **UAE / WinUAE** code inside the chipset core | Bernd Schmidt, Alessandro Bissacco, Toni Wilen and the UAE authors | GPL | `core/src` (headers), [package/UAE-WinUAE-notice.txt](package/UAE-WinUAE-notice.txt) |
 | **EMU68AGA Bare Metal**: standalone layer (virtual CIAs, bus stubs, Z3 RAM, ROM loading, Pi 3 USB host) | Future Retro Fusion | GPL-2.0-or-later (FRF-original), MPL-2.0 (changes to Emu68 files) | `third_party/Emu68/src/frf_usb`, `src/boards/frf_z3ram.c`, FRF hunks in `arm/` ([upstream](https://github.com/futureretrofusion/EMU68AGA-Bare-Metal)) |
@@ -22,6 +22,7 @@ file's own header disagree, the header wins.
 | maths library | musl (Rich Felker et al.), FreeBSD msun (Sun Microsystems) | MIT, Sun permissive | `third_party/Emu68/src/math` |
 | TLSF allocator, Topaz font, exec lists/nodes | The AROS Development Team | AROS Public License 1.1 | `third_party/Emu68/src/tlsf.c`, `src/raspi/topaz.c`, `include/lists.h`, `include/nodes.h` |
 | Emu68 ROM modules and other binary parts in `src/boards/*.h` | Michal Schulz | see [Emu68-tools](https://github.com/michalsc) | carried as data by Emu68 |
+| `68040.library` 2.0 in `src/boards/68040.library.h` | Michal Schulz, Lukasz Winczura | MPL-2.0 | carried as data by Emu68 ([source](https://github.com/michalsc/68040.library)) |
 
 ## Followed, not copied
 

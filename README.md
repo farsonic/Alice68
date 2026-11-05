@@ -224,8 +224,14 @@ Shell.
   give your TCP/IP stack `usbcdceth.device`, unit 0, as a bare name.
 - **Virtual eject:** Realtek RTL815x adapters that start as a driver CD (`0bda:8151`)
   are switched to network mode by the kernel. `frf_usb.nomodeswitch` turns this off.
-- **Pi's own Ethernet:** use rondoval's SANA-II `genet.device` **3.x** (driver stack
-  2.3.0 has 3.17 in `Storage/DEVS/Networks/`), not the 4.x netdev one.
+- **Pi's own Ethernet:** Alice68's Emu68 has the dcache extensions (the `dcache-range-ops`
+  property), so take the **`-rangeops`** archive of rondoval's
+  [driver stack](https://github.com/rondoval/emu68-driver-stack/releases)
+  (`emu68-drivers-<ver>-rangeops.lha`). With Roadshow, AmiTCP, Miami or Riptide use its
+  SANA-II `genet.device` **3.x**, in `DEVS:Networks/`: give the stack the full path
+  `DEVS:Networks/genet.device`, unit 0. The 4.x `genet.device` is the netdev driver
+  and works only with the archive's own TCP/IP stack (lwip-amiga), which gets closest to
+  gigabit speed.
   `C:Alice68-NetCheck` (in `amiga/C`) prints what the driver reports, as text, on any
   AmigaOS: link rate, MAC address, packets and whether its interrupts reach AmigaOS.
   `Alice68-NetCheck WATCH` repeats the counters every second; `Alice68-NetCheck TEST`

@@ -165,7 +165,7 @@ cases = [
     ('two copies loaded: warns, refuses TEST', 'TEST', dict(base, configured=False, copies=2),
      ['2 copies of genet.device are loaded', 'TEST is not run', 'may belong to a copy'], None, ['sending 3', 'bringing the interface up']),
     ('missing', '', dict(unloaded, open_by_path=False), ['cannot open it', 'version 3.x'], None),
-    ('netdev 4.x installed', '', dict(base, version=4, revision=4), ['is the netdev driver', 'use the SANA-II driver'], None),
+    ('netdev 4.x installed', '', dict(base, version=4, revision=4), ['is the netdev driver', 'need the SANA-II driver, 3.x'], None),
     ('WATCH until Ctrl-C', 'WATCH', dict(base, irq=7, hwrx=9, ctrl_c_after=3), ['Watching', 'irq0 7', '***Break'], None),
     ('TEST: brings it up, interrupts arrive', 'TEST', dict(unloaded, grow='irq'),
      ['bringing the interface up with the factory address... online', 'Watching for 5 seconds', 'their interrupts reached AmigaOS'], None),
