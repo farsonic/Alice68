@@ -25,7 +25,8 @@ Credits and licences: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md),
 
 > **Status:** tested on a Raspberry Pi 4. It boots to Workbench at 1080p. A USB-A
 > keyboard and mouse work from power-on. A Realtek RTL8156 network adapter on Neptune
-> passed traffic at about 108 Mbit/s. Treat everything else as experimental.
+> passed traffic at about 108 Mbit/s. Hardfiles on the SD card mount, boot and take
+> writes. Treat everything else as experimental.
 
 ## SD card
 
@@ -85,7 +86,7 @@ Shell.
 - **Leaving the USB-A ports to AmigaOS:** `frf_usb=neptune` in `cmdline.txt` keeps the
   kernel off them, so rondoval's `xhci.device` can drive them instead.
 
-## Hardfiles (`.hdf`) on the SD card (test)
+## Hardfiles (`.hdf`) on the SD card
 
 Copy hardfiles onto the SD card's FAT boot partition, in the root folder or in a folder
 named `HDF`. At start, `alice68hdf.device` (in Emu68's ROM board) finds every `*.hdf`
@@ -97,15 +98,19 @@ for read-only.
 - **Single-partition hardfiles** (a filesystem from block 0, starting `DOS\x`): the
   layout is worked out from the file size and checked against the FFS root block. The
   partition is mounted as the first free `DH0`, `DH1`, and so on.
-- **Same volume twice:** if a hardfile holds a copy of the volume on your SD card's
-  partition (two volumes both called `Workbench`, say), AmigaOS can mix them up. Rename
-  one of the volumes, or use `hdf.boot=` so that only one of them is mounted.
 - **Writing:** writes go straight into the file's own clusters on the card and nowhere
   else. The FAT itself is never changed, so the file keeps its size and place. Back up
   hardfiles you care about before writing to them here.
-- **Filesystems:** FFS (`DOS\0` to `DOS\7`) works from Kickstart. PFS3, SFS and the
-  like mount only if that filesystem is already loaded, for example from an SD card
-  partition. Loading it from the hardfile itself is still to come.
+- **Filesystems:** FFS (`DOS\0` to `DOS\7`) comes from Kickstart. PFS3, SFS and other
+  filesystems stored in a hardfile's RDB are loaded from it (unless a newer version is
+  loaded already) and offered to other drives through `FileSystem.resource` too.
+- **One volume, one drive:** the driver reads each FFS partition's volume name. A
+  hardfile partition with the name of a volume already mounted - on the SD card's own
+  Amiga partitions or on another hardfile - is left out, because AmigaOS mixes up two
+  volumes of the same name. The hardfile chosen with `hdf.boot=` wins instead: the
+  other drive is not mounted that boot.
+- **On the splash:** the driver's lines (`[alice68hdf] ...`) appear in the splash's
+  SYSTEM panel and the serial log, so you can see what was mounted while it boots.
 
 **Every hardfile is mounted, and none of them boots** - your SD card boots as before.
 To boot from one of them, name it in `cmdline.txt` (one line):

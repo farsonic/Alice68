@@ -72,6 +72,7 @@ struct hdf_opts {
 
 struct hdf_rdb {
     uint32_t cylinders, heads, sectors;
+    uint32_t fshd;                  /* first FileSysHeaderBlock, ~0 = none */
     int      nparts;
     struct hdf_part part[HDF_MAX_PARTS];
 };
@@ -102,6 +103,25 @@ int  hdf_name_match(const char *file, const char *want);
 /* a single-partition hardfile (a filesystem from block 0, as WinUAE makes
    them): 1 found, with one nameless partition in r; 0 not one */
 int  hdf_single(struct hdf_io *io, const struct hdf_file *h, struct hdf_rdb *r);
+
+/* a filesystem stored in the RDB: its FileSysHeaderBlock */
+struct hdf_fs {
+    uint32_t dostype, version, patchflags;
+    uint32_t dn[9];                 /* dn_Type .. dn_GlobalVec as the header gives them (dn[7]: the first LSEG block) */
+};
+/* the filesystems in an RDB; returns how many (up to max), -1 broken list */
+int  hdf_rdb_fslist(struct hdf_io *io, const struct hdf_file *h, const struct hdf_rdb *r, struct hdf_fs *fs, int max);
+/* the load file of one: its LSEG blocks' data, in a buffer from io->alloc
+   (*size bytes, allocated as *alloc bytes); 0 ok */
+int  hdf_rdb_fsdata(struct hdf_io *io, const struct hdf_file *h, const struct hdf_fs *fs, uint8_t **data, uint32_t *size, uint32_t *alloc);
+
+/* the volume name of a partition with FFS (DOS\0..7), from its root block:
+   1 found, 0 not FFS or no root block there */
+int  hdf_volume(struct hdf_io *io, const struct hdf_file *h, const struct hdf_part *p, char name[32]);
+
+/* the card's own Amiga partitions (MBR type 0x76), each as a one-piece
+   "file", so that hdf_rdb() and hdf_volume() work on them; returns how many */
+int  card_amiga_parts(struct hdf_io *io, struct hdf_file *out, int max);
 
 /* 1: a Rigid Disk Block was found and parsed; 0: none; -1: broken */
 int  hdf_rdb(struct hdf_io *io, const struct hdf_file *h, struct hdf_rdb *r);

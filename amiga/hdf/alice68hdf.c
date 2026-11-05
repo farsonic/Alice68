@@ -30,9 +30,9 @@
 #include "hdf_core.h"
 
 #define VERSION   0
-#define REVISION  2
+#define REVISION  3
 const char hdf_devname[] = "alice68hdf.device";
-const char hdf_idstring[] = "alice68hdf.device 0.2 (05.11.2026) Alice68 hardfiles";
+const char hdf_idstring[] = "alice68hdf.device 0.3 (05.11.2026) Alice68 hardfiles";
 
 #define HDF_MAGIC  0x41363848u              /* 'A68H', read by Alice68-HDF */
 #define LOG_SIZE   4096
@@ -126,6 +126,12 @@ struct HdfBase {
     struct Task task;
     APTR stack;
     ULONG reads, read_errors, writes, write_errors;
+    /* volumes mounted, by name, so that none is there twice */
+    struct { char vol[32], drive[32]; } vols[48];
+    ULONG nvols;
+    /* filesystems loaded from hardfiles' RDBs */
+    struct { ULONG dostype, version, patchflags, dn[9]; } lfs[8];
+    ULONG nlfs;
 };
 ACHECK(AOFF(struct HdfBase, magic) == 36);
 ACHECK(AOFF(struct HdfBase, unit) == 44);
@@ -150,6 +156,8 @@ static APTR CreateIORequest(struct MsgPort *p, ULONG n) { return (APTR)lvo(SYSBA
 static void DeleteIORequest(APTR io)                  { lvo(SYSBASE, -660, 0, 0, (ULONG)io, 0); }
 static APTR MakeDosNode(APTR eb, ULONG *pkt)          { return (APTR)lvo(eb, -144, 0, 0, (ULONG)pkt, 0); }
 static LONG AddBootNode(APTR eb, LONG pri, ULONG fl, APTR dn, APTR cd) { return (LONG)lvo(eb, -36, (ULONG)pri, fl, (ULONG)dn, (ULONG)cd); }
+static void RawPutChar(char c)                        { lvo(SYSBASE, -516, (ULONG)(UBYTE)c, 0, 0, 0); }
+static void CacheClearU(void)                         { lvo(SYSBASE, -636, 0, 0, 0, 0); }
 extern void add_task(struct Task *t, APTR initpc);
 extern void task_entry(void);
 
@@ -167,8 +175,9 @@ static void log_line(void *ctx, const char *line)
     const char *p = "[alice68hdf] ";
     Forbid();
     for (int pass = 0; pass < 2; pass++, p = line)
-        for (; *p; p++) db->log[db->log_wr++ % LOG_SIZE] = *p;
+        for (; *p; p++) { db->log[db->log_wr++ % LOG_SIZE] = *p; RawPutChar(*p); }
     db->log[db->log_wr++ % LOG_SIZE] = '\n';
+    RawPutChar('\n');                                   /* the Alice68 kernel puts [alice68...] lines on the splash and serial log */
     Permit();
 }
 
@@ -320,29 +329,271 @@ static LONG highest_boot_pri(APTR eb)
     return best;
 }
 
-static void patch_fs(struct DeviceNode *dn, ULONG dostype)
+static ULONG fs_version(struct HdfBase *db, ULONG dostype);
+
+static void patch_fs(struct HdfBase *db, struct DeviceNode *dn, ULONG dostype)
 {
+    ULONG ver = 0, flags = 0, *src = 0;
     struct FileSysResource *fsr = OpenResource("FileSystem.resource");
-    if (!fsr) return;
-    struct FileSysEntry *best = 0;
-    for (struct Node *n = fsr->fsr_FileSysEntries.lh_Head; n->ln_Succ; n = n->ln_Succ) {
-        struct FileSysEntry *e = (struct FileSysEntry *)n;
-        if (e->fse_DosType == dostype && (!best || e->fse_Version > best->fse_Version)) best = e;
-    }
-    if (!best) return;
-    ULONG *dst = &dn->dn_Type, *src = &best->fse_Type;
+    if (fsr)
+        for (struct Node *n = fsr->fsr_FileSysEntries.lh_Head; n->ln_Succ; n = n->ln_Succ) {
+            struct FileSysEntry *e = (struct FileSysEntry *)n;
+            if (e->fse_DosType == dostype && (!src || e->fse_Version > ver)) { ver = e->fse_Version; flags = e->fse_PatchFlags; src = &e->fse_Type; }
+        }
+    for (ULONG i = 0; i < db->nlfs; i++)
+        if (db->lfs[i].dostype == dostype && (!src || db->lfs[i].version > ver)) { ver = db->lfs[i].version; flags = db->lfs[i].patchflags; src = db->lfs[i].dn; }
+    if (!src) return;
+    ULONG *dst = &dn->dn_Type;
     for (int i = 0; i < 9; i++)                        /* dn_Type .. dn_GlobalVec */
-        if (best->fse_PatchFlags & (1u << i)) dst[i] = src[i];
+        if (flags & (1u << i)) dst[i] = src[i];
 }
 
-static int fs_known(ULONG dostype)
+static int fs_known(struct HdfBase *db, ULONG dostype)
 {
     if ((dostype & 0xffffff00u) == 0x444f5300u && (dostype & 0xff) <= 7) return 1;   /* DOS\0..7: the ROM's FFS */
-    struct FileSysResource *fsr = OpenResource("FileSystem.resource");
-    if (!fsr) return 0;
-    for (struct Node *n = fsr->fsr_FileSysEntries.lh_Head; n->ln_Succ; n = n->ln_Succ)
-        if (((struct FileSysEntry *)n)->fse_DosType == dostype) return 1;
+    return fs_version(db, dostype) != 0;
+}
+
+static int str_ieq(const char *a, const char *b)
+{
+    for (; *a && *b; a++, b++) {
+        char x = *a, y = *b;
+        if (x >= 'a' && x <= 'z') x -= 32;
+        if (y >= 'a' && y <= 'z') y -= 32;
+        if (x != y) return 0;
+    }
+    return !*a && !*b;
+}
+
+static int find_vol(struct HdfBase *db, const char *vol)
+{
+    for (ULONG i = 0; i < db->nvols; i++) if (str_ieq(db->vols[i].vol, vol)) return (int)i;
+    return -1;
+}
+static void add_vol(struct HdfBase *db, const char *vol, const char *drive)
+{
+    if (db->nvols >= sizeof db->vols / sizeof db->vols[0]) return;
+    unsigned k;
+    for (k = 0; vol[k] && k < 31; k++) db->vols[db->nvols].vol[k] = vol[k];
+    db->vols[db->nvols].vol[k] = 0;
+    for (k = 0; drive[k] && k < 31; k++) db->vols[db->nvols].drive[k] = drive[k];
+    db->vols[db->nvols].drive[k] = 0;
+    db->nvols++;
+}
+static void drop_vols_of(struct HdfBase *db, const char *drive)
+{
+    for (ULONG i = 0; i < db->nvols; )
+        if (str_ieq(db->vols[i].drive, drive)) db->vols[i] = db->vols[--db->nvols];
+        else i++;
+}
+
+/* the SD card's own Amiga partitions (0x76): their volumes, as mounted by brcm-emmc.device */
+static void sd_volumes(struct HdfBase *db, struct hdf_io *io)
+{
+    struct hdf_file parts[4];
+    int n = card_amiga_parts(io, parts, 4);
+    struct hdf_rdb *r = io->alloc(io->ctx, sizeof *r);
+    for (int i = 0; i < n && r; i++) {
+        if (hdf_rdb(io, &parts[i], r) == 1) {
+            for (int k = 0; k < r->nparts; k++) {
+                char vol[32];
+                if ((r->part[k].flags & 2) || !hdf_volume(io, &parts[i], &r->part[k], vol)) continue;
+                add_vol(db, vol, r->part[k].name);
+                hdf_log(io, "%s: %s is volume %s", parts[i].name, r->part[k].name, vol);
+            }
+        }
+        hdf_file_free(io, &parts[i]);
+    }
+    if (r) io->free(io->ctx, r, sizeof *r);
+}
+
+/* ---- loading a filesystem from an RDB: our own LoadSeg, dos.library is not up yet ---- */
+#define HUNK_HEADER 0x3f3
+#define HUNK_CODE   0x3e9
+#define HUNK_DATA   0x3ea
+#define HUNK_BSS    0x3eb
+#define HUNK_RELOC32 0x3ec
+#define HUNK_SYMBOL 0x3f0
+#define HUNK_DEBUG  0x3f1
+#define HUNK_END    0x3f2
+#define HUNK_DREL32 0x3f7
+#define HUNK_RELOC32SHORT 0x3fc
+#define MAXHUNKS    32
+
+static void free_seglist(ULONG seg)
+{
+    while (seg) {
+        ULONG *m = (ULONG *)(seg << 2) - 1;             /* the size long before the link */
+        ULONG next = m[1];
+        FreeMem(m, m[0]);
+        seg = next;
+    }
+}
+
+/* a load file in memory -> a seglist (BPTR), 0 if it is not one we can load */
+static ULONG load_seg(const UBYTE *f, ULONG size)
+{
+    const ULONG *w = (const ULONG *)f;
+    ULONG nw = size / 4, i = 0;
+    ULONG *hunk[MAXHUNKS];
+    ULONG hsize[MAXHUNKS];
+    if (nw < 6 || (ULONG)f & 1 || w[i++] != HUNK_HEADER || w[i++] != 0) return 0;      /* no resident libraries */
+    ULONG tab = w[i++], first = w[i++], last = w[i++];
+    (void)tab;
+    if (first != 0 || last < first || last - first + 1 > MAXHUNKS) return 0;
+    ULONG n = last - first + 1, seg = 0;
+    for (ULONG h = 0; h < n; h++) hunk[h] = 0;
+    for (ULONG h = 0; h < n; h++) {
+        if (i >= nw) goto bad;
+        ULONG sz = w[i++], req = MEMF_PUBLIC | MEMF_CLEAR;
+        if ((sz & 0xc0000000u) == 0xc0000000u) { if (i >= nw) goto bad; req = (w[i++] & ~0x10000u) | MEMF_CLEAR; }
+        else if (sz & 0x40000000u) req |= 2;            /* MEMF_CHIP */
+        sz &= 0x3fffffffu;
+        hsize[h] = sz;
+        ULONG bytes = sz * 4 + 8;
+        ULONG *m = AllocMem(bytes, req);
+        if (!m) goto bad;
+        m[0] = bytes;
+        m[1] = 0;
+        hunk[h] = m + 2;
+        if (h) hunk[h - 1][-1] = (ULONG)(m + 1) >> 2;   /* link the previous one to this */
+        else seg = (ULONG)(m + 1) >> 2;
+    }
+    ULONG cur = 0;
+    while (i < nw && cur < n) {
+        ULONG t = w[i++] & 0x3fffffffu;
+        switch (t) {
+        case HUNK_CODE: case HUNK_DATA: {
+            if (i >= nw) goto bad;
+            ULONG k = w[i++];
+            if (k > hsize[cur] || i + k > nw) goto bad;
+            memcpy(hunk[cur], &w[i], k * 4);
+            i += k;
+            break;
+        }
+        case HUNK_BSS:
+            if (i >= nw) goto bad;
+            i++;                                        /* already zeroed */
+            break;
+        case HUNK_RELOC32:
+            for (;;) {
+                if (i >= nw) goto bad;
+                ULONG k = w[i++];
+                if (!k) break;
+                if (i >= nw || w[i] >= n || i + 1 + k > nw) goto bad;
+                ULONG base = (ULONG)hunk[w[i++]];
+                for (ULONG r = 0; r < k; r++) {
+                    ULONG off = w[i++];
+                    if (off + 4 > hsize[cur] * 4) goto bad;
+                    UBYTE *p = (UBYTE *)hunk[cur] + off;
+                    ULONG v = ((ULONG)p[0] << 24 | (ULONG)p[1] << 16 | (ULONG)p[2] << 8 | p[3]) + base;
+                    p[0] = (UBYTE)(v >> 24); p[1] = (UBYTE)(v >> 16); p[2] = (UBYTE)(v >> 8); p[3] = (UBYTE)v;
+                }
+            }
+            break;
+        case HUNK_RELOC32SHORT: case HUNK_DREL32: {
+            const UWORD *h16 = (const UWORD *)&w[i];
+            ULONG j = 0, max16 = (nw - i) * 2;
+            for (;;) {
+                if (j >= max16) goto bad;
+                ULONG k = h16[j++];
+                if (!k) break;
+                if (j + 1 + k > max16 || h16[j] >= n) goto bad;
+                ULONG base = (ULONG)hunk[h16[j++]];
+                for (ULONG r = 0; r < k; r++) {
+                    ULONG off = h16[j++];
+                    if (off + 4 > hsize[cur] * 4) goto bad;
+                    UBYTE *p = (UBYTE *)hunk[cur] + off;
+                    ULONG v = ((ULONG)p[0] << 24 | (ULONG)p[1] << 16 | (ULONG)p[2] << 8 | p[3]) + base;
+                    p[0] = (UBYTE)(v >> 24); p[1] = (UBYTE)(v >> 16); p[2] = (UBYTE)(v >> 8); p[3] = (UBYTE)v;
+                }
+            }
+            i += (j + 1) / 2;                           /* padded to a long */
+            break;
+        }
+        case HUNK_SYMBOL:
+            for (;;) {
+                if (i >= nw) goto bad;
+                ULONG k = w[i++];
+                if (!k) break;
+                i += k + 1;
+            }
+            break;
+        case HUNK_DEBUG:
+            if (i >= nw) goto bad;
+            i += w[i] + 1;
+            break;
+        case HUNK_END:
+            cur++;
+            break;
+        default:
+            goto bad;                                   /* overlays, HUNK_EXT, ...: not in a filesystem */
+        }
+    }
+    if (cur != n) goto bad;
+    CacheClearU();                                      /* new code: Emu68 must translate it afresh */
+    return seg;
+bad:
+    if (seg) free_seglist(seg);
+    else if (hunk[0]) FreeMem(hunk[0] - 2, hunk[0][-2]);
     return 0;
+}
+
+/* the newest version of a filesystem: in FileSystem.resource or loaded by us; 0 none */
+static ULONG fs_version(struct HdfBase *db, ULONG dostype)
+{
+    ULONG best = 0;
+    struct FileSysResource *fsr = OpenResource("FileSystem.resource");
+    if (fsr)
+        for (struct Node *n = fsr->fsr_FileSysEntries.lh_Head; n->ln_Succ; n = n->ln_Succ) {
+            struct FileSysEntry *e = (struct FileSysEntry *)n;
+            if (e->fse_DosType == dostype && e->fse_Version > best) best = e->fse_Version;
+        }
+    for (ULONG i = 0; i < db->nlfs; i++)
+        if (db->lfs[i].dostype == dostype && db->lfs[i].version > best) best = db->lfs[i].version;
+    return best;
+}
+
+static void load_rdb_filesystems(struct HdfBase *db, struct hdf_io *io, struct HUnit *hu)
+{
+    struct hdf_fs fs[8];
+    int n = hdf_rdb_fslist(io, &hu->f, &hu->rdb, fs, 8);
+    for (int i = 0; i < n; i++) {
+        struct hdf_fs *f = &fs[i];
+        char t[8];
+        t[0] = (char)(f->dostype >> 24); t[1] = (char)(f->dostype >> 16); t[2] = (char)(f->dostype >> 8);
+        t[3] = '\\'; t[4] = (char)('0' + (f->dostype & 0xff) % 10); t[5] = 0;
+        ULONG have = fs_version(db, f->dostype);
+        if (have >= f->version) continue;               /* a newer or the same one is there already */
+        if (db->nlfs >= sizeof db->lfs / sizeof db->lfs[0]) break;
+        UBYTE *data; uint32_t size, alloc;
+        if (hdf_rdb_fsdata(io, &hu->f, f, &data, &size, &alloc)) { hdf_log(io, "  filesystem %s: unreadable load file", t); continue; }
+        ULONG seg = load_seg(data, size);
+        io->free(io->ctx, data, alloc);
+        if (!seg) { hdf_log(io, "  filesystem %s %lu.%lu: not a load file this can load", t, f->version >> 16, f->version & 0xffff); continue; }
+        ULONG k = db->nlfs++;
+        db->lfs[k].dostype = f->dostype; db->lfs[k].version = f->version; db->lfs[k].patchflags = f->patchflags;
+        for (int j = 0; j < 9; j++) db->lfs[k].dn[j] = f->dn[j];
+        db->lfs[k].dn[7] = seg;                         /* dn_SegList: the loaded code, not the LSEG block */
+        /* for other drivers too, if FileSystem.resource is up */
+        struct FileSysResource *fsr = OpenResource("FileSystem.resource");
+        if (fsr) {
+            struct FileSysEntry *e = AllocMem(62, MEMF_PUBLIC | MEMF_CLEAR);
+            if (e) {
+                e->fse_Node.ln_Name = (char *)hdf_devname;
+                e->fse_DosType = f->dostype; e->fse_Version = f->version; e->fse_PatchFlags = f->patchflags;
+                ULONG *dst = &e->fse_Type;
+                for (int j = 0; j < 9; j++) dst[j] = db->lfs[k].dn[j];
+                Forbid();
+                struct List *l = &fsr->fsr_FileSysEntries;      /* AddHead */
+                e->fse_Node.ln_Succ = l->lh_Head; e->fse_Node.ln_Pred = (struct Node *)&l->lh_Head;
+                l->lh_Head->ln_Pred = &e->fse_Node; l->lh_Head = &e->fse_Node;
+                Permit();
+            }
+        }
+        hdf_log(io, "  filesystem %s %lu.%lu loaded from the RDB%s", t, f->version >> 16, f->version & 0xffff,
+                have ? " (newer than the one already there)" : "");
+    }
 }
 
 static void set_name(char *d, const char *s)
@@ -369,8 +620,8 @@ static void mount_unit(struct HdfBase *db, struct card *c, APTR eb, APTR cd, str
         char fsname[16];
         fsname[0] = (char)(dostype >> 24); fsname[1] = (char)(dostype >> 16); fsname[2] = (char)(dostype >> 8);
         fsname[3] = '\\'; fsname[4] = (char)('0' + (dostype & 0xff) % 10); fsname[5] = 0;
-        if (!fs_known(dostype)) {
-            hdf_log(&io, "  %s: filesystem %s not loaded - left out (filesystems from the RDB: phase 3)", p->name[0] ? p->name : "partition", fsname);
+        if (!fs_known(db, dostype)) {
+            hdf_log(&io, "  %s: filesystem %s is not loaded and not in the hardfile's RDB - left out", p->name[0] ? p->name : "partition", fsname);
             continue;
         }
 
@@ -401,7 +652,31 @@ static void mount_unit(struct HdfBase *db, struct card *c, APTR eb, APTR cd, str
             Forbid();
             Remove(&other->bn_Node);                    /* the other drive is not mounted this time */
             Permit();
+            drop_vols_of(db, name);
             hdf_log(&io, "  %s: replaces the drive mounted as %s (hdf.boot)", name, name);
+        }
+
+        /* the volume: never mounted twice (AmigaOS mixes up two volumes of one name) */
+        char vol[32];
+        if (hdf_volume(&io, &hu->f, p, vol)) {
+            int v = find_vol(db, vol);
+            if (v >= 0 && !hu->chosen) {
+                char hint[HDF_NAME];                    /* cmdline.txt splits at spaces: '_' stands for ' ' */
+                unsigned k = 0;
+                for (; hu->f.name[k] && k < HDF_NAME - 1; k++) hint[k] = hu->f.name[k] == ' ' ? '_' : hu->f.name[k];
+                hint[k] = 0;
+                hdf_log(&io, "  %s: volume %s is mounted already (on %s) - not mounted. Relabel one of them, or boot this one with hdf.boot=%s",
+                        name, vol, db->vols[v].drive, hint);
+                continue;
+            }
+            if (v >= 0) {                               /* the chosen hardfile: the other drive goes */
+                struct BootNode *o2 = find_drive(eb, db->vols[v].drive);
+                if (o2) {
+                    Forbid(); Remove(&o2->bn_Node); Permit();
+                    hdf_log(&io, "  %s: volume %s replaces the drive %s that has it too (hdf.boot)", name, vol, db->vols[v].drive);
+                }
+                drop_vols_of(db, db->vols[v].drive);
+            }
         }
 
         ULONG pkt[4 + 20];
@@ -409,7 +684,7 @@ static void mount_unit(struct HdfBase *db, struct card *c, APTR eb, APTR cd, str
         for (ULONG j = 0; j <= ev[0] && j < 20; j++) pkt[4 + j] = ev[j];
         struct DeviceNode *dn = MakeDosNode(eb, pkt);
         if (!dn) { hdf_log(&io, "  %s: MakeDosNode failed", name); continue; }
-        patch_fs(dn, dostype);
+        patch_fs(db, dn, dostype);
 
         int boot;
         LONG pri;
@@ -428,6 +703,7 @@ static void mount_unit(struct HdfBase *db, struct card *c, APTR eb, APTR cd, str
         if (!boot) pri = -128;
         else if (pri < -127) pri = -127;
         if (!AddBootNode(eb, pri, 1 /* ADNF_STARTPROC */, dn, cd)) { hdf_log(&io, "  %s: AddBootNode failed", name); continue; }
+        if (vol[0]) add_vol(db, vol, name);
         if (boot) hdf_log(&io, "  %s: %lu MB, %s, boot priority %ld%s", name, blocks >> 11, fsname, pri, db->readonly ? ", read-only" : "");
         else      hdf_log(&io, "  %s: %lu MB, %s, not bootable%s", name, blocks >> 11, fsname, db->readonly ? ", read-only" : "");
     }
@@ -501,6 +777,7 @@ APTR dev_init(struct HdfBase *db, APTR seglist)
     for (int i = 0; i < n; i++) any_chosen |= matches_boot(&db->opts, files[i].name);
     if (db->opts.boot[0] && !any_chosen && !db->opts.off) hdf_log(&io, "hdf.boot=%s: no hardfile of that name", db->opts.boot);
 
+    if (n) sd_volumes(db, &io);
     APTR eb = OpenLibrary("expansion.library", 36);
     struct ConfigDev *cd = eb ? FindConfigDev(eb, 0, 0x6d73, 2) : 0;       /* Emu68's ROM board */
     /* the chosen hardfile first, so that it gets its names before the others ask */
@@ -528,6 +805,7 @@ APTR dev_init(struct HdfBase *db, APTR seglist)
                 hdf_log(&io, "unit %lu: %s, %s%s", hu->index, hu->f.name,
                         hu->single ? "single partition" : (hu->rdb.nparts == 1 ? "1 partition" : "RDB"), hu->chosen ? ", hdf.boot" : "");
                 db->unit[db->nunits++] = hu;
+                if (!hu->single) load_rdb_filesystems(db, &io, hu);
                 if (eb) mount_unit(db, &c, eb, cd, hu, any_chosen);
             } else {
                 hdf_log(&io, "%s: %s", hu->f.name, r == 0 ? "neither a Rigid Disk Block nor a filesystem at block 0 - ignored" : "unreadable RDB");

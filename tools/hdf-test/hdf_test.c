@@ -118,6 +118,35 @@ int main(int argc, char **argv)
                   "games.hdf RDB/fragmentation");
         }
         if (!strcmp(h->name, "frag.hdf")) { CHECK(h->next >= 17, "frag.hdf only %u pieces", h->next); fragf = h; }
+        static const struct { const char *file; int part; const char *vol; } vols[] = {
+            { "Workbench 3.1.hdf", 0, "Workbench" }, { "games.hdf", 0, "Games1" }, { "games.hdf", 1, "" },
+            { "frag.hdf", 0, "Frag" }, { "extra.hdf", 0, "SDWork" }, { "raw.hdf", 0, "Raw" } };
+        for (unsigned v = 0; v < sizeof vols / sizeof vols[0]; v++) {
+            if (strcmp(h->name, vols[v].file)) continue;
+            struct hdf_rdb rr;
+            if (hdf_rdb(&io, h, &rr) != 1 && hdf_single(&io, h, &rr) != 1) { CHECK(0, "%s: no partitions", h->name); continue; }
+            char vn[32];
+            int got = hdf_volume(&io, h, &rr.part[vols[v].part], vn);
+            CHECK(vols[v].vol[0] ? (got == 1 && !strcmp(vn, vols[v].vol)) : got == 0, "%s part %d volume '%s', want '%s'",
+                  h->name, vols[v].part, got ? vn : "(none)", vols[v].vol);
+        }
+        if (!strcmp(h->name, "games.hdf")) {
+            struct hdf_rdb rr;
+            struct hdf_fs fsl[4];
+            hdf_rdb(&io, h, &rr);
+            int nf = hdf_rdb_fslist(&io, h, &rr, fsl, 4);
+            CHECK(nf == 1 && fsl[0].dostype == 0x50465303u && fsl[0].version == 0x00120000u && fsl[0].patchflags == 0x180 &&
+                  fsl[0].dn[4] == 4096 && (int)fsl[0].dn[5] == 10 && fsl[0].dn[8] == 0xffffffffu, "games.hdf filesystem header (%d)", nf);
+            uint8_t *d = 0; uint32_t sz = 0, al = 0;
+            long hl;
+            char hp[2048];
+            snprintf(hp, sizeof hp, "%s/testhunk.bin", argv[2]);
+            uint8_t *want_h = slurp(hp, &hl);
+            CHECK(nf == 1 && hdf_rdb_fsdata(&io, h, &fsl[0], &d, &sz, &al) == 0 && want_h && sz == (uint32_t)hl && !memcmp(d, want_h, sz),
+                  "games.hdf filesystem load file (%u bytes)", sz);
+            printf("  filesystem PFS\\3 %u.%u, load file %u bytes\n", fsl[0].version >> 16, fsl[0].version & 0xffff, sz);
+            free(d); free(want_h);
+        }
         if (!strcmp(h->name, "Workbench 3.1.hdf")) wb = h;
     }
 
@@ -144,6 +173,14 @@ int main(int argc, char **argv)
         printf("writes: %ld sectors changed on the card (want 416), read back OK\n", changed);
         free(buf); free(back);
     }
+    /* the SD card's own Amiga partition and its volume */
+    struct hdf_file sdp[4];
+    int ns = card_amiga_parts(&io, sdp, 4);
+    struct hdf_rdb sr;
+    char sv[32];
+    CHECK(ns == 1 && hdf_rdb(&io, &sdp[0], &sr) == 1 && !strcmp(sr.part[0].name, "DH0") && hdf_volume(&io, &sdp[0], &sr.part[0], sv) == 1 &&
+          !strcmp(sv, "SDWork"), "SD card Amiga partition (%d)", ns);
+    for (int i = 0; i < ns; i++) hdf_file_free(&io, &sdp[i]);
     for (int i = 0; i < n; i++) hdf_file_free(&io, &files[i]);
     printf("%lu card reads, %lu writes\n%s\n", reads, writes, fails ? "FAILED" : "ALL OK");
     return fails != 0;

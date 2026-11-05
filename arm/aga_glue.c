@@ -599,6 +599,27 @@ static void exter_storm_check(void)
    the four audio bits ($0780), which belong to my own mix's channels */
 #define REAL_CLR 0x787F
 
+#ifdef FRF_VIRTUAL_AGA
+/* Alice68: the 68k drivers of Alice68 (alice68hdf.device, ...) write their
+   log lines to the serial port (exec RawPutChar). There is no serial port
+   standalone, so lines that start with "[alice68" go to the kernel's log -
+   the boot splash's SYSTEM panel and the serial log on GPIO 14. Any other
+   serial output is left alone. */
+static char ser_line[160];
+static unsigned ser_len;
+static void alice_serial_char(uint8_t c)
+{
+    if (c == '\r') return;
+    if (c != '\n') {
+        if (ser_len < sizeof ser_line - 1) ser_line[ser_len++] = (char)c;
+        return;
+    }
+    ser_line[ser_len] = 0;
+    if (ser_len >= 8 && !memcmp(ser_line, "[alice68", 8)) kprintf("%s\n", ser_line);
+    ser_len = 0;
+}
+#endif
+
 static void hook_ext_write_body(void *u, uint32_t reg, uint16_t v)
 {
     (void)u;
@@ -609,6 +630,7 @@ static void hook_ext_write_body(void *u, uint32_t reg, uint16_t v)
     switch (reg) {
     case SERDAT:
         aga_diag_serial((uint8_t)(v & 0xFF));   /* WHDLoad's serial crash dump */
+        alice_serial_char((uint8_t)(v & 0xFF));
         break;
     case POTGO:
         __atomic_store_n(&frf_potgo, (uint16_t)(v & 0xFF00u), __ATOMIC_RELEASE);

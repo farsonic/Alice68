@@ -219,6 +219,8 @@ static uint16_t line_colour(int which, const char *l)
         if (has(l, "eject") || has(l, "mode switch")) return C_CYAN;
         return C_TEXT;
     }
+    if (has(l, "[alice68hdf]"))                       /* hardfiles: what was mounted, and what not */
+        return (has(l, "not mounted") || has(l, "left out") || has(l, "ignored")) ? C_WAIT : C_CYAN;
     if (has(l, "[STAGE")) return C_RUFOUS;
     if (has(l, "[FRF-XHCI]") || has(l, "[FRF-USB]") || has(l, "TINYUSB")) return C_SLATE;
     if (has(l, "[AGA]")) return C_CYAN;

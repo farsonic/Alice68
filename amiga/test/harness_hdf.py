@@ -89,6 +89,10 @@ def remove(o, p):
     n = d(R.A1); succ, pred = mem.r32(n), mem.r32(n + 4)
     mem.w32(pred, succ); mem.w32(succ + 4, pred)
 lvo(SYSBASE, -252, remove)
+serial = []
+lvo(SYSBASE, -516, lambda o, p: serial.append(chr(d(R.D0) & 0xff)))
+cache_clears = {'n': 0}
+lvo(SYSBASE, -636, lambda o, p: cache_clears.__setitem__('n', cache_clears['n'] + 1))
 lvo(SYSBASE, -372, lambda o, p: setd0(remhead(d(R.A0) + 20)))
 replied = []
 lvo(SYSBASE, -378, lambda o, p: replied.append(d(R.A1)))
@@ -252,29 +256,53 @@ for b in boots:
 
 nunits = mem.r32(DEVBASE + 40)
 m = re.search(r'cmdline.txt:(.*)', logtxt)
-scen = 'bootnb' if m and 'hdf.noboot' in m.group(1) and 'hdf.boot=raw' in m.group(1) else \
+scen = 'extra' if m and 'hdf.boot=extra' in m.group(1) else \
+       'bootnb' if m and 'hdf.noboot' in m.group(1) and 'hdf.boot=raw' in m.group(1) else \
        'noboot' if m and 'hdf.noboot' in m.group(1) else \
        'boot' if m and 'hdf.boot=workbench' in m.group(1) else 'raw' if m and 'hdf.boot=RAW' in m.group(1) else \
        'off' if m and 'hdf=off' in m.group(1) else 'ro' if (m and 'hdf.readonly' in m.group(1)) else 'default'
-G = [] if no_fsres else [('GAMES', None, -5)]
+G = [('GAMES', None, -128)]          # PFS\3: from FileSystem.resource, or loaded from games.hdf's RDB
 if scen in ('default', 'ro', 'noboot'):
-    # everything mounted, nothing bootable; names taken (the SD card's DH0) become HF<unit><part>
+    # everything mounted, nothing bootable; names taken (the SD card's DH0) become HF<unit><part>;
+    # extra.hdf's volume SDWork is the SD card partition's: not mounted
     order = ['games.hdf', 'Workbench 3.1.hdf', 'frag.hdf', 'raw.hdf', 'extra.hdf']
-    want = [('DH1', 0, -128)] + [(n, 0, -128) for n, _, p in G] + [('HF10', 1, -128), ('FR0', 2, -128), ('DH2', 3, -128), ('HF40', 4, -128)]
+    want = [('DH1', 0, -128), ('GAMES', 0, -128), ('HF10', 1, -128), ('FR0', 2, -128), ('DH2', 3, -128)]
 elif scen == 'boot':
-    # Workbench boots as DH0 (the SD card's DH0 not mounted); the rest mounted, none bootable
+    # Workbench boots as DH0 (the SD card's DH0 and its volume SDWork gone); extra's SDWork then mounts
     order = ['Workbench 3.1.hdf', 'games.hdf', 'frag.hdf', 'raw.hdf', 'extra.hdf']
-    want = [('DH0', 0, 5), ('DH1', 1, -128)] + [(n, 1, -128) for n, _, p in G] + [('FR0', 2, -128), ('DH2', 3, -128), ('HF40', 4, -128)]
+    want = [('DH0', 0, 5), ('DH1', 1, -128), ('GAMES', 1, -128), ('FR0', 2, -128), ('DH2', 3, -128), ('DH5', 4, -128)]
 elif scen in ('raw', 'bootnb'):
     order = ['raw.hdf', 'games.hdf', 'Workbench 3.1.hdf', 'frag.hdf', 'extra.hdf']
-    want = [('DH0', 0, 0), ('DH1', 1, -128)] + [(n, 1, -128) for n, _, p in G] + [('HF20', 2, -128), ('FR0', 3, -128), ('HF40', 4, -128)]
+    want = [('DH0', 0, 0), ('DH1', 1, -128), ('GAMES', 1, -128), ('HF20', 2, -128), ('FR0', 3, -128), ('DH5', 4, -128)]
+elif scen == 'extra':
+    # extra.hdf (DH5, volume SDWork) boots: the SD card's drive with that volume (DH0) is not mounted,
+    # so Workbench gets DH0
+    order = ['extra.hdf', 'games.hdf', 'Workbench 3.1.hdf', 'frag.hdf', 'raw.hdf']
+    want = [('DH5', 0, 0), ('DH1', 1, -128), ('GAMES', 1, -128), ('DH0', 2, -128), ('FR0', 3, -128), ('DH2', 4, -128)]
 else:
     order, want = [], []
 got = [(b['name'], b['unit'], b['pri']) for b in boots]
 if got != want: die('%s: boot list %s, want %s' % (scen, got, want))
 if any(b['cd'] != CONFIGDEV or b['flags'] != 1 or b['dev'] != 'alice68hdf.device' for b in boots): die('boot node device/flags/configdev')
 g = [b for b in boots if b['name'] == 'GAMES']
-if g and (g[0]['seglist'] != 0x1234 or g[0]['gv'] != 0xffffffff): die('PFS\\3 not patched from FileSystem.resource')
+if g and not no_fsres and (g[0]['seglist'] != 0x1234 or g[0]['gv'] != 0xffffffff):
+    die('PFS\\3 not patched from FileSystem.resource (19.2 there, 18.0 in the RDB)')
+if g and no_fsres:
+    # loaded from the RDB: a seglist of 3 hunks, relocated, the code flushed
+    seg, hunks = g[0]['seglist'], []
+    while seg:
+        link = seg << 2
+        hunks.append((link + 4, mem.r32(link - 4)))         # data, allocated size
+        seg = mem.r32(link)
+    if len(hunks) != 3 or [sz for _, sz in hunks] != [8 * 4 + 8, 4 * 4 + 8, 16 * 4 + 8]: die('loaded seglist %s' % hunks)
+    c, dt, bs = (a for a, _ in hunks)
+    code = [mem.r32(c + 4 * i) for i in range(8)]
+    data = [mem.r32(dt + 4 * i) for i in range(4)]
+    if code[0] != dt + 4 or code[1] != 0x11111111 or code[2] != c + 16 or code[3] != 0x22222222: die('code hunk relocation %s' % [hex(x) for x in code])
+    if data[1] != bs + 12 or data[0] != 0xaaaa0000 or any(mem.r32(bs + 4 * i) for i in range(16)): die('data/bss hunk %s' % [hex(x) for x in data])
+    if g[0]['gv'] != 0xffffffff: die('dn_GlobalVec from the FSHD')
+    if cache_clears['n'] < 1: die('no CacheClearU after loading code')
+    print('PFS\\3 loaded from the RDB: 3 hunks, relocations right, caches cleared')
 if nunits != len(order): die('%s: %d units, want %d' % (scen, nunits, len(order)))
 if scen == 'off':
     if tasks: die('hdf=off started a task')
@@ -287,6 +315,8 @@ ml, nodes = EXPBASE + 74, []
 n_ = mem.r32(ml)
 while mem.r32(n_): nodes.append(n_); n_ = mem.r32(n_)
 sd_there = any(mem.r32(x + 16) == existing for x in nodes)
+if 'loaded from the RDB' in logtxt and not no_fsres: die('loaded a filesystem older than FileSystem.resource\'s')
+if '[alice68hdf] ' not in ''.join(serial) or 'units ready' not in ''.join(serial): die('log not sent through RawPutChar')
 if sd_there != (scen in ('default', 'ro', 'noboot')): die('%s: the SD card DH0 is %s the mount list' % (scen, 'in' if sd_there else 'not in'))
 print('%s: boot list OK, SD DH0 %s; %d units; task OK; %d card reads at init' % (scen, 'kept' if sd_there else 'replaced', nunits, stats['reads']))
 

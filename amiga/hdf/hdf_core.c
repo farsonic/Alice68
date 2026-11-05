@@ -400,6 +400,7 @@ int hdf_rdb(struct hdf_io *io, const struct hdf_file *h, struct hdf_rdb *r)
     if (!b) return -1;
     int ret = 0;
     zero(r, sizeof *r);
+    r->fshd = ~0u;
     uint32_t at = ~0u;
     for (uint32_t i = 0; i < 16 && i < h->blocks; i++) {      /* RDB_LOCATION_LIMIT */
         if (hdf_read(io, h, i, 1, b)) { ret = -1; goto out; }
@@ -408,6 +409,7 @@ int hdf_rdb(struct hdf_io *io, const struct hdf_file *h, struct hdf_rdb *r)
     if (at == ~0u) goto out;
     if (be32(b + 16) != HDF_BLOCK) { hdf_log(io, "%s: RDB block size %lu: only 512 is supported", h->name, be32(b + 16)); ret = -1; goto out; }
     r->cylinders = be32(b + 64); r->sectors = be32(b + 68); r->heads = be32(b + 72);
+    r->fshd = be32(b + 32);
     uint32_t next = be32(b + 28), guard = 64;
     while (next != 0xffffffffu && guard--) {
         if (hdf_read(io, h, next, 1, b)) { ret = -1; goto out; }
@@ -466,6 +468,7 @@ int hdf_single(struct hdf_io *io, const struct hdf_file *h, struct hdf_rdb *r)
         goto out;
     }
     zero(r, sizeof *r);
+    r->fshd = ~0u;
     uint32_t heads = geo[pick][0], secs = geo[pick][1], cyl = h->blocks / (heads * secs);
     r->cylinders = cyl; r->heads = heads; r->sectors = secs;
     r->nparts = 1;
@@ -477,4 +480,112 @@ int hdf_single(struct hdf_io *io, const struct hdf_file *h, struct hdf_rdb *r)
 out:
     io->free(io->ctx, b, HDF_BLOCK);
     return ret;
+}
+
+/* ---- filesystems in the RDB ------------------------------------------------------ */
+int hdf_rdb_fslist(struct hdf_io *io, const struct hdf_file *h, const struct hdf_rdb *r, struct hdf_fs *fs, int max)
+{
+    if (r->fshd == ~0u || !max) return 0;
+    uint8_t *b = io->alloc(io->ctx, HDF_BLOCK);
+    if (!b) return -1;
+    int n = 0, guard = 32;
+    uint32_t next = r->fshd;
+    while (next != 0xffffffffu && guard-- && n < max) {
+        if (hdf_read(io, h, next, 1, b) || be32(b) != 0x46534844u || !rdb_sum_ok(b)) {   /* 'FSHD' */
+            hdf_log(io, "%s: broken filesystem list at block %lu", h->name, next);
+            n = -1;
+            break;
+        }
+        struct hdf_fs *f = &fs[n++];
+        f->dostype = be32(b + 32);
+        f->version = be32(b + 36);
+        f->patchflags = be32(b + 40);
+        for (int i = 0; i < 9; i++) f->dn[i] = be32(b + 44 + 4 * i);
+        next = be32(b + 16);
+    }
+    io->free(io->ctx, b, HDF_BLOCK);
+    return n;
+}
+
+int hdf_rdb_fsdata(struct hdf_io *io, const struct hdf_file *h, const struct hdf_fs *fs, uint8_t **data, uint32_t *size, uint32_t *alloc)
+{
+    uint8_t *b = io->alloc(io->ctx, HDF_BLOCK);
+    if (!b) return -1;
+    int ret = -1;
+    uint32_t n = 0, next = fs->dn[7], guard = 8192;
+    /* count the LSEG blocks, then read them into one buffer */
+    while (next != 0xffffffffu && guard--) {
+        if (hdf_read(io, h, next, 1, b) || be32(b) != 0x4c534547u || !rdb_sum_ok(b)) goto out;     /* 'LSEG' */
+        n++;
+        next = be32(b + 16);
+    }
+    if (!n || next != 0xffffffffu) goto out;
+    *alloc = n * 492;
+    *data = io->alloc(io->ctx, *alloc);
+    if (!*data) goto out;
+    *size = 0;
+    next = fs->dn[7];
+    for (uint32_t i = 0; i < n; i++) {
+        if (hdf_read(io, h, next, 1, b)) { io->free(io->ctx, *data, *alloc); *data = 0; goto out; }
+        uint32_t k = (be32(b + 4) - 5) * 4;                   /* SummedLongs covers the header's 5 longs and the data */
+        if (k > 492) k = 492;
+        copy(*data + *size, b + 20, k);
+        *size += k;
+        next = be32(b + 16);
+    }
+    ret = 0;
+out:
+    io->free(io->ctx, b, HDF_BLOCK);
+    return ret;
+}
+
+/* ---- volume names ------------------------------------------------------------------ */
+int hdf_volume(struct hdf_io *io, const struct hdf_file *h, const struct hdf_part *p, char name[32])
+{
+    const uint32_t *ev = p->envec;
+    name[0] = 0;
+    uint32_t dostype = ev[0] >= 16 ? ev[16] : 0x444f5300u;
+    if ((dostype & 0xffffff00u) != 0x444f5300u || (dostype & 0xff) > 7) return 0;
+    if (ev[0] < 10 || ev[1] != 128 || ev[4] != 1 || ev[9] > ev[10]) return 0;
+    uint32_t bpc = ev[3] * ev[5], start = ev[9] * bpc, n = (ev[10] - ev[9] + 1) * bpc;
+    uint32_t root = start + (ev[6] + n - 1) / 2;
+    uint8_t *b = io->alloc(io->ctx, HDF_BLOCK);
+    if (!b) return 0;
+    int ret = 0;
+    if (hdf_read(io, h, root, 1, b) == 0 && be32(b) == 2 && be32(b + 508) == 1 && b[432] && b[432] <= 30) {
+        for (unsigned k = 0; k < b[432]; k++) name[k] = (char)b[433 + k];
+        name[b[432]] = 0;
+        ret = 1;
+    }
+    io->free(io->ctx, b, HDF_BLOCK);
+    return ret;
+}
+
+int card_amiga_parts(struct hdf_io *io, struct hdf_file *out, int max)
+{
+    uint8_t *b = io->alloc(io->ctx, HDF_BLOCK);
+    if (!b) return 0;
+    int n = 0;
+    if (io->read(io->ctx, 0, 1, b) == 0 && b[510] == 0x55 && b[511] == 0xaa) {
+        for (int i = 0; i < 4 && n < max; i++) {
+            const uint8_t *e = b + 446 + 16 * i;
+            if (e[4] != 0x76 || !le32(e + 8) || le32(e + 12) < 64) continue;
+            struct hdf_file *h = &out[n];
+            zero(h, sizeof *h);
+            h->ext = io->alloc(io->ctx, sizeof *h->ext);
+            if (!h->ext) break;
+            h->cap = h->next = 1;
+            h->ext[0].file_blk = 0; h->ext[0].card_sec = le32(e + 8); h->ext[0].count = le32(e + 12);
+            h->blocks = le32(e + 12);
+            h->size = h->blocks < 0x800000u ? h->blocks * HDF_BLOCK : 0xffffffffu;
+            const char *t = "SD card partition 1";
+            unsigned k = 0;
+            for (; t[k]; k++) h->name[k] = t[k];
+            h->name[k - 1] = (char)('1' + i);
+            h->name[k] = 0;
+            n++;
+        }
+    }
+    io->free(io->ctx, b, HDF_BLOCK);
+    return n;
 }

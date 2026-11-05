@@ -7,7 +7,7 @@
 #include "alice_splash.h"
 
 static const char *sys_log[] = {
-    "[BOOT] Alice68 0.1.0 - Emu68 1.1.0-beta.1 (05.11.2026)",
+    "[BOOT] Alice68 0.2.0 - Emu68 1.1.0-beta.1 (05.11.2026)",
     "[BOOT] Boot address is 00080000",
     "[BOOT] Build ID: b4dcb52",
     "[BOOT] ARM stack top at 0xffffff9000200000",
@@ -26,6 +26,15 @@ static const char *sys_log[] = {
     "[STAGE 5] 68k jump",
     "[STAGE 6] CPU1 released",
     "[AGA] first frame: 640x256 lores -> 1920x1080, scale 4",
+    "[alice68hdf] alice68hdf.device 0.3 (05.11.2026) Alice68 hardfiles",
+    "[alice68hdf] Workbench.hdf: 512 MB, 1 piece on the card",
+    "[alice68hdf] cmdline.txt: hdf.boot=Workbench",
+    "[alice68hdf] unit 0: Workbench.hdf, 1 partition, hdf.boot",
+    "[alice68hdf]   DH0: replaces the drive mounted as DH0 (hdf.boot)",
+    "[alice68hdf]   DH0: 511 MB, DOS\\3, boot priority 1",
+    "[alice68hdf]   filesystem PFS\\3 19.2 loaded from the RDB",
+    "[alice68hdf]   DH5: volume Work is mounted already (on DH1) - not mounted",
+    "[alice68hdf] 3 units ready",
 };
 static const char *usb_log[] = {
     "PCIe link up, Gen 2 x1",
