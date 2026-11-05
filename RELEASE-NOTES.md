@@ -1,6 +1,6 @@
 # Alice68 release notes
 
-## Unreleased (branch `next`)
+## Unreleased (on `main`, after 0.2.0)
 
 - **Hardfiles on the boot splash's status strip**, after INPUT: `HARDFILES 1 bootable 4
   non-bootable`, plus `n left out` in amber when any were skipped (the SYSTEM panel says
