@@ -85,6 +85,30 @@ Shell.
 - **Leaving the USB-A ports to AmigaOS:** `frf_usb=neptune` in `cmdline.txt` keeps the
   kernel off them, so rondoval's `xhci.device` can drive them instead.
 
+## Hardfiles (`.hdf`) on the SD card (test, read-only)
+
+Copy WinUAE-style full-disk hardfiles onto the SD card's FAT boot partition. Put them
+in the root folder or in a folder named `HDF`. At start, `alice68hdf.device` (in
+Emu68's ROM board) finds every `*.hdf` there. It reads each file's Rigid Disk Block
+and adds its partitions with their own names and boot priorities, so a Workbench
+hardfile can boot.
+
+- **Needs** `dtoverlay=emmc,unit0=ro` (or `rw`) in `config.txt`, which lets the driver
+  read the whole card.
+- **Phase 1 is read-only.** Writes are refused as "write protected", so a Workbench
+  booted from a hardfile behaves like one booted from a write-protected floppy.
+- **Full-disk hardfiles only.** The file must start with an `RDSK` block.
+  Single-partition hardfiles (starting `DOS\x`) come in phase 2.
+- **Filesystems:** FFS (`DOS\0` to `DOS\7`) works from Kickstart. Partitions using
+  PFS3, SFS and the like mount only if that filesystem is already loaded, for
+  example from an SD card partition. Loading it from the hardfile itself comes in
+  phase 3.
+- **Name clashes:** a partition whose name is already taken (say `DH0` on an SD
+  partition) is mounted as `HF<unit><partition>`, e.g. `HF10`.
+- **Limits:** FAT32 caps each file at 4 GB. Copy files only while the Pi is off.
+- **Diagnostics:** `C:Alice68-HDF` lists the hardfiles found and the driver's log.
+  `tools/hdf-test/run.sh` runs the tests on a PC.
+
 ## Picture options (`cmdline.txt`)
 
 | Option | Values | Default |

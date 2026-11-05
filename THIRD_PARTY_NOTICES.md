@@ -72,6 +72,8 @@ its classes, TCP/IP stacks, games. You supply these.
   USB pass-through to AmigaOS and the virtual eject.
 * `third_party/Emu68/src/raspi/alice_splash.[ch]`, `include/logo/logo_alice.h`,
   `tools/mklogo_alice.py`, `tools/splash-preview/` – the boot splash.
-* `amiga/` – `alice68-usb.device` and `Alice68-USBLog` (68k).
+* `amiga/` – `alice68-usb.device`, `Alice68-USBLog`, `alice68hdf.device` and
+  `Alice68-HDF` (68k), and the 68k test harnesses.
+* `tools/hdf-test/` – test SD card images and the hardfile tests.
 * `tools/build-emu68aga-pi4.sh` and the Pi 4 changes to the files above
   (changes inside Emu68's MPL-2.0 files are MPL-2.0).

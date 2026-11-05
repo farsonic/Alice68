@@ -10,7 +10,7 @@
 #include <stdint.h>
 
 #define ALICE_NAME    "Alice68"
-#define ALICE_VERSION "0.1.0"
+#define ALICE_VERSION "0.2.0"
 
 /* stage bits as frf_boot_stage() numbers them */
 struct al_status {

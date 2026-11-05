@@ -26,6 +26,7 @@ __attribute__((aligned(4096)))
 #include "./mailbox.resource.h"
 #include "./powerpc.library.h"
 #include "./gic400.library.h"
+#include "./alice68hdf.device.h"     /* Alice68: hardfiles on the SD card (amiga/hdf) */
 
 static struct { 
     void *rom_base;
@@ -40,6 +41,7 @@ static struct {
     { mailbox_resource, sizeof(mailbox_resource), 0},
     { powerpc_library, sizeof(powerpc_library), 0 },
     { gic400_library, sizeof(gic400_library), 0 },
+    { alice68hdf_device, sizeof(alice68hdf_device), 0 },
     { NULL, 0, 0 }
 };
 
