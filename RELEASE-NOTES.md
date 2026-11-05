@@ -1,5 +1,13 @@
 # Alice68 release notes
 
+## Unreleased
+
+- **`C:Alice68-NetCheck`** (new): what a SANA-II network driver reports, as text in a
+  Shell, on any AmigaOS (rondoval's `genet-stats` needs 3.2's ReAction classes). For
+  the Pi's own Ethernet (`genet.device` 3.x) it shows link rate, MAC address, packet and
+  interrupt counters, and says whether interrupts reach AmigaOS. `WATCH` repeats the
+  counters every second.
+
 ## 0.3.0 — hardfiles on the status strip
 
 Download: `Alice68-0.3.0-Pi4.zip` from the

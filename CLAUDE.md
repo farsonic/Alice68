@@ -42,6 +42,7 @@ bash amiga/build.sh                      # 68k parts -> amiga/out/; regenerates 
 bash tools/build-emu68aga-pi4.sh         # -> dist/pi4/kernel8.img   (FRF_USB=OFF for the no-USB kernel)
 tools/hdf-test/run.sh                    # hardfile tests: core on the PC + driver on a 68k emulator (expect all "ALL OK")
 python3 amiga/test/harness.py amiga/out/alice68-usb.device   # USB pass-through driver on the 68k emulator
+python3 amiga/test/harness_netcheck.py amiga/out/Alice68-NetCheck   # the network check tool against a fake SANA-II driver
 tools/splash-preview/build.sh > out.ppm  # the splash, drawn by the kernel's own code
 ```
 
@@ -104,7 +105,7 @@ tools/splash-preview/build.sh > out.ppm  # the splash, drawn by the kernel's own
   build from a fresh clone of that commit, then zip `README.md`, `RELEASE-NOTES.md`,
   `SHA256SUMS`, `boot/` (kernel8.img, kernel8-nousb.img, config.txt, cmdline.txt,
   floppy.txt, overlays/), `amiga/` (DEVS/USBHardware/alice68-usb.device,
-  C/Alice68-USBLog, C/Alice68-HDF, ReadMe-USB.txt), `Licenses/` and `source/` (git archive
+  C/Alice68-USBLog, C/Alice68-HDF, C/Alice68-NetCheck, ReadMe-USB.txt), `Licenses/` and `source/` (git archive
   of the commit plus the three submodules, and SOURCE.txt). The kernels report
   `git:<commit>`; the release must be that commit.
 

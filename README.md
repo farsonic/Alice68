@@ -220,6 +220,11 @@ Shell.
   give your TCP/IP stack `usbcdceth.device`, unit 0, as a bare name.
 - **Virtual eject:** Realtek RTL815x adapters that start as a driver CD (`0bda:8151`)
   are switched to network mode by the kernel. `frf_usb.nomodeswitch` turns this off.
+- **Pi's own Ethernet:** use rondoval's SANA-II `genet.device` **3.x** (driver stack
+  2.3.0 has 3.17 in `Storage/DEVS/Networks/`), not the 4.x netdev one.
+  `C:Alice68-NetCheck` (in `amiga/C`) prints what the driver reports, as text, on any
+  AmigaOS: link rate, MAC address, packets and whether its interrupts reach AmigaOS.
+  `Alice68-NetCheck WATCH` repeats the counters every second.
 - **Leaving the USB-A ports to AmigaOS:** `frf_usb=neptune` in `cmdline.txt` keeps the
   kernel off them, so rondoval's `xhci.device` can drive them instead.
 

@@ -22,6 +22,7 @@ build alice68-usb.device device_start.S alice68-usb.c lvo.S
 build Alice68-USBLog usblog_start.S usblog.c lvo.S
 build alice68hdf.device hdf/hdf_start.S hdf/alice68hdf.c hdf/hdf_core.c lvo.S
 build Alice68-HDF hdf/hdfinfo_start.S hdf/hdfinfo.c lvo.S
+build Alice68-NetCheck netcheck_start.S netcheck.c lvo.S
 # alice68hdf.device runs from Emu68's ROM board, which is mapped read-only:
 # it must not have writable static data
 python3 -I - out/alice68hdf.c.o out/hdf_core.c.o out/hdf_start.S.o <<'PY'
