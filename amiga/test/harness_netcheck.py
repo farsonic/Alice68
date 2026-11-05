@@ -154,6 +154,8 @@ cases = [
     ('not loaded: from DEVS:Networks/, not configured', '', dict(unloaded),
      ['DEVS:Networks/genet.device unit 0 (not loaded before', 'not configured: no TCP/IP stack', 'Alice68-NetCheck TEST'],
      ['genet.device', 'DEVS:Networks/genet.device']),
+    ('not configured, MAC counted frames, no interrupts: not blamed on Alice68', '', dict(unloaded, open_by_name=True, loaded=True, hwrx=3),
+     ['not configured: no TCP/IP stack', 'not switched its interrupts on', 'Alice68-NetCheck TEST'], None, ['NO interrupt']),
     ('missing', '', dict(unloaded, open_by_path=False), ['cannot open it', 'version 3.x'], None),
     ('netdev 4.x installed', '', dict(base, version=4, revision=4), ['is the netdev driver', 'use the SANA-II driver'], None),
     ('WATCH until Ctrl-C', 'WATCH', dict(base, irq=7, hwrx=9, ctrl_c_after=3), ['Watching', 'irq0 7', '***Break'], None),
@@ -170,9 +172,9 @@ cases = [
     ('TEST, no link: the driver holds the frame', 'TEST', dict(unloaded, link=False),
      ['no answer in 4 s', 'no link'], None),
 ]
-for name, args, dev, want, paths in cases:
+for name, args, dev, want, paths, *never in cases:
     out, st = run(hunk, args, dev)
-    missing = [w for w in want if w not in out]
+    missing = [w for w in want if w not in out] + ['(not) ' + w for w in (never[0] if never else []) if w in out]
     if missing: fails.append('%s: missing %s\n----\n%s----' % (name, missing, out))
     elif paths is not None and st['paths'] != paths: fails.append('%s: opened %s, want %s' % (name, st['paths'], paths))
     elif 'TEST' in args and 'online' in out and st.get('cfg_addr') != bytes([0xdc, 0xa6, 0x32, 1, 2, 3]):

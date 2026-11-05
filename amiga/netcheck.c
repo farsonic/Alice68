@@ -146,7 +146,7 @@ LONG netcheck_main(const char *args, ULONG arglen)
         else { memcpy(devname, w, sizeof devname); explicit_dev = 1; }
     }
 
-    puts_("Alice68-NetCheck 1.3\n");
+    puts_("Alice68-NetCheck 1.4\n");
     APTR port = CreateMsgPort();
     struct IOSana2Req *io = port ? CreateIORequest(port, sizeof *io) : 0;
     struct SSHdr *ss = AllocMem_(sizeof(struct SSHdr) + MAXREC * sizeof(struct SSRec));
@@ -301,9 +301,11 @@ LONG netcheck_main(const char *args, ULONG arglen)
             puts_("\nWhat it means:\n");
             if (irq == ~0u || hwrx == ~0u)
                 puts_("  This driver does not report interrupt and hardware counters (genet.device 3.x does).\n");
-            else if (hwrx == 0 && hwtx == 0 && !configured)
-                puts_("  The interface is not up yet: bring it up in your TCP/IP stack (genet.device, unit 0),\n"
-                      "  or run Alice68-NetCheck TEST to bring it up here and check the hardware.\n");
+            else if (!configured)
+                puts_("  The interface is not up yet, so the driver has not switched its interrupts on and\n"
+                      "  these counters say nothing about Alice68. Bring it up in your TCP/IP stack\n"
+                      "  (genet.device, unit 0), or run Alice68-NetCheck TEST to bring it up here and check\n"
+                      "  the hardware and interrupts.\n");
             else if (hwrx == 0 && hwtx == 0)
                 puts_("  The interface is up but the Ethernet hardware sent and received nothing: no link.\n"
                       "  Check the cable and the port's LEDs (both ends). If they are lit, the Ethernet PHY\n"
