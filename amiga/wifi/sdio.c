@@ -79,6 +79,7 @@ static int wait_int(struct sdhost *h, uint32_t bit, uint32_t us)
     for (;;) {
         uint32_t v = rd(h, R_INTERRUPT);
         if (v & (INT_ERR | INT_ERRORS)) {
+            h->last_int = v;
             wr(h, R_INTERRUPT, v & (INT_ERR | INT_ERRORS | bit));
             return -(int)(v >> 16 ? v >> 16 : 1);
         }
@@ -86,7 +87,7 @@ static int wait_int(struct sdhost *h, uint32_t bit, uint32_t us)
             wr(h, R_INTERRUPT, bit);
             return 0;
         }
-        if (wifi_usecs() - t0 > us) return -0x10000;
+        if (wifi_usecs() - t0 > us) { h->last_int = v; return -0x10000; }
     }
 }
 
@@ -249,7 +250,12 @@ static int xfer(struct sdhost *h, int write, unsigned fn, uint32_t addr, uint32_
     uint32_t r;
     int e = cmd(h, 53, arg, CMD_RSP_48 | CMD_CRCCHK | CMD_IXCHK | CMD_ISDATA | tm, &r);
     if (e) return e;
-    if (r & R5_ERRORS) { h->errors++; reset_lines(h); return -0x20000 - (int)((r >> 8) & 0xff); }
+    if (r & R5_ERRORS) {
+        h->errors++;
+        reset_lines(h);
+        wifi_log("CMD53 %s F%u %x: R5 flags %x\n", write ? "write" : "read", fn, addr, (r >> 8) & 0xff);
+        return -0x20000 - (int)((r >> 8) & 0xff);
+    }
     for (uint32_t b = 0; b < nblk; b++) {
         if ((e = wait_int(h, write ? INT_WRITE_RDY : INT_READ_RDY, 500000))) goto fail;
         volatile uint32_t *fifo = &h->regs[R_DATA / 4];
@@ -266,6 +272,8 @@ static int xfer(struct sdhost *h, int write, unsigned fn, uint32_t addr, uint32_
     return 0;
 fail:
     h->errors++;
+    wifi_log("CMD53 %s F%u %x %s %u x %u: error %x, status %x, int %x\n", write ? "write" : "read", fn, addr,
+             block ? "blocks" : "bytes", nblk, bs, (uint32_t)-e, rd(h, R_STATUS), h->last_int);
     reset_lines(h);
     return e;
 }
@@ -274,20 +282,28 @@ int sdh_cmd53(struct sdhost *h, int write, unsigned fn, uint32_t addr, void *buf
 {
     uint32_t *p = buf, bs = h->blksz[fn];
     if (((uint32_t)(uintptr_t)buf & 3) || (len & 3)) return -0x30000;
-    if (bs && len >= bs) {
+    if (bs && len >= bs && !h->noblock) {
         uint32_t nblk = len / bs;
         while (nblk) {
             uint32_t n = nblk > 511 ? 511 : nblk;
             int e = xfer(h, write, fn, addr, p, bs, n, 1, incr);
-            if (e) return e;
+            if (e) {
+                /* block mode refused: from now on byte mode only (slower, but every
+                   command the card already took works that way) */
+                wifi_log("block transfers fail: using byte mode\n");
+                h->noblock = 1;
+                break;
+            }
             p += n * bs / 4;
             if (incr) addr += n * bs;
             nblk -= n;
             len -= n * bs;
         }
     }
+    /* byte mode: at most the function's block size (and 512) per command */
+    uint32_t most = bs && bs < 512 ? bs : 512;
     while (len) {
-        uint32_t n = len > 512 ? 512 : len;
+        uint32_t n = len > most ? most : len;
         int e = xfer(h, write, fn, addr, p, n, 1, 0, incr);
         if (e) return e;
         p += n / 4;

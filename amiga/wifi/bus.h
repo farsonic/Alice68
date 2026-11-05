@@ -27,7 +27,9 @@ struct sdhost {
     uint8_t  spec;          /* SDHCI spec version (0 = 1.0, 2 = 3.0) */
     uint8_t  slow;          /* identification clock: space register writes */
     uint8_t  swap;          /* data FIFO words need a byte swap (detected) */
+    uint8_t  noblock;       /* block-mode CMD53 failed once: byte mode only */
     uint32_t errors;
+    uint32_t last_int;      /* interrupt status at the last error */
 };
 
 void sdh_pins(void);                                        /* GPIO 34-39 to the SD host (ALT3) */

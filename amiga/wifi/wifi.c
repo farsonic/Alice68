@@ -18,8 +18,8 @@
 
 #define DEVNAME     "alice68wifi.device"
 #define VERSION     1
-#define REVISION    0
-#define IDSTRING    "alice68wifi 1.0 (06.11.2026)\r\n"
+#define REVISION    1
+#define IDSTRING    "alice68wifi 1.1 (06.11.2026)\r\n"
 
 #define BUFSZ       2048            /* one frame buffer */
 #define CTLMAX      1600            /* largest control payload */
@@ -157,11 +157,11 @@ static void log_char(struct WifiBase *w, char c)
     w->log[w->logpos++ % LOGSZ] = c;
     if (w->linelen < sizeof w->line - 1) w->line[w->linelen++] = c;
     if (c == '\n') {
+        /* no Disable() here: on Alice68 a line can take long enough for the
+           keyboard handshake to be missed */
         static const char pre[] = "[alice68wifi] ";
-        Disable();
         for (const char *p = pre; *p; p++) RawPutChar(*p);
         for (unsigned i = 0; i < w->linelen; i++) RawPutChar(w->line[i]);
-        Enable();
         w->linelen = 0;
     }
 }
@@ -1067,7 +1067,7 @@ static void fill_status(struct WifiBase *w, struct WifiStatus *s)
         s->ws_Security = w->cur.security;
     } else
         scpy(s->ws_Ssid, w->ssid, sizeof s->ws_Ssid);
-    s->ws_Interrupts = !w->poll;
+    s->ws_Interrupts = w->irq_on && !w->poll;
     s->ws_SdMhz = (UWORD)(w->h.sd_hz / 1000000);
     s->ws_Attached = w->attached;
     s->ws_RxPackets = w->rx_pkts; s->ws_TxPackets = w->tx_pkts;
@@ -1239,7 +1239,11 @@ static void wifi_proc(void)
         w->c.bounce = AllocMem(CHIP_BOUNCE, MEMF_PUBLIC);
         w->last_us = wifi_usecs();
         wifi_log("%s", IDSTRING);
-        if (!w->c.bounce || bringup(w)) { w->state = WS_FAILED; w->chip_up = 0; }
+        if (!w->c.bounce || bringup(w)) {
+            w->state = WS_FAILED;
+            w->chip_up = 0;
+            if (w->mbox) MB_SetGPIOState(w->mbox, 1, 0);   /* the chip off again */
+        }
         else { irq_setup(w); w->want = 1; }
     }
 
