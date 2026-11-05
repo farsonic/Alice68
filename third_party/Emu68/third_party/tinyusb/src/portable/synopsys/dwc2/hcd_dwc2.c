@@ -140,7 +140,8 @@ TU_ATTR_ALWAYS_INLINE static inline bool dma_host_enabled(const dwc2_regs_t* dwc
   (void) dwc2;
   // Internal DMA only
   const dwc2_ghwcfg2_t ghwcfg2 = {.value = dwc2->ghwcfg2};
-  return CFG_TUH_DWC2_DMA_ENABLE && ghwcfg2.arch == GHWCFG2_ARCH_INTERNAL_DMA;
+  extern bool frf_dwc2_dma_usable(void);   /* EMU68AGA: buffers inside the DWC2's 1 GB DMA window? */
+  return CFG_TUH_DWC2_DMA_ENABLE && ghwcfg2.arch == GHWCFG2_ARCH_INTERNAL_DMA && frf_dwc2_dma_usable();
 }
 
 #if CFG_TUH_MEM_DCACHE_ENABLE
@@ -504,6 +505,10 @@ bool hcd_init(uint8_t rhport, const tusb_rhport_init_t* rh_init) {
   dwc2_regs_t* dwc2 = DWC2_REG(rhport);
   const bool is_hs_phy = dwc2_core_is_highspeed_phy(dwc2, _tuh_cfg.use_hs_phy);
   const bool is_dma = dma_host_enabled(dwc2);
+#ifdef FRF_USB_TINYUSB
+  { extern void kprintf(const char *fmt, ...);
+    kprintf("[FRF-USB] DWC2 core init: %s PHY, %s\n", is_hs_phy ? "HS" : "FS", is_dma ? "DMA" : "slave/FIFO"); }
+#endif
   TU_ASSERT(dwc2_core_init(rhport, is_hs_phy, is_dma));
 
   //------------- 3.1 Host Initialization -------------//
@@ -516,7 +521,14 @@ bool hcd_init(uint8_t rhport, const tusb_rhport_init_t* rh_init) {
   dwc2->gusbcfg = (dwc2->gusbcfg & ~GUSBCFG_FDMOD) | GUSBCFG_FHMOD;
   const uint32_t switch_start=tusb_time_millis_api();
   while ((dwc2->gintsts & GINTSTS_CMOD) != GINTSTS_CMODE_HOST) {
-    if ((uint32_t)(tusb_time_millis_api()-switch_start)>500u) return false;
+    if ((uint32_t)(tusb_time_millis_api()-switch_start)>500u) {
+#ifdef FRF_USB_TINYUSB
+      extern void kprintf(const char *fmt, ...);
+      kprintf("[FRF-USB] DWC2 init FAILED: host mode never came up (GINTSTS=%08x GUSBCFG=%08x)\n",
+              (unsigned)dwc2->gintsts, (unsigned)dwc2->gusbcfg);
+#endif
+      return false;
+    }
   }
 
   #ifdef TUP_USBIP_DWC2_STM32

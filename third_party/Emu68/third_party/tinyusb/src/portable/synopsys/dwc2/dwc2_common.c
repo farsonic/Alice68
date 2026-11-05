@@ -17,10 +17,18 @@
 //--------------------------------------------------------------------
 /* Firmware USB HCD must never park CPU1 in an infinite PHY-reset spin.
  * All timeouts derive from the ARM generic timer via the TinyUSB port. */
+#ifdef FRF_USB_TINYUSB
+/* EMU68AGA: say on the boot log (screen + serial) which init step failed */
+extern void kprintf(const char *fmt, ...);
+#define FRF_DWC2_FAIL(what, dwc2) do { kprintf("[FRF-USB] DWC2 init FAILED at %s: GSNPSID=%08x GRSTCTL=%08x GUSBCFG=%08x GHWCFG2=%08x\n", \
+    what, (unsigned)(dwc2)->gsnpsid, (unsigned)(dwc2)->grstctl, (unsigned)(dwc2)->gusbcfg, (unsigned)(dwc2)->ghwcfg2); return false; } while (0)
+#else
+#define FRF_DWC2_FAIL(what, dwc2) return false
+#endif
 static bool reset_core(dwc2_regs_t* dwc2) {
   uint32_t deadline=tusb_time_millis_api();
   while (!(dwc2->grstctl & GRSTCTL_AHBIDL)) {
-    if ((uint32_t)(tusb_time_millis_api()-deadline)>250u) return false;
+    if ((uint32_t)(tusb_time_millis_api()-deadline)>250u) FRF_DWC2_FAIL("reset: AHB never idle", dwc2);
   }
 
   const uint32_t gsnpsid = dwc2->gsnpsid; // preload gsnpsid which is not readable while resetting
@@ -32,21 +40,21 @@ static bool reset_core(dwc2_regs_t* dwc2) {
     // cleared, the software must wait at least 3 PHY clocks before accessing the PHY domain (synchronization delay).
     deadline=tusb_time_millis_api();
     while (dwc2->grstctl & GRSTCTL_CSRST) {
-      if ((uint32_t)(tusb_time_millis_api()-deadline)>500u) return false;
+      if ((uint32_t)(tusb_time_millis_api()-deadline)>500u) FRF_DWC2_FAIL("reset: CSRST never cleared", dwc2);
     }
   } else {
     // From v4.20a: CSRST bit is write only. The application must clear this bit after checking the bit 29 of this
     // register i.e Core Soft Reset Done CSRT_DONE (w1c)
     deadline=tusb_time_millis_api();
     while (!(dwc2->grstctl & GRSTCTL_CSRST_DONE)) {
-      if ((uint32_t)(tusb_time_millis_api()-deadline)>500u) return false;
+      if ((uint32_t)(tusb_time_millis_api()-deadline)>500u) FRF_DWC2_FAIL("reset: CSRST_DONE never set", dwc2);
     }
     dwc2->grstctl = (dwc2->grstctl & ~GRSTCTL_CSRST) | GRSTCTL_CSRST_DONE;
   }
 
   deadline=tusb_time_millis_api();
   while (!(dwc2->grstctl & GRSTCTL_AHBIDL)) {
-    if ((uint32_t)(tusb_time_millis_api()-deadline)>250u) return false;
+    if ((uint32_t)(tusb_time_millis_api()-deadline)>250u) FRF_DWC2_FAIL("reset: AHB not idle after reset", dwc2);
   }
   return true;
 }
@@ -200,7 +208,8 @@ static bool check_dwc2(dwc2_regs_t* dwc2) {
 #if !TU_CHECK_MCU(OPT_MCU_GD32VF103)
   enum { GSNPSID_ID_MASK = TU_GENMASK(31, 16) };
   const uint32_t gsnpsid = dwc2->gsnpsid & GSNPSID_ID_MASK;
-  TU_ASSERT(gsnpsid == DWC2_OTG_ID || gsnpsid == DWC2_FS_IOT_ID || gsnpsid == DWC2_HS_IOT_ID);
+  if (!(gsnpsid == DWC2_OTG_ID || gsnpsid == DWC2_FS_IOT_ID || gsnpsid == DWC2_HS_IOT_ID))
+    FRF_DWC2_FAIL("ID check (controller unpowered/unclocked?)", dwc2);
 #endif
 
   return true;
@@ -232,7 +241,7 @@ bool dwc2_core_init(uint8_t rhport, bool is_hs_phy, bool is_dma) {
   dwc2->gahbcfg &= ~GAHBCFG_GINT;
 
   if (is_hs_phy) {
-    TU_ASSERT(phy_hs_init(dwc2));
+    if (!phy_hs_init(dwc2)) FRF_DWC2_FAIL("HS PHY init", dwc2);
   } else {
     TU_ASSERT(phy_fs_init(dwc2));
   }
@@ -258,8 +267,8 @@ bool dwc2_core_init(uint8_t rhport, bool is_hs_phy, bool is_dma) {
   dwc2->pcgcctl &= ~(PCGCCTL_STOPPCLK | PCGCCTL_GATEHCLK | PCGCCTL_PWRCLMP | PCGCCTL_RSTPDWNMODULE);
 #endif
 
-  TU_ASSERT(dfifo_flush_tx(dwc2, 0x10)); // all tx FIFO
-  TU_ASSERT(dfifo_flush_rx(dwc2));
+  if (!dfifo_flush_tx(dwc2, 0x10)) FRF_DWC2_FAIL("TX FIFO flush", dwc2); // all tx FIFO
+  if (!dfifo_flush_rx(dwc2)) FRF_DWC2_FAIL("RX FIFO flush", dwc2);
 
   // Clear pending and disable all interrupts
   dwc2->gintsts = 0xFFFFFFFFU;

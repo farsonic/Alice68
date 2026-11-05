@@ -826,6 +826,19 @@ void parse_cmdline(const char *cmdline)
     /* the virtual chip RAM is reserved in both modes: ECS boots keep the chipset
        parked and switch to it at runtime for WHDLoad games (sandbox mode) */
     aga_chip_size = 2 << 20;
+#ifdef FRF_VIRTUAL_AGA
+    /* EMU68AGA: the picture from boot, without agaboot's Chipset menu.
+       aga.look=0 sharp / 1 smooth / 2 TV, aga.scale=0 4:3 / 1 integer / 2 fill /
+       3 5:4 / 4 16:9 / 5 16:10 / 6 21:9 / 7 32:9. Standalone default: sharp,
+       integer - crisp Workbench text on an LCD. */
+    {
+        extern int frf_boot_look, frf_boot_scale;
+        const char *t;
+        if ((t = find_token(cmdline, "aga.look=")))  frf_boot_look  = t[sizeof("aga.look=") - 1] - '0';
+        if ((t = find_token(cmdline, "aga.scale=")))  frf_boot_scale = t[sizeof("aga.scale=") - 1] - '0';
+        if (find_token(cmdline, "aga.nobootlog")) { extern volatile int frf_bootlog_on; frf_bootlog_on = 0; }
+    }
+#endif
     if (find_token(cmdline, "aga.nosandbox"))
         aga_chip_size = 0;
     /* aga.nohdmiaudio: leave the HDMI audio alone; aga.hdmiforce: use it even
@@ -1354,6 +1367,10 @@ void boot(void *dtree)
 
             initramfs_size = (uintptr_t)image_end - (uintptr_t)image_start;
             initramfs_loc = tlsf_malloc(tlsf, (initramfs_size + 3) & ~3);
+#ifdef FRF_VIRTUAL_AGA
+            { extern int frf_initrd_seen; extern uint32_t frf_initrd_bytes;
+              frf_initrd_seen = 1; frf_initrd_bytes = (uint32_t)initramfs_size; }
+#endif
 
             /* Align the length of image up to nearest 4 byte boundary */
             DuffCopy(initramfs_loc, (void*)(0xffffff9000000000 + (uintptr_t)image_start), (initramfs_size + 3)/ 4);
@@ -1469,6 +1486,10 @@ void boot(void *dtree)
     ps_setup_protocol();
     ps_reset_state_machine();
 #else
+    {
+        extern void frf_serial_setup(void);
+        frf_serial_setup();   /* debug log: GPIO 14 (header pin 8), 921600 8N1 */
+    }
     kprintf("[BOOT] FRF virtual AGA: PiStorm protocol/CPLD bus startup bypassed\n");
 
     /* v0.9.2: physical PiStorm reset normally initializes the virtual
@@ -1630,6 +1651,22 @@ void boot(void *dtree)
                and, on a Pi 3, 900 KB a frame through the shared L2 evicted
                everything the core itself needed (PMU, 2026-09-14) */
             mmu_map(aga_chip_base + aga_chip_size, aga_chip_base + aga_chip_size, AGA_FB_RESERVE, MMU_ACCESS | MMU_ISHARE | MMU_ATTR_UNCACHED, 0);
+#ifdef FRF_VIRTUAL_AGA
+            {   /* the USB DMA pool (mmu.c): 1:1, uncached, not the 68k's */
+                extern uintptr_t frf_dma_phys;
+                if (frf_dma_phys) {
+                    /* first MB uncached (rings, contexts), second MB cacheable: the USB
+                       pass-through's bounce buffers, kept coherent by cache maintenance */
+                    mmu_map(frf_dma_phys, frf_dma_phys, 1u << 20, MMU_ACCESS | MMU_ISHARE | MMU_ATTR_UNCACHED, 0);
+                    mmu_map(frf_dma_phys + (1u << 20), frf_dma_phys + (1u << 20), 1u << 20, MMU_ACCESS | MMU_ISHARE | MMU_ATTR_CACHED, 0);
+                    memset((void *)frf_dma_phys, 0, 2u << 20);
+                    for (uintptr_t a = frf_dma_phys + (1u << 20); a < frf_dma_phys + (2u << 20); a += 64)
+                        __asm__ volatile("dc civac, %0" :: "r"(a) : "memory");
+                    __asm__ volatile("dsb sy" ::: "memory");
+                    kprintf("[BOOT] USB DMA pool: %p-%p (2 MB: 1 MB uncached, 1 MB cached bounce)\n", (void *)frf_dma_phys, (void *)(frf_dma_phys + (2u << 20) - 1));
+                }
+            }
+#endif
             /* a Pi 4's GPU room, the same way: the GPU writes it, the HVS reads it */
             if (aga_gpu_size) {
                 uintptr_t g = aga_chip_base + aga_chip_size + AGA_FB_RESERVE;
@@ -1667,6 +1704,16 @@ void boot(void *dtree)
             }
             aga_glue_init((uint8_t *)aga_chip_base, aga_chip_size,
                           (uint8_t *)(aga_chip_base + aga_chip_size), aga_chip_base + aga_chip_size, 0, aga_mode);
+#ifdef FRF_VIRTUAL_AGA
+            {
+                extern int frf_boot_look, frf_boot_scale;
+                extern void aga_video_set_look(int look);
+                extern void aga_video_set_scale(int mode);
+                if (frf_boot_look >= 0 && frf_boot_look <= 2) aga_video_set_look(frf_boot_look);
+                if (frf_boot_scale >= 0 && frf_boot_scale <= 7) aga_video_set_scale(frf_boot_scale);
+                kprintf("[BOOT] EMU68AGA picture: look %d, scale %d\n", frf_boot_look, frf_boot_scale);
+            }
+#endif
             if (aga_mode && !aga_use_mmu) aga_chip_redirect = 1;
         }
 #endif
@@ -2049,6 +2096,10 @@ void boot(void *dtree)
 #endif
 
         kprintf("[BOOT] Loading ROM from %p, size %d\n", initramfs_loc, frf_rom_size);
+#ifdef FRF_VIRTUAL_AGA
+        if (frf_rom_size != 262144 && frf_rom_size != 524288 && frf_rom_size != 1048576 && frf_rom_size != 2097152)
+            kprintf("[BOOT] FAIL: Kickstart file is %d bytes - not a 256K/512K/1M/2M ROM (or 512K ROM + ADF). Wrong file in initramfs?\n", (int)frf_rom_size);
+#endif
         mmu_map(0xf80000, 0xf80000, 524288, MMU_ACCESS | MMU_ISHARE | MMU_ALLOW_EL0 | MMU_READ_ONLY | MMU_ATTR_CACHED, 0);
             
         if (frf_rom_size == 262144)
@@ -2208,6 +2259,29 @@ void boot(void *dtree)
 #endif
 
 #ifdef FRF_VIRTUAL_AGA
+    {
+        /* EMU68AGA: standalone there is no Amiga ROM to fall back on. With no
+           Kickstart in the initramfs the 68k would start from empty memory and
+           take illegal-instruction exceptions for ever ("Z3 write access ...
+           ffffbe.." as the stack wraps). Say why on the splash and stop. */
+        extern uint32_t rom_mapped;
+        if (!rom_mapped) {
+            for (int i = 0; i < 3; i++)
+                kprintf("[BOOT] FAIL: NO KICKSTART ROM LOADED - check the 'initramfs <file> followkernel' line in floppy.txt/config.txt and that <file> is on the FAT partition\n");
+            {
+                extern int frf_initrd_seen; extern uint32_t frf_initrd_bytes;
+                of_node_t *ch = dt_find_node("/chosen");
+                of_property_t *ba = ch ? dt_find_property(ch, "bootargs") : NULL;
+                if (frf_initrd_seen)
+                    kprintf("[BOOT] FAIL: firmware passed an initramfs of %u bytes (empty or unusable file?)\n", frf_initrd_bytes);
+                else
+                    kprintf("[BOOT] FAIL: firmware passed NO initramfs at all - the initramfs line was not read, or the file name does not match\n");
+                kprintf("[BOOT] cmdline.txt (bootargs): '%s'\n", (ba && ba->op_value) ? (const char *)ba->op_value : "(none)");
+            }
+            kprintf("[BOOT] FAIL: 68k not started. Supported ROM files: 256K, 512K, 1M, 2M, or 512K ROM + 880K/1760K ADF\n");
+            while (1) __asm__ volatile("wfe");
+        }
+    }
     extern uint32_t rom_mapped;
     if (rom_mapped && aga_chip_base) {
         extern uint32_t overlay;

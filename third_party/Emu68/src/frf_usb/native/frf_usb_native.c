@@ -164,9 +164,20 @@ static int native_usb_power_on(uint32_t *state_out)
 void frf_usb_main(void)
 {
     extern void frf_boot_stage(unsigned stage);
+    kprintf("[FRF-USB] CPU1 USB worker waiting for the boot gate\n");
     while (!__atomic_load_n(&frf_usb_host_start_allowed, __ATOMIC_ACQUIRE))
         __asm__ volatile("wfe");
     frf_boot_stage(6);
+    kprintf("[FRF-USB] CPU1 USB worker started\n");
+
+    /* EMU68AGA Pi 4: the USB-A ports (VL805 on PCIe) are the ones people
+       plug into; the kernel drives them unless cmdline.txt says
+       frf_usb=neptune. The DWC2 (USB-C) path below stays for the Pi 3/CM4. */
+    {
+        extern int frf_xhci_wanted(void);
+        extern void frf_xhci_main(void) __attribute__((noreturn));
+        if (frf_xhci_wanted()) frf_xhci_main();
+    }
 
     extern void frf_post_native_usb_stage(unsigned stage, int rc,
                                           uint32_t detail, uint32_t aux);

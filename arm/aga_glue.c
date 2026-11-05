@@ -2877,12 +2877,14 @@ void aga_chipset_main(void)
             aga_diag_max(AGA_D_FRAME_US_WORST, us);
             aga_diag_inc(AGA_D_FRAMES);
             aga_diag_inc(AGA_D_PRESENTS);
+#ifndef FRF_VIRTUAL_AGA   /* standalone: no PiStorm housekeeper, no GPIO block to watch */
             {   /* Ctrl-Amiga-Amiga that the housekeeper did not take within
                    20 ms: it is stuck, so this core reboots the Pi (the
                    protocol file's ps_wedge_reset) */
                 extern void ps_reset_watch(void);
                 ps_reset_watch();
             }
+#endif
             if (AGA_PROBES_ON) {   /* how far behind real time the loop is as this frame goes out */
                 uint64_t nowt = cntvct();
                 uint64_t lagt = nowt > next_ticks ? nowt - next_ticks : 0;

@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+"""Make the Alice68 boot header: a chip emblem and the wordmark.
+
+    python3 tools/mklogo_alice.py [--out x.h] [--preview x.png]
+
+Everything here is drawn from geometry in this file - no source picture, no
+third-party artwork. The wordmark is rendered with DejaVu Sans Bold (Bitstream
+Vera / DejaVu licence: the glyph shapes may be used freely; only the pixels
+end up in the kernel, no font file). The result is a small palette picture,
+run-length encoded as (count, index) pairs like tools/mklogo_rgb.py, that
+src/raspi/alice_splash.c blows up by a whole number.
+
+SPDX-License-Identifier: GPL-2.0-only
+"""
+import argparse
+import math
+import os
+
+import numpy as np
+from PIL import Image, ImageDraw, ImageFont
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+OUT = os.path.join(ROOT, "third_party", "Emu68", "include", "logo", "logo_alice.h")
+FONT_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+FONT_BOOK = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+
+W, H = 480, 96          # x2 on 1080p (960 x 192), x1 on 720p
+SS = 8                  # supersampling
+COLORS = 48
+
+RUFOUS = (214, 110, 42)
+RUFOUS_D = (150, 66, 24)
+SLATE = (104, 132, 168)
+SLATE_D = (58, 76, 104)
+CREAM = (240, 230, 210)
+INK = (8, 10, 18)
+
+
+def chip(d, cx, cy, r):
+    """The emblem: a square chip package seen from above, pins on all four
+    sides, its die showing horizontal copper bars - the raster colour bars an
+    AGA copper list paints - shading from rufous to slate."""
+    body = r * 0.56
+    pin_w, pin_l, n = r * 0.045, r * 0.17, 5
+    for k in range(n):
+        t = -body + (k + 0.5) * (2 * body / n)
+        for side in (-1, 1):
+            d.rectangle([cx + t - pin_w, cy + side * body, cx + t + pin_w, cy + side * (body + pin_l)][::1] if side > 0 else
+                        [cx + t - pin_w, cy - body - pin_l, cx + t + pin_w, cy - body], fill=SLATE)
+            if side > 0:
+                d.rectangle([cx + body, cy + t - pin_w, cx + body + pin_l, cy + t + pin_w], fill=SLATE)
+            else:
+                d.rectangle([cx - body - pin_l, cy + t - pin_w, cx - body, cy + t + pin_w], fill=SLATE)
+    d.rounded_rectangle([cx - body, cy - body, cx + body, cy + body], radius=r * 0.08, fill=(30, 36, 52),
+                        outline=SLATE_D, width=max(1, int(r * 0.04)))
+    die = body * 0.78
+    bars = 7
+    for k in range(bars):
+        t = k / (bars - 1)
+        c = tuple(int(RUFOUS[i] * (1 - t) + SLATE[i] * t) for i in range(3))
+        y0 = cy - die + k * (2 * die / bars)
+        d.rectangle([cx - die, y0 + r * 0.02, cx + die, y0 + (2 * die / bars) - r * 0.02], fill=c)
+    # pin 1 marker
+    m = r * 0.07
+    d.ellipse([cx - body + r * 0.08, cy - body + r * 0.08, cx - body + r * 0.08 + 2 * m, cy - body + r * 0.08 + 2 * m], fill=CREAM)
+
+
+def render():
+    w, h = W * SS, H * SS
+    im = Image.new("RGB", (w, h), INK)
+    px = np.zeros((h, w, 3), dtype=np.float32)
+    # background: deep navy on the left, fading to the screen's black
+    xs = np.linspace(0.0, 1.0, w)[None, :, None]
+    ys = np.linspace(0.0, 1.0, h)[:, None, None]
+    navy = np.array([16, 24, 44], np.float32)
+    fade = np.clip(1.15 - xs * 1.25, 0, 1) * (0.75 + 0.25 * np.cos((ys - 0.5) * math.pi))
+    px[:] = navy * fade
+    im = Image.fromarray(px.astype(np.uint8), "RGB")
+    d = ImageDraw.Draw(im)
+
+    # emblem: a disc with a thin ring, the bird on it
+    cx, cy, r = 48 * SS, 48 * SS, 42 * SS
+    d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(22, 32, 56))
+    d.ellipse([cx - r, cy - r, cx + r, cy + r], outline=SLATE_D, width=2 * SS)
+    chip(d, cx, cy, 40 * SS)
+
+    # wordmark
+    fb = ImageFont.truetype(FONT_BOLD, 46 * SS)
+    x0, y0 = 104 * SS, 10 * SS
+    d.text((x0, y0), "ALICE", font=fb, fill=CREAM)
+    kw = d.textlength("ALICE", font=fb)
+    d.text((x0 + kw + 4 * SS, y0), "68", font=fb, fill=RUFOUS)
+    # copper rule: rufous fading into slate
+    ry = 66 * SS
+    rw = int(kw + d.textlength("68", font=fb) + 4 * SS)
+    for i in range(rw):
+        t = i / max(1, rw - 1)
+        c = tuple(int(RUFOUS[k] * (1 - t) + SLATE[k] * t) for k in range(3))
+        d.line([(x0 + i, ry), (x0 + i, ry + 2 * SS)], fill=c)
+    fs = ImageFont.truetype(FONT_BOOK, 15 * SS)
+    d.text((x0, 72 * SS), "standalone AGA  ·  Raspberry Pi 4", font=fs, fill=SLATE)
+    return im.resize((W, H), Image.LANCZOS)
+
+
+def encode(idx):
+    out = bytearray()
+    flat = idx.ravel()
+    i, n = 0, flat.size
+    while i < n:
+        v = flat[i]
+        j = i + 1
+        while j < n and flat[j] == v and j - i < 255:
+            j += 1
+        out += bytes((j - i, int(v)))
+        i = j
+    return bytes(out)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--out", default=OUT)
+    ap.add_argument("--preview")
+    a = ap.parse_args()
+    small = render()
+    q = small.quantize(colors=COLORS, method=Image.MEDIANCUT, dither=Image.NONE)
+    pal = list(q.getpalette()[:COLORS * 3]) + [0] * (COLORS * 3)
+    idx = np.array(q, dtype=np.uint8)
+    data = encode(idx)
+    rgb565 = []
+    for i in range(COLORS):
+        r, g, b = pal[i * 3:i * 3 + 3]
+        rgb565.append(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3))
+    with open(a.out, "w", newline="\n") as f:
+        f.write("/* Alice68 boot header, generated by tools/mklogo_alice.py - do not edit.\n"
+                "   %dx%d, %d colours, runs of (count, palette index). SPDX-License-Identifier: GPL-2.0-only */\n"
+                % (W, H, COLORS))
+        f.write("#define LOGO_ALICE_WIDTH  %d\n#define LOGO_ALICE_HEIGHT %d\n" % (W, H))
+        f.write("static const unsigned short logo_alice_pal[%d] = {\n" % COLORS)
+        for i in range(0, COLORS, 8):
+            f.write("  " + " ".join("0x%04x," % c for c in rgb565[i:i + 8]) + "\n")
+        f.write("};\nstatic const unsigned char logo_alice[] = {\n")
+        for i in range(0, len(data), 16):
+            f.write("  " + " ".join("0x%02x," % b for b in data[i:i + 16]) + "\n")
+        f.write("};\n#define LOGO_ALICE_LEN %d\n" % len(data))
+    print("%s: %dx%d, %d colours, %.1f KB" % (os.path.relpath(a.out, ROOT), W, H, COLORS, len(data) / 1024))
+    if a.preview:
+        p = []
+        for c in rgb565:
+            r, g, b = (c >> 11) & 31, (c >> 5) & 63, c & 31
+            p += [(r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2)]
+        q.putpalette(p + [0] * (768 - len(p)))
+        q.convert("RGB").resize((W * 2, H * 2), Image.NEAREST).save(a.preview)
+
+
+if __name__ == "__main__":
+    main()

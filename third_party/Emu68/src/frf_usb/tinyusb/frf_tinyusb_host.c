@@ -106,6 +106,24 @@ void* tusb_app_virt_to_phys(void *virtual_address)
     }
     return (void *)(uintptr_t)((physical & 0x3fffffffu) | 0xc0000000u);
 }
+/* EMU68AGA Pi 4: the DWC2 sees only the first GB (bus alias 0xC0000000).
+   Emu68 moves the kernel, its .bss and its heap to the top of RAM below
+   $F2000000 - above 1 GB on any Pi 4 / CM4 / Pi 400 with 2 GB or more - so
+   there TinyUSB runs the controller in slave (FIFO) mode instead of DMA.
+   Decided once, from where this file's own .bss landed. */
+static uint8_t frf_dwc2_dma_probe[64] __attribute__((aligned(64)));
+bool frf_dwc2_dma_usable(void)
+{
+    static int known = -1;
+    if (known < 0) {
+        uintptr_t phys = mmu_virt2phys((uintptr_t)frf_dwc2_dma_probe);
+        known = (phys != (uintptr_t)-1 && phys + 0x400000u < 0x40000000u) ? 1 : 0;
+        kprintf("[FRF-USB] DWC2 %s: kernel buffers at phys %p\n",
+                known ? "DMA mode" : "slave/FIFO mode (buffers above the 1 GB DMA window)",
+                (void *)phys);
+    }
+    return known == 1;
+}
 static volatile uint32_t frf_usb_hid_keyboard,frf_usb_hid_mouse,frf_usb_storage;
 static volatile uint32_t frf_usb_hid_interfaces;
 static volatile uint32_t frf_r40a_hid_desc_length;

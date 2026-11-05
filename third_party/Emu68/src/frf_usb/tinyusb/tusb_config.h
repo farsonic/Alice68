@@ -20,7 +20,10 @@
 #define CFG_TUSB_MEM_ALIGN __attribute__((aligned(64)))
 #define CFG_TUSB_DEBUG 0
 #define CFG_TUH_DWC2_DMA_ENABLE 1
-#define CFG_TUH_DWC2_SLAVE_ENABLE 0
+/* EMU68AGA Pi 4: slave (FIFO) mode compiled in as well. The DWC2 can only
+   DMA into the first GB, and on a Pi with more RAM Emu68 moves the kernel -
+   with every TinyUSB buffer - above it; frf_dwc2_dma_usable() picks. */
+#define CFG_TUH_DWC2_SLAVE_ENABLE 1
 
 #define CFG_TUSB_FIFO_HWFIFO_CUSTOM_WRITE 1
 #define CFG_TUSB_FIFO_HWFIFO_CUSTOM_READ 1

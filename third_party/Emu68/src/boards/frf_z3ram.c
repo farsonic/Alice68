@@ -60,3 +60,28 @@ static struct ExpansionBoard frf_z3_board = {
 };
 
 static void * __attribute__((used, section(".boards.z3"))) frf_z3_board_ref = &frf_z3_board;
+
+/* EMU68AGA Pi 4: a Pi with more than 1 GB has RAM at $40000000 already, and
+   Emu68 maps it 1:1 as 68k Fast RAM. A Zorro III board autoconfigured there
+   would alias it, so take the board out of the chain (mmu.c decides). */
+void frf_z3ram_disable(void)
+{
+    frf_z3ram_size = 0;
+    frf_z3_board.enabled = 0;
+}
+
+/* Without the ARM-side USB host (FRF_USB_HOST=OFF) nothing holds the mouse
+   buttons during early startup; the USB host's strong definition wins when
+   it is built in. */
+int __attribute__((weak)) frf_usb_early_startup_active(void) { return 0; }
+
+/* EMU68AGA picture at boot (start.c parses aga.look= / aga.scale=) */
+int frf_boot_look = 0;    /* sharp */
+int frf_boot_scale = 1;   /* integer */
+
+/* what the firmware initramfs line delivered (start.c) */
+int frf_initrd_seen = 0;
+uint32_t frf_initrd_bytes = 0;
+
+/* USB DMA pool (mmu.c carves it, start.c maps it, frf_xhci.c uses it) */
+uintptr_t frf_dma_phys = 0;

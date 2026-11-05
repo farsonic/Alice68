@@ -59,9 +59,15 @@ uint8_t q_pop()
 int redirect = 0;
 int fast_serial = 0;
 
+#ifdef FRF_VIRTUAL_AGA
+extern void frf_bootlog_putc(char c);
+#endif
 void putByte(void *io_base, char chr)
 {
     (void)io_base;
+#ifdef FRF_VIRTUAL_AGA
+    frf_bootlog_putc(chr);
+#endif
 
     if (redirect)
     {

@@ -1,19 +1,47 @@
-AGA-PISTORM is licensed under the GNU General Public License, version 2 only
-(GPL-2.0-only). The full text is in COPYING.
+Alice68 licensing
+=================
 
-Rationale: the chipset core contains code from UAE and WinUAE, both GPL (Bernd
-Schmidt, Alessandro Bissacco, Toni Wilen and the other UAE authors) - some of
-it copied, more of it translated into C, much of it the older UAE code kept in
-E-UAE. The header of each file in core/src says what it took and carries the
-copyright lines of the files it came from; package/UAE-WinUAE-notice.txt
-collects them. The kernel combines it with Emu68 (MPL-2.0, Michal Schulz):
-MPL-2.0 section 3.3 allows that combination, the kernel as a whole is
-distributed under the GPL-2.0, and Emu68's own files keep their MPL-2.0
-notices.
+Alice68 is distributed under the GNU General Public License, version 2 only
+(GPL-2.0-only). The full text is in COPYING. Individual files keep the licence
+their header names; where a file says otherwise, the file wins.
 
-Under the MPL-2.0 instead (full text in MPL-2.0.txt):
-  arm/emu68-aga.patch     our changes to Emu68's files - MPL-2.0, like the
-                          files they change
-  package/videocore-src/  our changes to Emu68-tools' VideoCore.card: the
-                          diff, overlay.c and version_gen.h.in
-  package/overlays-src/   logo.dts, Emu68's logo-colour overlay (Michal Schulz)
+Alice68 is built from the work of others, and it does not relicense any of it.
+What is whose is set out in THIRD_PARTY_NOTICES.md. In short:
+
+  Emu68 (third_party/Emu68)            MPL-2.0, Michal Schulz and contributors.
+                                       Emu68's own files keep their MPL-2.0
+                                       notices; changes made to them (by
+                                       AGA-PiStorm, FRF or Alice68) are MPL-2.0
+                                       too, like the files they change.
+  AGA-PiStorm (core/, arm/, tools/,    GPL-2.0-only, Astair86 and contributors.
+  package/)                            Its chipset core contains code from UAE
+                                       and WinUAE (GPL); package/UAE-WinUAE-
+                                       notice.txt collects their copyright lines.
+  EMU68AGA Bare Metal (FRF)            GPL-2.0-or-later for FRF-original
+                                       material, Future Retro Fusion; FRF's
+                                       changes to Emu68's files are MPL-2.0.
+  Alice68's additions                  GPL-2.0-only unless the file says
+                                       otherwise (see THIRD_PARTY_NOTICES.md).
+  Bundled libraries                    their own licences, kept with them:
+                                       TinyUSB (MIT), Capstone (BSD-3-Clause and
+                                       LLVM), libdeflate (MIT), tiny-stl, libxsvf
+                                       (ISC), musl / FreeBSD msun maths (MIT /
+                                       Sun), AROS files (AROS Public License).
+
+Why the kernel as a whole is GPL-2.0-only: the AGA chipset core is
+GPL-2.0-only (UAE/WinUAE heritage). The kernel combines it with Emu68, which
+MPL-2.0 section 3.3 allows; the combined kernel8.img is distributed under the
+GPL-2.0, and Emu68's files keep their MPL-2.0 notices (this is how
+AGA-PiStorm already distributes its kernels; see its LICENSE in
+docs/AGA-PISTORM-LICENSE.txt).
+
+Not part of Alice68 and never distributed with it: Kickstart ROMs and any
+other Amiga operating-system files, the Raspberry Pi firmware (start4.elf,
+fixup4.dat - get them from the Raspberry Pi firmware repository), the Neptune
+USB stack and its classes (rondoval/neptune-usb-stack, AROS Public License),
+and games or other commercial software.
+
+"Amiga" is a trademark of its owner. Alice68 is not affiliated with or
+endorsed by the owners of that trademark, nor by the Emu68, AGA-PiStorm,
+EMU68AGA Bare Metal, PiStorm or Neptune projects. Please report Alice68
+problems to Alice68, not to them.

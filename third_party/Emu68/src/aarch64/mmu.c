@@ -259,6 +259,24 @@ void mmu_init()
         int block_count = p->op_length / block_size;
 
         sys_memory = tlsf_malloc(tlsf, (1 + block_count) * sizeof(struct MemoryBlock));
+#ifdef FRF_VIRTUAL_AGA
+        /* EMU68AGA: the virtual Z3 Fast RAM board is autoconfigured from 68k $40000000 up
+           (after Emu68ROM's own board, so around $48000000).
+           Where the Pi itself has RAM there (Pi 4/CM4/Pi 400 with 2 GB or more),
+           Emu68 already maps it 1:1 as Fast RAM - drop the board instead. */
+        for (int b = 0; b < block_count; b++) {
+            uint64_t ba = 0, bs = 0;
+            for (int i=0; i < address_cells; i++) ba = (ba << 32) | BE32(range[b * (block_size / 4) + i]);
+            for (int i=0; i < size_cells; i++)    bs = (bs << 32) | BE32(range[b * (block_size / 4) + address_cells + i]);
+            if (ba < 0x80000000ULL && ba + bs > 0x40000000ULL) {   /* the Z3 window it lands in */
+                extern void frf_z3ram_disable(void);
+                frf_z3ram_disable();
+                kprintf("[BOOT] FRF Z3 Fast RAM board off: host RAM block %p-%p already sits at 68k $40000000\n",
+                        (void *)ba, (void *)(ba + bs - 1));
+                break;
+            }
+        }
+#endif
         for (int block=0; block < block_count; block++)
         {
             int last_block = (block == block_count - 1);
@@ -330,6 +348,20 @@ void mmu_init()
                 }
             }
 
+#ifdef FRF_VIRTUAL_AGA
+            /* EMU68AGA Pi 4 USB: a 2 MB DMA pool below 1 GB for the kernel's own
+               xHCI driver (frf_xhci.c) - reachable by the VL805 through the PCIe
+               inbound window (bus address == CPU address below 2 GB) and by the
+               VideoCore mailbox. Carved here so AmigaOS never sees it as RAM. */
+            {
+                extern uintptr_t frf_dma_phys;
+                if (frf_dma_phys == 0 && addr + size <= 0x40000000 && size > (64u << 20)) {
+                    size -= 2u << 20;
+                    frf_dma_phys = addr + size;
+                    update_needed = 1;
+                }
+            }
+#endif
 #ifdef FRF_VIRTUAL_AGA
             /* Dedicated backing for genuine Z3 Fast RAM. Carve it out here so
                devicetree.resource cannot register these same bytes as generic

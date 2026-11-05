@@ -122,8 +122,32 @@ static inline void ticksleep_wfe(uint64_t ticks)
 }
 
 #define TXD_BIT (1 << 26)
+#ifdef FRF_VIRTUAL_AGA
+/* EMU68AGA standalone: no PiStorm on the header, so the debug log goes out
+   on GPIO 14 - the Pi's usual TX pin, header pin 8 - instead of GPIO 26. */
+#undef TXD_BIT
+#define TXD_BIT (1 << 14)
+#endif
 
 uint32_t bitbang_delay;
+
+#ifdef FRF_VIRTUAL_AGA
+/* ps_setup_protocol is bypassed standalone, and with it the bit-bang serial
+   setup: do just that part - the bit time and GPIO 14 as an idle-high output. */
+void frf_serial_setup(void)
+{
+    uint64_t clock;
+    asm volatile("mrs %0, CNTFRQ_EL0":"=r"(clock));
+    bitbang_delay = (clock + PISTORM_BITBANG_SPEED / 2) / PISTORM_BITBANG_SPEED;
+    if (!gpio)
+        gpio = ((volatile unsigned *)BCM2708_PERI_BASE) + GPIO_ADDR / 4;
+    uint32_t fsel1 = LE32(*(gpio + 1));
+    fsel1 = (fsel1 & ~(7u << 12)) | (1u << 12);   /* GPIO 14: output */
+    *(gpio + 7) = LE32(TXD_BIT);                   /* idle high (mark) first */
+    *(gpio + 1) = LE32(fsel1);
+    *(gpio + 7) = LE32(TXD_BIT);
+}
+#endif
  
 void bitbang_putByte(uint8_t byte)
 {

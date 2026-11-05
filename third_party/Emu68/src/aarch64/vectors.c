@@ -11,39 +11,32 @@
 #ifdef AGA_PISTORM
 #include "aga_glue.h"
 #ifdef FRF_VIRTUAL_AGA
-void aga_hdmi_monitor_nibble(int d);
-void aga_hdmi_monitor(int on);
-void aga_hdmi_fx_value(int v);
-void aga_hdmi_fx_param(int k);
-void aga_hdmi_voice_param(int k);
-
-static int frf_virtual_aga_picture_write(uint64_t far, int size, uint64_t raw)
+/* EMU68AGA standalone: which $DFF1F2 control words the running machine may
+   send. Picture and sound settings (agaboot's Chipset menu) pass through to
+   the 1.120 handlers; what would switch the sandbox, touch a PiStorm-only
+   path (RGB port, A314, bus test, wedge test) or reboot into tryboot is
+   refused. The $1E8-$1F8 long-word buffer handovers are refused too (only
+   $1F2 words are let through): in machine mode there is no sandbox to tell
+   them apart from a game clearing every custom register. */
+static int frf_machine_ctrl_ok(uint64_t far, int size, uint64_t raw)
 {
+    /* $DFF1E8: agastat/agaboot's diagnostic selector, read back at $DFF1EA -
+       allowed as in upstream's own machine mode (AGA from boot) */
+    if (far == 0xDFF1E8u && size == 2) return 1;
     if (far != 0xDFF1F2u || size != 2) return 0;
     uint32_t v = (uint32_t)raw & 0xffffu;
-    if ((v & 0xFFC2u) == 0x58C0u) { aga_video_cut_data((int)((v & 1u) | ((v >> 1) & 0x1eu))); return 1; }
-    if ((v & 0xFFF2u) == 0x5870u) { aga_video_cut_store((int)((v & 1u) | ((v >> 1) & 6u))); return 1; }
-    if ((v & 0xFFF0u) == 0x5900u) { aga_video_set_zoom((int)(v & 7u)); aga_video_set_sharp((int)((v >> 3) & 1u)); return 1; }
-    if ((v & 0xFFFCu) == 0x5920u) { aga_video_set_look((int)(v & 3u)); return 1; }
-    if ((v & 0xFFFCu) == 0x5970u) { aga_video_set_scale((int)(v & 3u)); return 1; }
-    if ((v & 0xFF02u) == 0x5000u) { aga_video_scan_select((int)((v & 1u) | ((v >> 1) & 0x7eu))); return 1; }
-    if ((v & 0xFF02u) == 0x5300u) { aga_video_scan_value((int)((v & 1u) | ((v >> 1) & 0x7eu))); return 1; }
-    if ((v & 0xFFF8u) == 0x5980u) { aga_video_set_scanlines((int)(v & 7u)); return 1; }
-    if ((v & 0xFF00u) == 0x5700u) { aga_video_set_pos_x((int)(int8_t)(v & 0xffu)); return 1; }
-    if ((v & 0xFF00u) == 0x5600u) { aga_video_set_pos_y((int)(int8_t)(v & 0xffu)); return 1; }
-    if ((v & 0xFFF0u) == 0x59B0u) { aga_video_set_border(0, (int)(v & 15u)); return 1; }
-    if ((v & 0xFFF0u) == 0x59C0u) { aga_video_set_border(1, (int)(v & 15u)); return 1; }
-    if ((v & 0xFFFEu) == 0x59D0u) { aga_flickerfix((int)(v & 1u)); return 1; }
-    if ((v & 0xFFF8u) == 0x59E0u) { aga_video_set_laced_scanlines((int)(v & 7u)); return 1; }
-    if ((v & 0xFFF8u) == 0x59F0u) { aga_brightness((int)(v & 7u)); return 1; }
-    if ((v & 0xFFFEu) == 0x5910u) { aga_video_standard((int)(v & 1u)); return 1; }
-    if ((v & 0xFFF2u) == 0x5170u) { aga_video_set_ntsc_scanlines((int)((v & 1u) | ((v >> 1) & 6u))); return 1; }
-    if ((v & 0xFFF2u) == 0x5140u) { aga_hdmi_monitor_nibble((int)((v & 1u) | ((v >> 1) & 14u))); return 1; }
-    if ((v & 0xFFFEu) == 0x5160u) { aga_hdmi_monitor((int)(v & 1u)); return 1; }
-    if ((v & 0xFFC2u) == 0x5200u) { aga_hdmi_fx_value((int)((v & 1u) | ((v >> 1) & 30u))); return 1; }
-    if ((v & 0xFFE2u) == 0x5240u) { aga_hdmi_fx_param((int)((v & 1u) | ((v >> 1) & 14u))); return 1; }
-    if ((v & 0xFFE2u) == 0x5260u) { aga_hdmi_voice_param((int)((v & 1u) | ((v >> 1) & 14u))); return 1; }
-    return 0;
+    if (v == 0xA6A1u || v == 0xEC50u) return 0;          /* AGA/ECS tryboot reboot */
+    if ((v & 0xFFF0u) == 0x5A00u) return 0;              /* sandbox enter/leave/inplace */
+    if ((v & 0xFF00u) == 0x5B00u) return 0;              /* leave bisect, A314 pad, USB borrow */
+    if ((v & 0xFFF0u) == 0x5C00u) return 0;              /* redirect test */
+    if (v == 0x52EDu) return 0;                          /* wedge test */
+    if ((v & 0xFFFCu) == 0x5960u) return 0;              /* BUSTEST */
+    if ((v & 0xFFFEu) == 0x5950u || (v & 0xFFFEu) == 0x5952u) return 0;   /* RGB port */
+    if ((v & 0xFE00u) == 0x5400u) return 0;              /* RGB port offset */
+    if ((v & 0xFFF0u) == 0x5990u || (v & 0xFFF0u) == 0x59A0u) return 0;   /* RGB port size/fps/auto/c32/dither */
+    if ((v & 0xFFF0u) == 0x5F00u) return 0;              /* HUD is a boot-config choice here */
+    if ((v & 0xFF00u) == 0xAD00u) return 0;              /* handled above with status */
+    return 1;
 }
 #endif
 /* v19-v26 hold the 68k's SR, stack pointers, CACR and FPU control registers
@@ -1015,7 +1008,6 @@ int SYSWriteValToAddr(uint64_t value, uint64_t value2, int size, uint64_t far)
     {   AGA_TRAP_GUARD();               /* from here on the 68k's v19-v26 are safe (top of file) */
 #ifdef FRF_VIRTUAL_AGA
     if (frf_vcia_write(far, size, value)) return 1;
-    if (frf_virtual_aga_picture_write(far, size, value)) return 1;
     /* FRF standalone runtime ADF commands must work with aga_mode == 1.
      * Their interception used to be inside if(!aga_mode), unreachable in
      * the bare-metal machine. Only the explicit $ADxx magic is claimed. */
@@ -1024,35 +1016,12 @@ int SYSWriteValToAddr(uint64_t value, uint64_t value2, int size, uint64_t far)
         aga_disk_command((unsigned)value & 0xffu);
         return 1;
     }
-    /* AGA-PiStorm 1.116 CRT/gamma/aspect control, enabled in standalone
-     * machine mode. The legacy command region under if(!aga_mode) is never
-     * reached on our native virtual AGA. E3 encodes 0..7 as bits 0,2,3. */
-    if (far == 0xDFF1F2 && size == 2 &&
-        (value & 0xFFF2u) == 0x5100u) {
-        aga_video_set_mask((int)((value & 1u) | ((value >> 1) & 6u)));
-        return 1;
-    }
-    if (far == 0xDFF1F2 && size == 2 &&
-        (value & 0xFFF2u) == 0x5110u) {
-        aga_video_set_scan_shape((int)((value & 1u) | ((value >> 1) & 6u)));
-        return 1;
-    }
-    if (far == 0xDFF1F2 && size == 2 &&
-        (value & 0xFFF2u) == 0x5120u) {
-        aga_gamma((int)((value & 1u) | ((value >> 1) & 6u)));
-        return 1;
-    }
-    if (far == 0xDFF1F2 && size == 2 &&
-        (value & 0xFFF2u) == 0x5130u) {
-        aga_video_set_scale((int)((value & 1u) | ((value >> 1) & 6u)));
-        return 1;
-    }
 #endif
 #ifdef FRF_VIRTUAL_AGA
     /* FRF v0.10.15 SYSTEMWIDE: the virtual AGA chipset is already the machine.
        Disable legacy agaboot/sandbox/private-register commands in machine mode.
        Real AGA $1E8-$1EE traffic must reach the chipset core unmodified. */
-    if (!aga_mode) {
+    if (!aga_mode || frf_machine_ctrl_ok(far, size, value)) {
 #endif
     /* AGA/ECS mode switch request from the agaboot tool, valid in both modes */
     if (far == 0xDFF1F2 && size == 2 && ((value & 0xFFFF) == 0xA6A1 || (value & 0xFFFF) == 0xEC50)) {
@@ -1387,7 +1356,7 @@ int SYSReadValFromAddr(uint64_t *value, uint64_t *value2, int size, uint64_t far
     }
 #endif
 #ifdef FRF_VIRTUAL_AGA
-    if (!aga_mode && far == 0xDFF1EA && size == 2) { *value = aga_diag_read_word(); return 1; }
+    if (far == 0xDFF1EA && size == 2) { *value = aga_diag_read_word(); return 1; }   /* agastat, as upstream machine mode */
 #else
     if (far == 0xDFF1EA && size == 2) { *value = aga_diag_read_word(); return 1; }
 #endif
@@ -1672,7 +1641,6 @@ int SYSWriteValToAddr(uint64_t value, uint64_t value2, int size, uint64_t far)
     {   AGA_TRAP_GUARD();               /* from here on the 68k's v19-v26 are safe (top of file) */
 #ifdef FRF_VIRTUAL_AGA
     if (frf_vcia_write(far, size, value)) return 1;
-    if (frf_virtual_aga_picture_write(far, size, value)) return 1;
     /* FRF standalone runtime ADF commands must work with aga_mode == 1.
      * Their interception used to be inside if(!aga_mode), unreachable in
      * the bare-metal machine. Only the explicit $ADxx magic is claimed. */
@@ -1681,35 +1649,12 @@ int SYSWriteValToAddr(uint64_t value, uint64_t value2, int size, uint64_t far)
         aga_disk_command((unsigned)value & 0xffu);
         return 1;
     }
-    /* AGA-PiStorm 1.116 CRT/gamma/aspect control, enabled in standalone
-     * machine mode. The legacy command region under if(!aga_mode) is never
-     * reached on our native virtual AGA. E3 encodes 0..7 as bits 0,2,3. */
-    if (far == 0xDFF1F2 && size == 2 &&
-        (value & 0xFFF2u) == 0x5100u) {
-        aga_video_set_mask((int)((value & 1u) | ((value >> 1) & 6u)));
-        return 1;
-    }
-    if (far == 0xDFF1F2 && size == 2 &&
-        (value & 0xFFF2u) == 0x5110u) {
-        aga_video_set_scan_shape((int)((value & 1u) | ((value >> 1) & 6u)));
-        return 1;
-    }
-    if (far == 0xDFF1F2 && size == 2 &&
-        (value & 0xFFF2u) == 0x5120u) {
-        aga_gamma((int)((value & 1u) | ((value >> 1) & 6u)));
-        return 1;
-    }
-    if (far == 0xDFF1F2 && size == 2 &&
-        (value & 0xFFF2u) == 0x5130u) {
-        aga_video_set_scale((int)((value & 1u) | ((value >> 1) & 6u)));
-        return 1;
-    }
 #endif
 #ifdef FRF_VIRTUAL_AGA
     /* FRF v0.10.15 SYSTEMWIDE: the virtual AGA chipset is already the machine.
        Disable legacy agaboot/sandbox/private-register commands in machine mode.
        Real AGA $1E8-$1EE traffic must reach the chipset core unmodified. */
-    if (!aga_mode) {
+    if (!aga_mode || frf_machine_ctrl_ok(far, size, value)) {
 #endif
     /* AGA/ECS mode switch request from the agaboot tool, valid in both modes */
     if (far == 0xDFF1F2 && size == 2 && ((value & 0xFFFF) == 0xA6A1 || (value & 0xFFFF) == 0xEC50)) {

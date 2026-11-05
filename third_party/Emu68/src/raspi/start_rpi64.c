@@ -30,6 +30,10 @@
 #ifdef AGA_PISTORM
 #include "logo/logo_aga.h"      /* "AGA-Pistorm for ECS", tools/mklogo.py */
 #include "logo/logo_aga_rgb.h"  /* the colour splash, tools/mklogo_rgb.py */
+#if defined(AGA_PISTORM) && defined(FRF_VIRTUAL_AGA)
+#define ALICE_SPLASH 1           /* Alice68: header, status strip, log panels (alice_splash.c) */
+#include "alice_splash.h"
+#endif
 #endif
 #ifdef PISTORM_ANY_MODEL
 #include "ps_protocol.h"
@@ -225,7 +229,7 @@ void draw_logo(struct EmuLogo *logo, uint32_t start_x, uint32_t start_y)
    colours are its own and `logo=purple` does not touch it. The version
    number is part of the artwork, put there by tools/mklogo_rgb.py when the
    release is built. */
-static void draw_logo_rgb(uint32_t start_x, uint32_t start_y, uint32_t scale)
+static void __attribute__((unused)) draw_logo_rgb(uint32_t start_x, uint32_t start_y, uint32_t scale)
 {
     /* each source pixel becomes a scale x scale block: whole-pixel scaling
        keeps the version's pixel letters sharp, and the kernel only has to
@@ -359,8 +363,15 @@ static volatile uint32_t native_usb_live[16];
 #endif
 #define FRF_RELEASE_COMPACT_POST 1
 
+#ifdef ALICE_SPLASH
+static void alice_status(void);
+#endif
 static void frf_post_draw(void)
 {
+#ifdef ALICE_SPLASH
+    alice_status();
+    return;
+#endif
     if (__atomic_load_n(&post_stop,__ATOMIC_ACQUIRE)) return;
     if (!framebuffer || pitch<fb_width*2u || fb_width<340u ||
         fb_height<246u) return;
@@ -381,9 +392,9 @@ static void frf_post_draw(void)
 #ifdef FRF_USB_NATIVE_DWC2
 #ifdef FRF_USB_TINYUSB
 #ifdef FRF_USB_DIAG_HOLD
-    post_text(x+10,y+25,"v0.10.43 / 119 RC3",cyan);
+    post_text(x+10,y+25,"Pi4 / AGA 1.120",cyan);
 #else
-    post_text(x+10,y+25,"v0.10.43 / 119 RC3",cyan);
+    post_text(x+10,y+25,"Pi4 / AGA 1.120",cyan);
 #endif
 #else
     post_text(x+10,y+25,"NATIVE USB V2 / CORE1",cyan);
@@ -873,8 +884,214 @@ void frf_post_pad_sample(unsigned rx,unsigned bad,unsigned err,
     post_decoded=decoded;post_events=events;post_joy=joy;post_fire=fire;
     frf_post_draw();
 }
+#ifdef FRF_VIRTUAL_AGA
+/* EMU68AGA on-screen boot log: every kprintf line also lands in a panel at
+   the bottom left of the splash, so a hang can be read off a photo without a
+   serial adapter. Lines before the framebuffer exists are kept and shown once
+   it does. It freezes when the AGA chipset first puts its picture up
+   (aga_hvs.c show) - the last lines then stay as they were. aga.nobootlog in
+   cmdline.txt turns it off. */
+#ifdef ALICE_SPLASH
+#define BLOG_LINES 64
+#define BLOG_COLS  200
+#else
+#define BLOG_LINES 30
+#define BLOG_COLS  104
+#endif
+static char     blog[BLOG_LINES][BLOG_COLS + 1];
+static unsigned blog_cur, blog_col;
+volatile int    frf_bootlog_on = 1;
+/* the USB panel, on the right: only the USB lines, so they are never
+   scrolled away by the rest of the boot */
+#ifdef ALICE_SPLASH
+#define ULOG_LINES 64
+#define ULOG_COLS  200
+#else
+#define ULOG_LINES 30
+#define ULOG_COLS  96
+#endif
+static char     ulog[ULOG_LINES][ULOG_COLS + 1];
+static unsigned ulog_cur;
+static char     line_now[BLOG_COLS + 1];
+static unsigned line_len;
+/* both panels stop 20 s after the 68k starts (stage 5): from then on the
+   framebuffer may be someone else's (RTG) */
+static uint64_t blog_stop_at;
+
+static int __attribute__((unused)) blog_has(const char *l, const char *w)
+{
+    for (; *l; l++) {
+        const char *a = l, *b = w;
+        while (*a && *b && *a == *b) { a++; b++; }
+        if (!*b) return 1;
+    }
+    return 0;
+}
+
+#ifdef ALICE_SPLASH
+/* the splash may be drawn until 20 s after the 68k starts; after that the
+   framebuffer may be someone else's (RTG) */
+static int alice_live(void)
+{
+    if (!framebuffer || !pitch) return 0;
+    if (!blog_stop_at) return 1;
+    uint64_t t; __asm__ volatile("mrs %0, CNTVCT_EL0" : "=r"(t));
+    return (int64_t)(t - blog_stop_at) < 0;
+}
+volatile int frf_usb_failed;
+static void alice_sputc(void *d, char c)
+{
+    struct { char *p; unsigned n; } *b = d;
+    if (b->n < 47) b->p[b->n++] = c;
+}
+static volatile uint32_t alice_lock;
+static void alice_status(void)
+{
+    if (!alice_live()) return;
+    if (__atomic_exchange_n(&alice_lock, 1u, __ATOMIC_ACQUIRE)) return;
+    struct al_status st;
+    st.stages = __atomic_load_n(&post_flags, __ATOMIC_ACQUIRE);
+    st.keyboards = post_kb == ~0u ? -1 : (int)post_kb;
+    st.mice = post_ms == ~0u ? -1 : (int)post_ms;
+    st.usb_fail = frf_usb_failed;
+    al_status_draw(&st);
+    __asm__ volatile("dsb ishst" ::: "memory");
+    __atomic_store_n(&alice_lock, 0u, __ATOMIC_RELEASE);
+}
+static void blog_draw(void)
+{
+    if (!alice_live() || !frf_bootlog_on) return;
+    const char *l[BLOG_LINES];
+    for (unsigned i = 0; i < BLOG_LINES; i++) l[i] = blog[(blog_cur + 1 + i) % BLOG_LINES];
+    unsigned skip = 0;
+    while (skip < BLOG_LINES && !l[skip][0]) skip++;       /* the empty slots before the first line */
+    al_panel(0, l + skip, BLOG_LINES - skip);
+    __asm__ volatile("dsb ishst" ::: "memory");
+}
+static void ulog_draw(void)
+{
+    if (!alice_live() || !frf_bootlog_on) return;
+    const char *l[ULOG_LINES];
+    for (unsigned i = 0; i < ULOG_LINES; i++) l[i] = ulog[(ulog_cur + 1 + i) % ULOG_LINES];
+    unsigned skip = 0;
+    while (skip < ULOG_LINES && !l[skip][0]) skip++;
+    al_panel(1, l + skip, ULOG_LINES - skip);
+    __asm__ volatile("dsb ishst" ::: "memory");
+}
+#else
+static void blog_draw(void)
+{
+    if (!framebuffer || !pitch || fb_width < 400 || fb_height < 300) return;
+    uint32_t w = BLOG_COLS * 8 + 8, h = BLOG_LINES * 16 + 8;
+    if (w > fb_width - 8) w = fb_width - 8;
+    uint32_t x0 = 4, y0 = fb_height > h + 28 ? fb_height - h - 28 : 0;
+    post_rect(x0, y0, w, h, 0x0000);
+    post_rect(x0, y0, w, 1, 0x07FF);
+    for (unsigned i = 0; i < BLOG_LINES; i++) {
+        const char *l = blog[(blog_cur + 1 + i) % BLOG_LINES];
+        uint16_t c = (blog_has(l, "FAIL") || blog_has(l, "ERROR") || blog_has(l, "rror")) ? 0xF800
+                   : (blog_has(l, "[FRF-USB]") || blog_has(l, "TINYUSB")) ? 0xFFE0
+                   : blog_has(l, "[AGA]") ? 0x07FF : 0xC618;
+        post_text(x0 + 4, y0 + 4 + i * 16, l, c);
+    }
+    __asm__ volatile("dsb ishst" ::: "memory");
+}
+static void ulog_draw(void)
+{
+    if (!framebuffer || !pitch || fb_width < 400 || fb_height < 300) return;
+    uint32_t left_w = BLOG_COLS * 8 + 8 + 4;
+    if (fb_width < left_w + 8 * 32) return;                 /* no room on this screen */
+    uint32_t cols = (fb_width - left_w - 12) / 8;
+    if (cols > ULOG_COLS) cols = ULOG_COLS;
+    uint32_t w = cols * 8 + 8, h = ULOG_LINES * 16 + 24;
+    uint32_t x0 = fb_width - w - 4, y0 = fb_height > h + 28 ? fb_height - h - 28 : 0;
+    post_rect(x0, y0, w, h, 0x0000);
+    post_rect(x0, y0, w, 1, 0xFFE0);
+    post_text(x0 + 4, y0 + 4, "USB", 0xFFE0);
+    for (unsigned i = 0; i < ULOG_LINES; i++) {
+        char tmp[ULOG_COLS + 1];
+        const char *l = ulog[(ulog_cur + 1 + i) % ULOG_LINES];
+        unsigned k = 0;
+        for (; l[k] && k < cols; k++) tmp[k] = l[k];
+        tmp[k] = 0;
+        uint16_t c = (blog_has(l, "FAIL") || blog_has(l, "failed") || blog_has(l, "stopped")) ? 0xF800
+                   : (blog_has(l, "ready") || blog_has(l, "done") || blog_has(l, " up ") || blog_has(l, "OK")) ? 0x07E0 : 0xFFE0;
+        post_text(x0 + 4, y0 + 20 + i * 16, tmp, c);
+    }
+    __asm__ volatile("dsb ishst" ::: "memory");
+}
+
+#endif /* ALICE_SPLASH */
+
+static void ulog_line(const char *l)
+{
+    static const char *const tag[] = { "[FRF-XHCI] ", "[FRF-USB] ", "[FRF-NATIVE-USB] ", "[FRF-TINYUSB] ", "[FRF-XHCI]", 0 };
+    for (int t = 0; tag[t]; t++) {
+        unsigned n = 0;
+        while (tag[t][n] && l[n] == tag[t][n]) n++;
+        if (tag[t][n]) continue;
+        ulog_cur = (ulog_cur + 1) % ULOG_LINES;
+        unsigned k = 0;
+        for (const char *q = l + n; *q && k < ULOG_COLS; q++) ulog[ulog_cur][k++] = *q;
+        ulog[ulog_cur][k] = 0;
+        ulog_draw();
+        return;
+    }
+}
+
+void frf_bootlog_start_timer(void)   /* stage 5: the 68k starts */
+{
+    uint64_t f, t;
+    __asm__ volatile("mrs %0, CNTFRQ_EL0" : "=r"(f));
+    __asm__ volatile("mrs %0, CNTVCT_EL0" : "=r"(t));
+    blog_stop_at = t + 20u * f;
+}
+
+/* called with print_lock held (support_rpi.c putByte) */
+void frf_bootlog_putc(char c)
+{
+    if (!frf_bootlog_on || c == '\r') return;
+    if (blog_stop_at) {
+        uint64_t t; __asm__ volatile("mrs %0, CNTVCT_EL0" : "=r"(t));
+        if ((int64_t)(t - blog_stop_at) > 0) { frf_bootlog_on = 0; return; }
+    }
+    if (c == '\n') {
+        line_now[line_len] = 0;
+        ulog_line(line_now);
+        line_len = 0;
+        blog_cur = (blog_cur + 1) % BLOG_LINES;
+        blog[blog_cur][0] = 0;
+        blog_col = 0;
+        blog_draw();
+        return;
+    }
+    if (c == '\t') c = ' ';
+    if (line_len < BLOG_COLS) line_now[line_len++] = c;
+    if (blog_col < BLOG_COLS) {
+        blog[blog_cur][blog_col++] = c;
+        blog[blog_cur][blog_col] = 0;
+    }
+}
+#endif
+
 void frf_boot_stage(unsigned stage)
 {
+#ifdef FRF_VIRTUAL_AGA
+    {
+        static const char *const what[11] = { "", "splash", "USB released", "USB gate done",
+            "guest input armed", "68k jump", "CPU1 released", "USB env started",
+            "USB init entry", "USB init returned", "USB input ready" };
+        if (stage >= 1u && stage <= 10u) kprintf("[STAGE %u] %s\n", stage, what[stage]);
+        if (stage == 5u) frf_bootlog_start_timer();
+    }
+#endif
+#ifdef ALICE_SPLASH
+    if (stage >= 1u && stage <= 10u) {
+        __atomic_fetch_or(&post_flags, 1u << stage, __ATOMIC_ACQ_REL);
+        alice_status();
+    }
+    return;
+#endif
     if (stage<1u || stage>10u || __atomic_load_n(&post_stop,__ATOMIC_ACQUIRE)) return;
     __atomic_fetch_or(&post_flags,1u<<stage,__ATOMIC_ACQ_REL);
     frf_post_draw();
@@ -924,7 +1141,7 @@ void display_logo()
 
     /* Calculate text coordinate for version string */
     text_y = (fb_height - 16 - 5) / 16;
-    text_x = (fb_width - strlen("EMU68AGA Version 0.1-Alpha") * 8 - 1) / 8;
+    text_x = (fb_width - strlen("EMU68AGA Pi4 - AGA-PiStorm 1.120 core") * 8 - 1) / 8;
 
 #if defined(PISTORM_ANY_MODEL)
     struct EmuLogo *pistormlogo = rle_decode(logo_pistorm, logo_pistorm_len);
@@ -995,7 +1212,36 @@ void display_logo()
        AGA-PISTORM shows one picture of its own instead of the stack of three
        tinted logos; everything decoded above is freed again unused, which
        costs a few microseconds once at boot and keeps this diff small. */
-#ifdef AGA_PISTORM
+#if defined(ALICE_SPLASH)
+    {
+        static char l2[64], l3[48];
+        const char *v = VERSION_STRING;
+        if (v[0] == '$') v += 6;                              /* "$VER: " */
+        unsigned k = 0;
+        while (v[k] && v[k] != ' ' && k < 30) { l2[k] = v[k]; k++; }      /* "Emu68" */
+        if (v[k] == ' ') { l2[k] = v[k]; k++; }
+        while (v[k] && v[k] != ' ' && k < 40) { l2[k] = v[k]; k++; }      /* its version */
+        const char *core = " - AGA core 1.120";
+        for (unsigned j = 0; core[j] && k < sizeof l2 - 1; j++) l2[k++] = core[j];
+        l2[k] = 0;
+        struct { char *p; unsigned n; } sb = { l3, 0 };
+        kprintf_pc(alice_sputc, &sb, "Raspberry Pi 4 - display %dx%d", sz.width, sz.height);
+        l3[sb.n < sizeof l3 ? sb.n : sizeof l3 - 1] = 0;
+        kprintf("[BOOT] " ALICE_NAME " " ALICE_VERSION " - %s\n", l2);
+        al_setup(fb, pitch, sz.width, sz.height);
+        al_clear();
+        al_header(ALICE_NAME " " ALICE_VERSION, l2, l3);
+        al_footer();
+        alice_status();
+        blog_draw();
+        ulog_draw();
+        tlsf_free(tlsf, emu68logo);
+#if defined(PISTORM_ANY_MODEL)
+        tlsf_free(tlsf, pistormlogo);
+        tlsf_free(tlsf, agalogo);
+#endif
+    }
+#elif defined(AGA_PISTORM)
     {
         /* about three quarters of the screen, in whole pixels: 1:1 it was a
            tenth of a 1080p screen */
@@ -1046,7 +1292,9 @@ void display_logo()
 #endif
 #endif
     /* Print EMu68 version number and git sha. */
-    kprintf_pc(__putc, NULL, "EMU68AGA Version 0.1-Alpha");
+#ifndef ALICE_SPLASH
+    kprintf_pc(__putc, NULL, "EMU68AGA Pi4 - AGA-PiStorm 1.120 core");
+#endif
     
     /* Reset test coordinates for further text printing (e.g. buptest) */
     text_x = 0;

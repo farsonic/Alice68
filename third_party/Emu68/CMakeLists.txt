@@ -252,6 +252,7 @@ if (${TARGET} IN_LIST SUPPORTED_TARGETS)
         list(APPEND TARGET_FILES src/raspi/start_rpi64.c)
         list(APPEND TARGET_FILES src/raspi/support_rpi.c)
         list(APPEND TARGET_FILES src/raspi/topaz.c)
+        list(APPEND TARGET_FILES src/raspi/alice_splash.c)
         if(NOT EMU68_SKIP_FIRMWARE)
             download_raspi_firmware()
         endif()
@@ -405,16 +406,20 @@ if(FRF_USB_HOST)
         message(FATAL_ERROR "FRF_USB_HOST currently supports Raspberry Pi only")
     endif()
     if(FRF_USB_NATIVE_DWC2)
-        if(FRF_USB_TINYUSB AND NOT AGA_PI3)
-            message(FATAL_ERROR "TinyUSB backend requires Pi 3")
-        endif()
         if(NOT AGA_PI3)
-            message(FATAL_ERROR "Native DWC2 phase 1 is only for Pi3 AGA builds (set AGA_PI3=ON)")
+            # EMU68AGA Pi 4: the BCM2711's DWC2 OTG controller (the USB-C port,
+            # or the CM4's USB 2.0 port) sits at the same bus address
+            # 0x7E980000, which Emu68 maps at the same 0xF2980000 alias, with
+            # the same 0xC0000000 DMA alias for the first GB. The Pi 4's
+            # USB-A ports are the VL805 on PCIe: use rondoval's xhci.device
+            # with Neptune from AmigaOS for those.
+            message(STATUS "EMU68AGA: TinyUSB DWC2 host on a non-Pi3 kernel (Pi 4 USB-C / CM4 USB2)")
         endif()
         if(FRF_USB_TINYUSB)
             set(FRF_TUSB ${CMAKE_SOURCE_DIR}/third_party/tinyusb/src)
             target_sources(Emu68.elf PRIVATE
                 ${CMAKE_SOURCE_DIR}/src/frf_usb/native/frf_usb_native.c
+                ${CMAKE_SOURCE_DIR}/src/frf_usb/xhci/frf_xhci.c
                 ${CMAKE_SOURCE_DIR}/src/frf_usb/native/frf_native_keyboard.c
                 ${CMAKE_SOURCE_DIR}/src/frf_usb/tinyusb/frf_tinyusb_host.c
                 ${CMAKE_SOURCE_DIR}/src/frf_usb/tinyusb/frf_usb_packet_capture.c
@@ -477,27 +482,11 @@ if(FRF_USB_HOST)
         target_include_directories(Emu68.elf PRIVATE ${CMAKE_SOURCE_DIR}/src/frf_usb/native ${CMAKE_SOURCE_DIR}/src/frf_usb)
         target_compile_definitions(Emu68.elf PRIVATE FRF_USB_PASSIVE_TEST=1)
     endif()
-    file(GLOB FRF_USPI_SRC ${CMAKE_SOURCE_DIR}/third_party/uspi/lib/*.c)
-    set(FRF_USB_ENV
-        ${CMAKE_SOURCE_DIR}/src/frf_usb/frf_uspi_env.c
-        ${CMAKE_SOURCE_DIR}/src/frf_usb/frf_usb.c
-    )
-    target_sources(Emu68.elf PRIVATE ${FRF_USPI_SRC} ${FRF_USB_ENV})
-    target_sources(Emu68.elf PRIVATE
-        ${CMAKE_SOURCE_DIR}/src/frf_usb/frf_usb_mass_board.c
-        ${CMAKE_SOURCE_DIR}/src/frf_usb/frf_usb_mass_host.c)
-    target_include_directories(Emu68.elf PRIVATE
-        ${CMAKE_SOURCE_DIR}/third_party/uspi/include
-        ${CMAKE_SOURCE_DIR}/src/frf_usb
-    )
-    target_compile_definitions(Emu68.elf PRIVATE FRF_USB_HOST=1)
-    set_source_files_properties(${FRF_USPI_SRC} ${CMAKE_SOURCE_DIR}/src/frf_usb/frf_uspi_env.c
-        PROPERTIES
-        COMPILE_DEFINITIONS "FRF_USPI_EMU68=1;AARCH64=1;RASPPI=3;NDEBUG=1"
-        COMPILE_FLAGS "-Wno-error -Wno-unused-parameter -Wno-unused-function -Wno-sign-compare -Wno-type-limits"
-    )
-    set_source_files_properties(${CMAKE_SOURCE_DIR}/src/frf_usb/frf_usb.c
-        PROPERTIES COMPILE_FLAGS "-Wno-error")
+    # Alice68: the USPi host (FRF's Pi 3 path) is removed. USPi is GPL-3.0-or-later
+    # and the chipset core is GPL-2.0-only: a kernel linking both cannot be
+    # distributed (see THIRD_PARTY_NOTICES.md). Use FRF_USB_NATIVE_DWC2 +
+    # FRF_USB_TINYUSB (MIT) or FRF_USB_HOST=OFF.
+    message(FATAL_ERROR "FRF_USB_HOST without FRF_USB_NATIVE_DWC2/FRF_USB_TINYUSB needs USPi (GPL-3), which Alice68 does not carry")
     endif()
 endif()
 

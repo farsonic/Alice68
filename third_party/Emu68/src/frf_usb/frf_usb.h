@@ -8,9 +8,6 @@ extern "C" {
 #endif
 
 void frf_usb_main(void) __attribute__((noreturn));
-int  frf_uspi_irq_dispatch(void);
-void frf_uspi_timer_service(void);
-int  frf_uspi_env_init(void);
 
 enum frf_usb_event_type {
     FRF_USB_EV_NONE = 0,

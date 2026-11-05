@@ -1566,6 +1566,13 @@ static int cur_black;       /* the live list of mine is the empty one (RGB port 
 
 static void show(uintptr_t frame_phys)
 {
+#ifdef FRF_VIRTUAL_AGA
+    {   /* note the first AGA frame on the boot log (it keeps running until
+           20 s after the 68k starts, start_rpi64.c) */
+        static int said;
+        if (!said) { said = 1; kprintf("[AGA] first AGA frame on HDMI\n"); }
+    }
+#endif
     uint32_t live = reg_rd(REG_DISPLIST1);
     int same_geometry = cur_is_windowed == win_mode && cur_x == win_x && cur_y == win_y && cur_w == win_w && cur_h == win_h
                         && cur_zoom_gen == zoom_gen;
