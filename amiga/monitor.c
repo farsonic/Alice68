@@ -5,6 +5,8 @@
  *   Alice68-Monitor          the window (run it first: "run Alice68-Monitor")
  *   Alice68-Monitor DUMP     print everything to the Shell - also after a hang
  *                            and a reset (Ctrl-Amiga-Amiga): the board keeps it
+ *   Alice68-Monitor TIMERS   does each timer.device unit still answer? (run it while
+ *                            something hangs: the Pi's timer bounds the wait)
  *
  * It shows:
  *   - what alice68wifi.device is doing now and for how long (the driver puts
@@ -26,7 +28,7 @@
 void *memcpy(void *d, const void *s, unsigned long n) { UBYTE *a = d; const UBYTE *b = s; while (n--) *a++ = *b++; return d; }
 void *memset(void *d, int c, unsigned long n) { UBYTE *a = d; while (n--) *a++ = (UBYTE)c; return d; }
 
-#define MON_VERSION "Alice68-Monitor 1.1"
+#define MON_VERSION "Alice68-Monitor 1.2"
 
 /* ---- system calls not in wifios.h ------------------------------------------ */
 static inline APTR GetMsg_(APTR p)                     { return (APTR)lvo(SYSBASE, -372, 0, 0, (ULONG)p, 0); }
@@ -454,6 +456,49 @@ static void draw(void)
     }
 }
 
+/* ---- TIMERS: does each timer.device unit still answer? --------------------------------- */
+/* Run it while something hangs. Each unit gets a 200 ms request; the Pi's own timer decides
+   when to stop waiting, so a dead unit cannot hang this too. MICROHZ and ECLOCK run on the
+   CIAs, VBLANK on the vertical blank. */
+static void put_ms(ULONG us) { char l[24]; struct sb b = { l, 0, sizeof l }; sdec(&b, us / 1000); ss(&b, " ms"); put(l); }
+static void put_hex4(UWORD v)
+{
+    static const char hx[] = "0123456789abcdef";
+    char l[5] = { hx[v >> 12], hx[(v >> 8) & 15], hx[(v >> 4) & 15], hx[v & 15], 0 };
+    put(l);
+}
+static LONG timers(void)
+{
+    static const char *const name[3] = { "MICROHZ (CIA)", "VBLANK        ", "ECLOCK (CIA) " };
+    LONG rc = 0;
+    put(MON_VERSION " TIMERS\n");
+    put("INTENAR $"); put_hex4(*(volatile UWORD *)0xDFF01C);
+    put("  INTREQR $"); put_hex4(*(volatile UWORD *)0xDFF01E);
+    put("  (bit 3 PORTS = CIA-A and the boards, 5 VERTB, 13 EXTER = CIA-B)\n");
+    for (ULONG unit = 0; unit < 3; unit++) {
+        struct MsgPort *tp = CreateMsgPort();
+        struct timerequest *tr = tp ? CreateIORequest(tp, sizeof *tr) : 0;
+        put("  "); put(name[unit]); put(": ");
+        if (!tr || OpenDevice("timer.device", unit, tr, 0)) { put("could not open\n"); rc = 5; }
+        else {
+            tr->io.io_Command = TR_ADDREQUEST; tr->tv_secs = 0; tr->tv_micro = 200000;
+            ULONG t0 = usecs();
+            SendIO(tr);
+            int done = 0;
+            while (usecs() - t0 < 3000000u) if (CheckIO(tr)) { done = 1; break; }
+            ULONG dt = usecs() - t0;
+            if (done) { put("answered after "); put_ms(dt); put(" (asked for 200 ms)\n"); }
+            else { put("NO ANSWER after "); put_ms(dt); put(" - this timer is stuck\n"); AbortIO(tr); rc = 5; }
+            WaitIO(tr);
+            CloseDevice(tr);
+        }
+        if (tr) DeleteIORequest(tr);
+        if (tp) DeleteMsgPort(tp);
+    }
+    put("  INTREQR now $"); put_hex4(*(volatile UWORD *)0xDFF01E); put("\n");
+    return rc;
+}
+
 LONG monitor_main(const char *args, ULONG arglen)
 {
     (void)arglen;
@@ -466,7 +511,8 @@ LONG monitor_main(const char *args, ULONG arglen)
     w0[n] = 0;
     find_board();
     if (sieq(w0, "DUMP")) { LONG rc = dump(); CloseLibrary(dos); return rc; }
-    if (w0[0]) { put("Alice68-Monitor [DUMP]\n"); CloseLibrary(dos); return w0[0] == '?' ? 0 : 10; }
+    if (sieq(w0, "TIMERS")) { LONG rc = timers(); CloseLibrary(dos); return rc; }
+    if (w0[0]) { put("Alice68-Monitor [DUMP|TIMERS]\n"); CloseLibrary(dos); return w0[0] == '?' ? 0 : 10; }
 
     GFX = OpenLibrary("graphics.library", 37);
     INTUI = OpenLibrary("intuition.library", 37);
