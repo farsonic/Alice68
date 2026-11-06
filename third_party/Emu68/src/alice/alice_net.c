@@ -100,6 +100,7 @@ static void an_irq(void)
     }
 }
 
+static int bootarg_word(const char *w);
 static void an_board_map(struct ExpansionBoard *board)
 {
     if (!an_mem) {
@@ -114,6 +115,7 @@ static void an_board_map(struct ExpansionBoard *board)
         __asm__ volatile("dsb ish; isb" ::: "memory");
         volatile struct an_hdr *h = an_mem;
         h->magic = AN_MAGIC; h->version = AN_VERSION; h->nunits = AN_UNITS; h->kernel_ver = AN_KERNEL_VER;
+        h->trace = (unsigned)bootarg_word("net.trace=1");
         /* unit 0's kind is set by CPU1 when it first serves the board (alice_net_poll) */
         __asm__ volatile("dmb ish" ::: "memory");
         __atomic_store_n(&anb, (volatile uint8_t *)an_mem, __ATOMIC_RELEASE);
@@ -152,15 +154,14 @@ void wifi_log(const char *fmt, ...)
     kprintf("%s", b.s);
     ring_put(b.s + 7, b.n - 7);
 }
-/* Tracing what the Amiga is given: every ICMP frame received, and the first frames dropped,
-   with the reason. ICMP is rare (ping), so this costs nothing; "net.trace=0" in cmdline.txt
-   switches it off. */
-static int bootarg_word(const char *w);
+/* Tracing what the Amiga is given: every ICMP frame received and sent, and the first frames
+   dropped, with the reason. Off unless "net.trace=1" is in cmdline.txt (it found where pings
+   went in November 2026: they arrived; the stack lost them). */
 static int an_trace = -1;
 static unsigned an_drops_logged;
 static void trace_rx(int unit, const uint8_t *f, unsigned len, const char *verdict)
 {
-    if (an_trace < 0) an_trace = !bootarg_word("net.trace=0");
+    if (an_trace < 0) an_trace = bootarg_word("net.trace=1");
     if (!an_trace || len < 14) return;
     unsigned et = (unsigned)f[12] << 8 | f[13];
     int icmp = et == 0x0800 && len >= 14 + 20 && f[14 + 9] == 1;
@@ -179,7 +180,7 @@ static void trace_rx(int unit, const uint8_t *f, unsigned len, const char *verdi
 
 static void trace_tx(int unit, const uint8_t *f, unsigned len, int ok)
 {
-    if (an_trace < 0) an_trace = !bootarg_word("net.trace=0");
+    if (an_trace < 0) an_trace = bootarg_word("net.trace=1");
     if (!an_trace || len < 14 + 20 + 8 || f[12] != 0x08 || f[13] != 0x00 || f[14 + 9] != 1) return;
     const uint8_t *ip = f + 14, *ic = ip + (ip[0] & 15u) * 4u;
     wifi_log("unit %d tx ICMP type %u seq %u %u.%u.%u.%u -> %u.%u.%u.%u len %u: %s\n", unit, ic[0],

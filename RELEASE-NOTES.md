@@ -30,6 +30,11 @@
   network name, as Linux does), which its supplicant needs; the first test on a Pi
   associated but never finished the handshake.
 - Riptide now speaks netdev, so it can use `alice68net.device` as well as lwip-amiga.
+  **Use Riptide 0.38 or later:** 0.37 and before reused a transmit buffer's link before
+  taking it off the free list, and `alice68net.device` completes frames fast enough to hit
+  that: ping stopped after one reply, then every socket and Workbench hung.
+- `net.trace=1` in `cmdline.txt` logs every ICMP frame (ping) and the first dropped frames,
+  in the kernel and in `alice68net.device` (2.4), to the network log.
 - **The splash shows the hardfiles again, and the WiFi.** It keeps drawing after the 68k
   starts and stops at AmigaOS's first picture (or 30 s later at most); stopping at the
   68k's start had hidden `alice68hdf.device`'s HARDFILES summary. The status strip has a

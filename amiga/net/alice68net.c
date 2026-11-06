@@ -18,8 +18,8 @@
 
 #define DEVNAME     "alice68net.device"
 #define VERSION     2
-#define REVISION    3
-#define IDSTRING    "alice68net 2.3 (07.11.2026)\r\n"
+#define REVISION    4
+#define IDSTRING    "alice68net 2.4 (07.11.2026)\r\n"
 
 #define BUFSZ       2048            /* one receive buffer: HEADROOM, the frame, spare room after it */
 #define HEADROOM    64              /* bytes before the frame, as genet.device leaves (its status block):
@@ -184,12 +184,12 @@ static void pool_put(struct NUnit *n, UBYTE *b)
 }
 static void pdec(ULONG v) { char t[12]; int k = 0; do t[k++] = (char)('0' + v % 10); while ((v /= 10) && k < 11); while (k) RawPutChar(t[--k]); }
 static void pstr(const char *s) { while (*s) RawPutChar(*s++); }
-/* ICMP frames (ping) on their way to the stack, one line each: with the kernel's own
-   "rx ICMP" lines this shows where a reply is lost */
+/* ICMP frames (ping) on their way to the stack, one line each, with net.trace=1 in
+   cmdline.txt: with the kernel's own "rx ICMP" lines this shows where a reply is lost */
 static void trace_icmp(struct NUnit *n, const struct NetDevRxDesc *r, int taken)
 {
     const UBYTE *f = r->nrd_Data;
-    if (r->nrd_Len < 14 + 20 + 8 || f[12] != 0x08 || f[13] != 0x00 || f[14 + 9] != 1) return;
+    if (!H(n->nb)->trace || r->nrd_Len < 14 + 20 + 8 || f[12] != 0x08 || f[13] != 0x00 || f[14 + 9] != 1) return;
     const UBYTE *ic = f + 14 + (f[14] & 15) * 4;
     pstr("[alice68net] unit "); pdec(n->idx); pstr(" ICMP type "); pdec(ic[0]);
     pstr(" seq "); pdec((ULONG)ic[6] << 8 | ic[7]); pstr(" len "); pdec(r->nrd_Len);
@@ -252,7 +252,7 @@ static void tx_all(struct NUnit *n)
             for (ULONG k = 0; k < l; k++) s->data[len + k] = p[k];
             len += l;
         }
-        if (len && t->sg[0].nsg_Len >= 14 + 20 + 8) {
+        if (len && H(n->nb)->trace && t->sg[0].nsg_Len >= 14 + 20 + 8) {
             const UBYTE *f = t->sg[0].nsg_Data;
             if (f[12] == 0x08 && f[13] == 0x00 && f[14 + 9] == 1) {
                 const UBYTE *ic = f + 14 + (f[14] & 15) * 4;

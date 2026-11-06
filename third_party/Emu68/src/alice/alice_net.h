@@ -46,7 +46,8 @@ struct an_hdr {
     unsigned int fw_state;          /* AN_FW_*: firmware hand-over (alice68hdf.device at boot) */
     unsigned int fw_count;          /* entries in the AN_OFF_FW table */
     unsigned int boot_us;           /* kernel: microseconds since the Pi started, at the last update */
-    unsigned int pad[6];
+    unsigned int trace;             /* kernel: 1 with net.trace=1 - the drivers log ICMP frames too */
+    unsigned int pad[5];
 };                                  /* 64 bytes */
 
 #define AN_FW_NONE      0u

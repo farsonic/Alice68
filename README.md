@@ -166,7 +166,7 @@ aga.look=0 aga.scale=1
 | `wifi=off` | Leave the WiFi chip off |
 | `eth=on` | Start the kernel's Ethernet at boot (it also starts when a stack opens `alice68net.device` unit 1) |
 | `eth=off` | Keep the kernel off the Ethernet port (for rondoval's `genet.device`) |
-| `net.trace=0` | Stop logging ICMP (ping) frames and dropped frames to the network log (on by default while the network is new) |
+| `net.trace=1` | Log every ICMP (ping) frame and the first dropped frames to the network log (Alice68-Monitor DUMP), kernel and alice68net.device |
 
 Examples:
 
@@ -254,7 +254,8 @@ units: `alice68net.device` **unit 0 is the WiFi, unit 1 the Ethernet**. The driv
 lwip-amiga's `netdev` interface, which is faster than SANA-II (the stack and the driver call
 each other directly): rondoval's **lwip-amiga** (the
 [driver stack](https://github.com/rondoval/emu68-driver-stack/releases)'s archives) and
-**Riptide**, which now speaks netdev too, can use it; Roadshow, AmiTCP and Miami (SANA-II
+**Riptide** (**0.38 or later**: earlier versions hang after the first ping with a driver
+that reports sent frames as promptly as this one) can use it; Roadshow, AmiTCP and Miami (SANA-II
 only) cannot. The WiFi chip's own firmware does the WPA2 handshake (and WPA3 where the
 firmware supports it).
 
