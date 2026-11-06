@@ -1289,7 +1289,7 @@ static struct {
     volatile uint8_t *regs;
     uint8_t *rxb, *txb;                  /* uncached */
     uint64_t rxp, txp;                   /* their physical addresses */
-    uint32_t state, t0, next_link, cidx, tprod, cmd_base, rx_err;
+    uint32_t state, t0, next_link, cidx, tprod, cmd_base, rx_err, rx_waits;
     int      phy, up, speed, full, started, promisc, disabled;
     uint8_t  mac[6];
 } E;
@@ -1527,8 +1527,14 @@ static void eth_rx(void)
             if (len >= 16 && len <= 1536 + 2) trace_rx(1, f, len - 2, (st & 0x1f) ? "DROPPED: GENET says the frame is bad" : "DROPPED: not one buffer");
             else if (an_drops_logged < 40) { an_drops_logged++; eth_log("rx descriptor status %04x len %u: DROPPED\n", st, len); }
         } else if (!u->rx_on) { u->rx_drop++; trace_rx(1, f, len - 2, "DROPPED: the Amiga takes no frames (RXOFF)"); }
-        else if (u->rx_head - u->rx_tail >= AN_RX_SLOTS) { u->rx_drop++; trace_rx(1, f, len - 2, "DROPPED: all 16 slots full"); }
-        else {
+        else if (u->rx_head - u->rx_tail >= AN_RX_SLOTS) {
+            /* the Amiga's 16 slots are full: leave this frame, and the ones behind it, in GENET's
+               own ring (256 frames) until a slot is free. Dropping it here cost a burst its tail
+               and TCP a retransmit each time: 2869 retransmits in one speed test. GENET drops
+               only once its ring is full too. */
+            E.rx_waits++;
+            break;
+        } else {
             len -= 2;
             trace_rx(1, f, len, "to the Amiga");
             volatile struct an_slot *s = (volatile struct an_slot *)(anb + AN_OFF_RX(1) + (u->rx_head % AN_RX_SLOTS) * AN_SLOT_BYTES);
