@@ -977,7 +977,7 @@ static void conn_tick(void)
 {
     uint32_t now = now_ms();
     if (!W.chip_up) return;
-    if (W.scan_busy && (W.scan_done || now - W.scan_t0 > 10000)) {
+    if (W.scan_busy && (W.scan_done || (int32_t)(now - W.scan_t0) > 10000)) {
         W.scan_busy = 0;
         wifi_log("scan: %d networks\n", W.nscan);
         scan_publish();
@@ -997,6 +997,10 @@ static void conn_tick(void)
             }
         }
     }
+    /* join() above takes some time (the key, several commands) and starts the
+       join clock: the times below must be after it, or a join that has just begun
+       looks 49 days old and is given up at once (the second test on a Pi) */
+    now = now_ms();
     unsigned st = U(0)->state;
     switch (st) {
     case AN_ST_IDLE:
@@ -1007,7 +1011,7 @@ static void conn_tick(void)
         break;
     case AN_ST_JOINING:
         if (W.ev_setssid_fail) { retry("could not join the network"); break; }
-        if (W.ev_link_down && now - W.join_t0 < 1000) W.ev_link_down = 0;
+        if (W.ev_link_down && (int32_t)(now - W.join_t0) < 1000) W.ev_link_down = 0;
         if (W.ev_link_down) { retry(W.ev_assoc_ok && !W.keyed ? "the WPA handshake failed: is the password right?" : "the network refused us"); break; }
         if (W.ev_keyed) W.keyed = 1;
         if (W.ev_link_up && W.keyed) {
@@ -1021,7 +1025,7 @@ static void conn_tick(void)
             link_set(1);
             wstate(AN_ST_CONNECTED, m);
             wifi_log("channel %u, %d dBm, %d Mbit/s\n", W.cur.channel, W.rssi, W.rate);
-        } else if (now - W.join_t0 > 20000)
+        } else if ((int32_t)(now - W.join_t0) > 20000)
             retry(W.ev_link_up || W.ev_assoc_ok ? "associated, but the WPA handshake did not finish: is the password right?" : "the network did not answer");
         break;
     case AN_ST_CONNECTED:
@@ -1537,7 +1541,7 @@ static void eth_stop(void)
     E.up = 0;
     U(1)->link = 0;
     E.state = E_OFF;
-    estate(AN_ST_OFF, "Ethernet off");
+    estate(AN_ST_OFF, "switched off");
 }
 static void eth_commands(void)
 {
@@ -1571,7 +1575,7 @@ static void eth_poll(void)
         if (E.disabled) { u->kind = AN_KIND_NONE; kprintf("[ETH] off (eth=off in cmdline.txt)\n"); return; }
         u->kind = AN_KIND_ETHER;
         E.state = E_OFF;
-        estate(AN_ST_OFF, "off - starts when a TCP/IP stack uses unit 1, or eth=on in cmdline.txt");
+        estate(AN_ST_OFF, "starts when a TCP/IP stack uses unit 1, or eth=on in cmdline.txt");
         if (bootarg_word("eth=on")) eth_start();
     }
     if (E.disabled) return;

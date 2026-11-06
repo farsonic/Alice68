@@ -16,7 +16,7 @@ void *memcpy(void *d, const void *s, unsigned long n) { UBYTE *a = d; const UBYT
 void *memset(void *d, int c, unsigned long n) { UBYTE *a = d; while (n--) *a++ = (UBYTE)c; return d; }
 static int memcmp(const void *a, const void *b, unsigned long n) { const UBYTE *x = a, *y = b; while (n--) if (*x++ != *y++) return 1; return 0; }
 
-#define VERSTR "Alice68-Network 1.0"
+#define VERSTR "Alice68-Network 1.1"
 ULONG lvo_y(APTR base, LONG off, ULONG d0, ULONG d1, ULONG d2, ULONG d3, ULONG a0, ULONG a1, ULONG a2, ULONG a3);
 #define LY(b, o, d0, d1, d2, d3, a0, a1, a2, a3) lvo_y((APTR)(b), (o), (ULONG)(d0), (ULONG)(d1), (ULONG)(d2), (ULONG)(d3), (ULONG)(a0), (ULONG)(a1), (ULONG)(a2), (ULONG)(a3))
 
@@ -289,9 +289,9 @@ LONG netprefs_main(const char *args, ULONG arglen)
     struct TagItem st1[] = { { GTST_String, (ULONG)pj.wj_Ssid }, { GTST_MaxChars, 32 }, { TAG_DONE, 0 } };
     gad[G_SSID] = g = CreateGadgetA(STRING_KIND, g, NG(G_SSID, 80, 130, 200, 14, "Network", PLACETEXT_LEFT), st1);
     struct TagItem st2[] = { { GTST_String, (ULONG)pj.wj_Pass }, { GTST_MaxChars, 64 }, { TAG_DONE, 0 } };
-    gad[G_PASS] = g = CreateGadgetA(STRING_KIND, g, NG(G_PASS, 364, 130, 150, 14, "Password", PLACETEXT_LEFT), st2);
+    gad[G_PASS] = g = CreateGadgetA(STRING_KIND, g, NG(G_PASS, 364, 130, 124, 14, "Password", PLACETEXT_LEFT), st2);
     struct TagItem st3[] = { { GTST_String, (ULONG)pj.wj_Country }, { GTST_MaxChars, 2 }, { TAG_DONE, 0 } };
-    gad[G_CC]   = g = CreateGadgetA(STRING_KIND, g, NG(G_CC, 560, 130, 36, 14, "Land", PLACETEXT_LEFT), st3);
+    gad[G_CC]   = g = CreateGadgetA(STRING_KIND, g, NG(G_CC, 564, 130, 32, 14, "Country", PLACETEXT_LEFT), st3);
     gad[G_JOIN] = g = CreateGadgetA(BUTTON_KIND, g, NG(G_JOIN, 12, 150, 200, 14, "Join and save", PLACETEXT_IN), 0);
     gad[G_ESTAT] = g = CreateGadgetA(TEXT_KIND, g, NG(G_ESTAT, 12, 188, 584, 12, 0, 0), txt);
     gad[G_EON]  = g = CreateGadgetA(BUTTON_KIND, g, NG(G_EON, 12, 206, 200, 14, "Ethernet on", PLACETEXT_IN), 0);
