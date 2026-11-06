@@ -1786,6 +1786,8 @@ static void loop_stats(void)
 
 void alice_net_poll(void)
 {
+    extern void frf_splash_tick(void);
+    frf_splash_tick();                              /* the splash's animation (start_rpi64.c), until it is gone */
     if (!anb) return;
     H()->boot_us = wifi_usecs();
     loop_stats();

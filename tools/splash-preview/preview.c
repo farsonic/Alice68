@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only
  * Renders the Alice68 boot splash on a PC with the kernel's own drawing code
- * (src/raspi/alice_splash.c), to a PPM: build.sh does it all. */
+ * (src/raspi/alice_splash.c), to a PPM: build.sh does it all.
+ * build.sh W H MS: with the header's animation as it is MS ms after it began. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -70,6 +71,7 @@ int main(int argc, char **argv)
     al_panel(0, sys_log, sizeof sys_log / sizeof *sys_log);
     al_panel(1, usb_log, sizeof usb_log / sizeof *usb_log);
     al_footer();
+    if (argc > 3) al_anim((uint32_t)atoi(argv[3]), &s);    /* the header's animation at that ms */
     printf("P6\n%u %u\n255\n", w, h);
     for (size_t i = 0; i < (size_t)w * h; i++) {
         uint16_t c = fb[i];

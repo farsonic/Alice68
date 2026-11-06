@@ -33,4 +33,7 @@ void al_footer(void);
    panel shows the newest that fit. Returns 0 if the panel has no room. */
 int  al_panel(int which, const char *const *lines, unsigned n);
 unsigned al_panel_cols(int which);
+/* the header's animation, ms after it began (the kernel calls it about 20 times a second
+   while the splash is up); nothing when the header has no room for it */
+void al_anim(uint32_t ms, const struct al_status *s);
 #endif

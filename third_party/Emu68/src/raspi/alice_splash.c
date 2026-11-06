@@ -105,6 +105,189 @@ void al_setup(uint16_t *f, uint32_t pitch_bytes, uint32_t w, uint32_t h)
 
 void al_clear(void) { rect(0, 0, fw, fh, C_BG); }
 
+/* ---- the animation: a USB card and a network card going into a desktop computer ----
+   Drawn between the emblem and the header's text, in a scene of AN_LW x AN_LH units
+   scaled by ak (1 to AN_KMAX), into abuf first and then copied in one go (no flicker).
+   al_anim() draws the scene as it is ms milliseconds after the first call: the lid
+   lifts, the USB card goes in, the network card, the lid closes, the power LED comes
+   on. The cards' LEDs show the real state: green ready, amber waiting, red failed. */
+#define AN_LW   180
+#define AN_LH   88
+#define AN_KMAX 3
+#define AN_CAP  18                              /* the caption line under the scene */
+static uint16_t abuf[AN_LW * AN_KMAX * AN_LH * AN_KMAX];
+static uint32_t ax, ay, ak, acap;               /* where, how big (0: no room), caption or not */
+
+static void anim_place(uint32_t x0, uint32_t x1)
+{
+    uint32_t aw = x1 > x0 ? x1 - x0 : 0, ah = hdr_h > 14 ? hdr_h - 14 : 0, k;
+    ak = 0;
+    for (k = AN_KMAX; k >= 1; k--)
+        if (AN_LW * k <= aw && AN_LH * k <= ah) break;
+    if (k < 1) return;
+    acap = AN_LH * k + AN_CAP <= ah;
+    ak = k;
+    ax = x0 + (aw - AN_LW * k) / 2;
+    ay = 6 + (ah - AN_LH * k - (acap ? AN_CAP : 0)) / 2;
+}
+
+/* a filled rectangle in scene units, clipped to the scene */
+static void ar(int x, int y, int w, int h, uint16_t c)
+{
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (x + w > AN_LW) w = AN_LW - x;
+    if (y + h > AN_LH) h = AN_LH - y;
+    if (w <= 0 || h <= 0) return;
+    uint32_t bw = AN_LW * ak;
+    uint16_t v = PX(c);
+    for (uint32_t j = (uint32_t)y * ak; j < (uint32_t)(y + h) * ak; j++) {
+        uint16_t *p = abuf + j * bw;
+        for (uint32_t i = (uint32_t)x * ak; i < (uint32_t)(x + w) * ak; i++) p[i] = v;
+    }
+}
+
+/* t from 0 to 1000 between a and b ms, eased out (fast, then settling) */
+static int ease(uint32_t ms, uint32_t a, uint32_t b)
+{
+    if (ms <= a) return 0;
+    if (ms >= b) return 1000;
+    int u = (int)((ms - a) * 1000 / (b - a)), v = 1000 - u;
+    return 1000 - v * v / 1000;
+}
+
+#define C_BEIGE   RGB(206, 196, 168)
+#define C_BEIGE_D RGB(160, 150, 124)
+#define C_INSIDE  RGB(24, 26, 32)
+#define C_BOARD   RGB(30, 104, 58)
+#define C_TRACE   RGB(64, 146, 88)
+#define C_CHIP    RGB(16, 16, 18)
+#define C_GOLD    RGB(212, 172, 60)
+#define C_METAL   RGB(176, 180, 190)
+#define C_USBPCB  RGB(36, 78, 170)
+#define C_NETPCB  RGB(118, 58, 150)
+
+static uint16_t led(int state, uint32_t ms)
+{
+    if (state == 1) return (ms / 300) % 4 ? C_OK : RGB(40, 90, 50);     /* ready: lit, a flicker of traffic */
+    if (state == 2) return C_FAIL;
+    return (ms / 500) % 2 ? C_WAIT : RGB(90, 70, 20);                  /* waiting: blinking amber */
+}
+
+/* a card standing in a slot whose left edge is x, lowered by drop (0 = in) */
+static void card(int x, int drop, uint16_t pcb, int net, uint16_t ledc)
+{
+    int y = 47 - drop;
+    ar(x, y, 22, 20, pcb);                       /* the board */
+    ar(x + 1, y + 20, 20, 2, C_GOLD);            /* its edge connector */
+    ar(x + 3, y + 4, 7, 6, C_CHIP);              /* chips */
+    ar(x + 12, y + 5, 5, 4, C_CHIP);
+    ar(x + 3, y + 13, 12, 1, C_TRACE);
+    ar(x + 3, y + 15, 9, 1, C_TRACE);
+    ar(x + 22, y - 2, 3, 24, C_METAL);           /* the bracket at the back */
+    if (!net) {                                  /* USB: four sockets on the bracket */
+        for (int i = 0; i < 4; i++) ar(x + 22, y + 1 + i * 5, 3, 3, C_CREAM);
+    } else {                                     /* network: an RJ45 socket and the WiFi aerial */
+        ar(x + 21, y + 3, 4, 5, C_CHIP);
+        ar(x + 22, y + 4, 2, 2, C_GOLD);
+        ar(x + 23, y - 14, 1, 12, C_DIM);
+        ar(x + 22, y - 16, 3, 3, C_DIM);
+    }
+    ar(x + 2, y + 1, 3, 2, ledc);                /* its LED */
+}
+
+static int card_state_usb(const struct al_status *s)
+{
+    return s->usb_fail ? 2 : (s->stages & 1024u) ? 1 : 0;
+}
+
+static int card_state_net(const struct al_status *s)
+{
+    if (s->eth_col == 1 || s->wifi_col == 1) return 1;
+    int eth = s->eth && s->eth[0], wifi = s->wifi && s->wifi[0];
+    if ((eth && s->eth_col == 2) && (!wifi || s->wifi_col == 2)) return 2;
+    if (!eth && wifi && s->wifi_col == 2) return 2;
+    return 0;
+}
+
+void al_anim(uint32_t ms, const struct al_status *s)
+{
+    if (!fb || !ak) return;
+    /* the timeline */
+    int lid = ease(ms, 0, 700) - ease(ms, 3900, 4600);          /* 0 shut .. 1000 up */
+    int usb = 1000 - ease(ms, 700, 1900), net = 1000 - ease(ms, 2300, 3500);
+    int done = ms >= 4600;
+    int us = card_state_usb(s), ns = card_state_net(s);
+
+    ar(0, 0, AN_LW, AN_LH, C_BG);
+    /* the case: front panel on the left, the inside cut away to show the board */
+    ar(18, 40, 146, 44, C_BEIGE);
+    ar(18, 82, 146, 2, C_BEIGE_D);
+    ar(36, 44, 124, 36, C_INSIDE);
+    ar(22, 50, 12, 2, C_CHIP);                   /* the floppy drive's slot */
+    ar(22, 54, 4, 1, (done && (ms / 120) % 7 == 0) ? C_OK : C_BEIGE_D);   /* its light */
+    ar(22, 74, 3, 3, done ? C_OK : C_BEIGE_D);   /* power */
+    ar(160, 44, 4, 36, C_BEIGE_D);               /* the back, with its slot openings */
+    ar(161, 47, 2, 20, C_INSIDE);
+    ar(161, 52, 2, 20, C_INSIDE);
+    /* the motherboard */
+    ar(36, 72, 124, 6, C_BOARD);
+    for (int i = 0; i < 6; i++) ar(40 + i * 18, 76, 10, 1, C_TRACE);
+    ar(40, 66, 10, 6, C_CHIP);                   /* the CPU */
+    ar(41, 67, 8, 1, C_DIM);
+    ar(54, 68, 8, 4, C_CHIP);
+    ar(130, 68, 6, 4, C_CHIP);
+    ar(140, 68, 12, 4, C_CHIP);
+    ar(70, 69, 22, 3, C_CHIP);                   /* the two slots */
+    ar(104, 69, 22, 3, C_CHIP);
+    /* the cards: falling, then in */
+    card(70, (65 + 47) * usb / 1000, C_USBPCB, 0, (usb ? C_BEIGE_D : led(us, ms)));
+    card(104, (65 + 47) * net / 1000, C_NETPCB, 1, (net ? C_BEIGE_D : led(ns, ms)));
+    if (done && ns == 1 && (ms / 400) % 3) {     /* the aerial at work */
+        ar(130, 28, 1, 3, C_CYAN);
+        ar(132, 26, 1, 7, C_CYAN);
+    }
+    /* the lid: on the case, or lifted */
+    {
+        int up = 30 * lid / 1000;
+        ar(16, 36 - up, 150, 5, C_BEIGE);
+        ar(16, 41 - up, 150, 1, C_BEIGE_D);
+        if (lid == 0) ar(36, 42, 124, 2, C_BEIGE);
+    }
+    /* then the monitor comes down onto it; its screen lights up once both cards are ready */
+    if (ms >= 4600) {
+        int my = -40 + 41 * ease(ms, 4600, 5300) / 1000;
+        int lit = ms >= 5300 && us == 1 && ns == 1;
+        ar(60, my, 64, 32, C_BEIGE);                 /* the bezel */
+        ar(60, my + 30, 64, 2, C_BEIGE_D);
+        ar(86, my + 32, 12, 3, C_BEIGE_D);           /* its foot */
+        ar(64, my + 3, 56, 25, lit ? RGB(0, 84, 170) : RGB(14, 16, 22));
+        if (lit) {                                   /* a desktop: a title bar and two windows */
+            ar(64, my + 3, 56, 3, C_CREAM);
+            ar(70, my + 10, 22, 12, C_CREAM);
+            ar(71, my + 11, 20, 2, C_RUFOUS);
+            ar(96, my + 13, 18, 10, C_CREAM);
+            ar(97, my + 14, 16, 2, C_SLATE);
+        }
+        ar(114, my + 29, 3, 1, lit ? C_OK : C_DIM);  /* its power light */
+    }
+    /* to the screen in one go */
+    uint32_t bw = AN_LW * ak, bh = AN_LH * ak;
+    for (uint32_t j = 0; j < bh && ay + j < fh; j++) {
+        uint16_t *d = fb + (ay + j) * pitch + ax, *q = abuf + j * bw;
+        for (uint32_t i = 0; i < bw; i++) d[i] = q[i];
+    }
+    if (acap) {
+        const char *cap = ms < 700 ? "opening the case" : ms < 2300 ? "fitting the USB card" :
+                          ms < 3900 ? "fitting the network card" : ms < 4600 ? "closing the case" :
+                          (us == 1 && ns == 1) ? "USB and network ready" : us == 1 ? "USB ready, waiting for the network" :
+                          "starting";
+        uint32_t n = slen(cap), cy = ay + bh + 2;
+        rect(ax, cy, bw, 16, C_BG);
+        text(ax + (bw > n * 8 ? (bw - n * 8) / 2 : 0), cy, cap, C_DIM, n);
+    }
+}
+
 static void logo(uint32_t x0, uint32_t y0)
 {
     uint32_t x = 0, y = 0;
@@ -134,15 +317,17 @@ void al_header(const char *l1, const char *l2, const char *l3)
     }
     const char *l[3] = { l1, l2, l3 };
     const uint16_t c[3] = { C_CREAM, C_TEXT, C_DIM };
-    uint32_t y = (hdr_h > 66 ? (hdr_h - 60) / 2 : 4);
+    uint32_t y = (hdr_h > 66 ? (hdr_h - 60) / 2 : 4), text_x = fw;
     for (int i = 0; i < 3; i++) {
         if (!l[i]) continue;
         uint32_t n = slen(l[i]);
         uint32_t x = fw > n * 8 + 20 ? fw - n * 8 - 20 : 0;
         if (x < right_x) continue;                   /* no room beside the logo */
         text(x, y + (uint32_t)i * 20, l[i], c[i], n);
+        if (x < text_x) text_x = x;
     }
     rect(0, hdr_h - 2, fw, 1, C_RULE);
+    anim_place(right_x, text_x > 24 ? text_x - 24 : 0);
 }
 
 static uint32_t chip(uint32_t x, const char *label, const char *state, uint16_t col)

@@ -990,6 +990,37 @@ static void alice_sputc(void *d, char c)
     if (b->n < 47) b->p[b->n++] = c;
 }
 static volatile uint32_t alice_lock;
+static void alice_status_now(struct al_status *st)
+{
+    st->stages = __atomic_load_n(&post_flags, __ATOMIC_ACQUIRE);
+    st->keyboards = post_kb == ~0u ? -1 : (int)post_kb;
+    st->mice = post_ms == ~0u ? -1 : (int)post_ms;
+    st->usb_fail = frf_usb_failed;
+    st->hdf_boot = post_hdf_boot; st->hdf_other = post_hdf_other; st->hdf_left = post_hdf_left;
+    st->wifi = post_wifi; st->wifi_col = post_wifi_col;
+    st->eth = post_eth; st->eth_col = post_eth_col;
+}
+
+/* The header's animation (alice_splash.c al_anim): a frame at most every 50 ms, from
+   CPU1's loop (alice_net_poll), while the splash may be drawn. A frame is skipped rather
+   than waited for when another core is drawing. */
+void frf_splash_tick(void)
+{
+    static uint64_t t0, next;
+    uint64_t t, f;
+    __asm__ volatile("mrs %0, CNTVCT_EL0" : "=r"(t));
+    __asm__ volatile("mrs %0, CNTFRQ_EL0" : "=r"(f));
+    if (!f || (next && (int64_t)(t - next) < 0)) return;
+    next = t + f / 20;
+    if (!alice_live()) return;
+    if (!t0) t0 = t;
+    if (__atomic_exchange_n(&alice_lock, 1u, __ATOMIC_ACQUIRE)) return;
+    struct al_status st;
+    alice_status_now(&st);
+    al_anim((uint32_t)((t - t0) * 1000u / f), &st);
+    __asm__ volatile("dsb ishst" ::: "memory");
+    __atomic_store_n(&alice_lock, 0u, __ATOMIC_RELEASE);
+}
 static void alice_status(void)
 {
     if (!alice_live()) return;
@@ -999,13 +1030,7 @@ static void alice_status(void)
         __asm__ volatile("yield");
     }
     struct al_status st;
-    st.stages = __atomic_load_n(&post_flags, __ATOMIC_ACQUIRE);
-    st.keyboards = post_kb == ~0u ? -1 : (int)post_kb;
-    st.mice = post_ms == ~0u ? -1 : (int)post_ms;
-    st.usb_fail = frf_usb_failed;
-    st.hdf_boot = post_hdf_boot; st.hdf_other = post_hdf_other; st.hdf_left = post_hdf_left;
-    st.wifi = post_wifi; st.wifi_col = post_wifi_col;
-    st.eth = post_eth; st.eth_col = post_eth_col;
+    alice_status_now(&st);
     al_status_draw(&st);
     __asm__ volatile("dsb ishst" ::: "memory");
     __atomic_store_n(&alice_lock, 0u, __ATOMIC_RELEASE);
@@ -1031,6 +1056,7 @@ static void ulog_draw(void)
     __asm__ volatile("dsb ishst" ::: "memory");
 }
 #else
+void frf_splash_tick(void) {}               /* no splash, no animation */
 static void blog_draw(void)
 {
     if (!framebuffer || !pitch || fb_width < 400 || fb_height < 300) return;

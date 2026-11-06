@@ -32,6 +32,13 @@
   shows as dots unless Show is ticked), **Networks** (scan; a click takes a network's
   name) and **WiFi traffic**. Save, Apply, Close. It needs MUI 3.8 or later;
   `C:Alice68-NetworkGT` is the earlier GadTools window, for machines without MUI.
+- **The splash has an animation (new).** Between the emblem and the header's text, a
+  desktop computer is opened, a USB card and a network card go into its expansion slots,
+  the lid closes and a monitor comes down onto it. The cards' LEDs show the real state
+  (green ready, amber waiting, red failed), and the monitor lights up once both are ready.
+  Original drawing, made by the kernel's code (`al_anim` in `alice_splash.c`), about 20
+  frames a second from CPU1 while the splash is up; `tools/splash-preview/build.sh W H MS`
+  renders any moment of it on a PC.
 - **Commodore's OUI for the MAC addresses (new).** A tick box on the Ethernet and the
   WiFi pages makes the first three bytes of the unit's address Commodore International's,
   `00:80:10`; the last three stay the Pi's. It takes effect at once (the WiFi leaves the
