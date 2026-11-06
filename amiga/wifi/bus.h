@@ -27,7 +27,7 @@ struct sdhost {
     uint8_t  spec;          /* SDHCI spec version (0 = 1.0, 2 = 3.0) */
     uint8_t  slow;          /* identification clock: space register writes */
     uint8_t  swap;          /* data FIFO words need a byte swap (detected) */
-    uint8_t  noblock;       /* block-mode CMD53 failed once: byte mode only */
+    uint8_t  streak;        /* recent transfer errors (weighted): slow the clock down */
     uint32_t errors;
     uint32_t last_int;      /* interrupt status at the last error */
 };
@@ -40,6 +40,7 @@ int  sdh_cmd52(struct sdhost *h, int write, unsigned fn, uint32_t addr, uint8_t 
 /* len a multiple of 4; block mode for whole blocks, byte mode for the rest */
 int  sdh_cmd53(struct sdhost *h, int write, unsigned fn, uint32_t addr, void *buf, uint32_t len, int incr);
 int  sdh_set_blksz(struct sdhost *h, unsigned fn, uint16_t size);
+void sdh_abort(struct sdhost *h, unsigned fn);              /* CCCR I/O abort + line reset */
 void sdh_card_irq(struct sdhost *h, int enable);            /* card interrupt to the GIC on/off */
 int  sdh_card_irq_pending(struct sdhost *h);
 

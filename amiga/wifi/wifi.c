@@ -18,8 +18,8 @@
 
 #define DEVNAME     "alice68wifi.device"
 #define VERSION     1
-#define REVISION    1
-#define IDSTRING    "alice68wifi 1.1 (06.11.2026)\r\n"
+#define REVISION    2
+#define IDSTRING    "alice68wifi 1.2 (06.11.2026)\r\n"
 
 #define BUFSZ       2048            /* one frame buffer */
 #define CTLMAX      1600            /* largest control payload */
@@ -385,8 +385,7 @@ static void rx_payload(struct WifiBase *w, UBYTE *b, const UBYTE *p, unsigned le
 
 static void f2_abort(struct WifiBase *w)
 {
-    UBYTE v = 2;                                    /* CCCR I/O abort: function 2 */
-    sdh_cmd52(&w->h, 1, 0, 0x06, &v);
+    sdh_abort(&w->h, 2);                            /* CCCR I/O abort: function 2 */
 }
 
 /* as Linux brcmf_sdio_rxfail: abort, terminate the frame, ask for it again and

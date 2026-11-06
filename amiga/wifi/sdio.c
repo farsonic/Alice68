@@ -278,22 +278,16 @@ fail:
     return e;
 }
 
-int sdh_cmd53(struct sdhost *h, int write, unsigned fn, uint32_t addr, void *buf, uint32_t len, int incr)
+static int cmd53_once(struct sdhost *h, int write, unsigned fn, uint32_t addr, void *buf, uint32_t len, int incr)
 {
     uint32_t *p = buf, bs = h->blksz[fn];
     if (((uint32_t)(uintptr_t)buf & 3) || (len & 3)) return -0x30000;
-    if (bs && len >= bs && !h->noblock) {
+    if (bs && len >= bs) {
         uint32_t nblk = len / bs;
         while (nblk) {
             uint32_t n = nblk > 511 ? 511 : nblk;
             int e = xfer(h, write, fn, addr, p, bs, n, 1, incr);
-            if (e) {
-                /* block mode refused: from now on byte mode only (slower, but every
-                   command the card already took works that way) */
-                wifi_log("block transfers fail: using byte mode\n");
-                h->noblock = 1;
-                break;
-            }
+            if (e) return e;
             p += n * bs / 4;
             if (incr) addr += n * bs;
             nblk -= n;
@@ -311,6 +305,37 @@ int sdh_cmd53(struct sdhost *h, int write, unsigned fn, uint32_t addr, void *buf
         len -= n;
     }
     return 0;
+}
+
+/* CCCR I/O abort: the card leaves a transfer that went wrong (Linux brcmf_sdiod_abort) */
+void sdh_abort(struct sdhost *h, unsigned fn)
+{
+    uint8_t v = (uint8_t)fn;
+    sdh_cmd52(h, 1, 0, 0x06, &v);
+    reset_lines(h);
+}
+
+/* A failed transfer is aborted. Backplane transfers (F1: registers, RAM, the
+   firmware download) are idempotent and are retried; when they keep failing
+   the SD clock is halved, down to about 5 MHz. Frame transfers (F2) are not
+   retried - the caller recovers the frame stream - but their failures count
+   towards slowing down too. */
+int sdh_cmd53(struct sdhost *h, int write, unsigned fn, uint32_t addr, void *buf, uint32_t len, int incr)
+{
+    for (int attempt = 0; ; attempt++) {
+        int e = cmd53_once(h, write, fn, addr, buf, len, incr);
+        if (!e) { if (h->streak) h->streak--; return 0; }
+        if (e == -0x30000) return e;            /* alignment: the caller's bug, not the line */
+        sdh_abort(h, fn);
+        h->streak += 4;
+        if (h->streak >= 12 && h->sd_hz > 6000000) {
+            uint32_t to = h->sd_hz / 2;
+            wifi_log("SDIO errors: slowing down to %u Hz\n", to);
+            sdh_set_clock(h, to);
+            h->streak = 0;
+        }
+        if (fn != 1 || attempt >= 8) return e;
+    }
 }
 
 void sdh_card_irq(struct sdhost *h, int enable)
