@@ -385,6 +385,18 @@ static LONG dump(void)
     if (!board && !netb) { put("no Alice68 boards: not an Alice68 kernel\n"); return 10; }
     char l[200]; struct sb lb = { l, 0, sizeof l };
     wifi_line(&lb); put(l); put("\n");
+    if (netb) {                                         /* the kernel's Ethernet: how CPU1 serves the board */
+        static const char *const se[] = { "off", "starting", "no link", "", "", "up", "", "FAILED", "" };
+        volatile struct an_unit *e = (volatile struct an_unit *)(netb + AN_OFF_UNIT(1));
+        char t[97];
+        lb.n = 0; l[0] = 0;
+        ss(&lb, "Ethernet (kernel): "); ss(&lb, e->state < 9 ? se[e->state] : "?");
+        ss(&lb, ", rx "); sdec(&lb, e->rx_pkts); ss(&lb, " tx "); sdec(&lb, e->tx_pkts);
+        ss(&lb, " dropped "); sdec(&lb, e->rx_drop); ss(&lb, "\n  ");
+        for (int i = 0; i < 96; i++) t[i] = e->where[i];
+        t[96] = 0; ss(&lb, t);
+        put(l); put("\n");
+    }
     if (wst) { put("  where changed "); lb.n = 0; sdec(&lb, wst->where_seq); put(l); put(" times\n"); }
     put("\n===== the monitor's last task table (from before a reset, if there was one) =====\n");
     if (board->msnap_seq) {

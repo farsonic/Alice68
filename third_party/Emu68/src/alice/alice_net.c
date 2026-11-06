@@ -1679,10 +1679,37 @@ static void an_reset_session(void)
     }
     kprintf("[NET] new AmigaOS session (68k reset)\n");
 }
+/* How CPU1 serves the board, once a second into unit 1's "where" (Alice68-Monitor DUMP):
+   how often this runs, the longest gap between two runs, and the frames moved. A board of
+   16 slots per unit moves at most 16 frames a run, so the gap bounds the throughput. */
+static struct { uint32_t t0, last, runs, gap, rx0, tx0, waits0; } ls;
+static void loop_stats(void)
+{
+    uint32_t now = wifi_usecs();
+    if (ls.last && now - ls.last > ls.gap) ls.gap = now - ls.last;
+    ls.last = now;
+    ls.runs++;
+    if (!ls.t0) { ls.t0 = now; return; }
+    if (now - ls.t0 < 1000000u) return;
+    volatile struct an_unit *u = U(1);
+    uint32_t rx = u->rx_pkts, tx = u->tx_pkts;
+    char t[96];
+    unsigned n = 0;
+    #define PUTS(x) for (const char *q_ = (x); *q_ && n < sizeof t - 1; ) t[n++] = *q_++
+    #define PUTN(v) do { uint32_t v_ = (v); char d_[11]; int k_ = 0; do d_[k_++] = (char)('0' + v_ % 10); while ((v_ /= 10) && k_ < 10); while (k_ && n < sizeof t - 1) t[n++] = d_[--k_]; } while (0)
+    PUTS("CPU1 "); PUTN(ls.runs); PUTS(" runs/s, longest gap "); PUTN(ls.gap); PUTS(" us; rx ");
+    PUTN(rx - ls.rx0); PUTS("/s tx "); PUTN(tx - ls.tx0); PUTS("/s; held in GENET "); PUTN(E.rx_waits - ls.waits0);
+    #undef PUTS
+    #undef PUTN
+    for (unsigned i = 0; i < sizeof t; i++) u->where[i] = i < n ? t[i] : 0;
+    ls.t0 = now; ls.runs = 0; ls.gap = 0; ls.rx0 = rx; ls.tx0 = tx; ls.waits0 = E.rx_waits;
+}
+
 void alice_net_poll(void)
 {
     if (!anb) return;
     H()->boot_us = wifi_usecs();
+    loop_stats();
     if (an_reset_req) an_reset_session();
     eth_poll();                                     /* the Ethernet: a state machine, never waits */
     if (!wifi_running) { wifi_disabled = bootarg_word("wifi=off"); U(0)->kind = AN_KIND_WIFI; }
@@ -1707,6 +1734,7 @@ void alice_net_poll(void)
     in_wifi = 1;
     an_switch(&ctx_main, &ctx_wifi);
     in_wifi = 0;
+    if (E.up) { eth_rx(); eth_tx(); }               /* again after the WiFi's turn: a long one delays it less */
 }
 
 /* the no-USB kernel: CPU1 is the network's alone */
