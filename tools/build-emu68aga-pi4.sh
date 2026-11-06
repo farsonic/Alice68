@@ -22,7 +22,7 @@ cmake -S "$SRC" -B "$B" -G Ninja -DCMAKE_BUILD_TYPE=Release \
       -DEMU68_SKIP_FIRMWARE=ON -DAGA_PISTORM="$P" -DAGA_PI3=OFF \
       -DFRF_VIRTUAL_AGA=ON -DFRF_USB_HOST=$USB -DFRF_USB_NATIVE_DWC2=$USB -DFRF_USB_TINYUSB=$USB \
       -DFRF_TINYUSB_MSC_WRITE=ON -DFRF_USB_DIAG_HOLD=OFF -DFRF_USB_PASSIVE_TEST=OFF \
-      -DFRF_NET_Z2_BRIDGE=OFF -DFRF_RTG_HANDOFF=OFF -DFRF_WIFI_SD1_ENUM=OFF \
+      -DFRF_NET_Z2_BRIDGE=OFF -DFRF_RTG_HANDOFF=OFF -DFRF_WIFI_SD1_ENUM=OFF -DFRF_KBD_ACK_RECOVERY=ON \
       -DAGA_DIAG=OFF -DAGA_PROBES=OFF > "$OUT/cfg.log" 2>&1 || { tail -30 "$OUT/cfg.log"; exit 1; }
 ninja -C "$B" > "$OUT/build.log" 2>&1 || { grep -E "error|undefined|FAILED" "$OUT/build.log" | head -40; exit 1; }
 zcat "$B/Emu68.img.gz" > "$OUT/kernel8.img"

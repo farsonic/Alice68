@@ -436,16 +436,22 @@ int chip_load(struct chip *c, const uint8_t *fw, uint32_t fwlen, const uint8_t *
     return 0;
 }
 
-void chip_irq_ack(struct chip *c, uint32_t *intstatus, uint32_t *mailbox)
+/* 0 = read; a failed read (all ones) is never taken for status bits */
+int chip_irq_ack(struct chip *c, uint32_t *intstatus, uint32_t *mailbox)
 {
-    uint32_t s = chip_r32(c, c->sdio_base + SD_INTSTATUS) & (I_HMB_SW_MASK | I_CHIPACTIVE);
+    *intstatus = *mailbox = 0;
+    uint32_t raw = chip_r32(c, c->sdio_base + SD_INTSTATUS);
+    if (raw == 0xffffffffu) return -1;
+    uint32_t s = raw & (I_HMB_SW_MASK | I_CHIPACTIVE);
     if (s) chip_w32(c, c->sdio_base + SD_INTSTATUS, s);
-    *mailbox = 0;
     if (s & I_HMB_HOST_INT) {
-        *mailbox = chip_r32(c, c->sdio_base + SD_TOHOSTMAILBOXDATA);
+        uint32_t m = chip_r32(c, c->sdio_base + SD_TOHOSTMAILBOXDATA);
         chip_w32(c, c->sdio_base + SD_TOSBMAILBOX, SMB_INT_ACK);
+        if (m == 0xffffffffu) return -1;
+        *mailbox = m;
     }
     *intstatus = s;
+    return 0;
 }
 
 int chip_frame(struct chip *c, void *buf, uint32_t len, int write)

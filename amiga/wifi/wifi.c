@@ -18,8 +18,8 @@
 
 #define DEVNAME     "alice68wifi.device"
 #define VERSION     1
-#define REVISION    3
-#define IDSTRING    "alice68wifi 1.3 (06.11.2026)\r\n"
+#define REVISION    4
+#define IDSTRING    "alice68wifi 1.4 (06.11.2026)\r\n"
 
 #define BUFSZ       2048            /* one frame buffer */
 #define CTLMAX      1600            /* largest control payload */
@@ -44,6 +44,7 @@ struct WifiBase {
     volatile UBYTE quit, running, alive, rxskip;
     ULONG   sem[12];                /* struct SignalSemaphore (46 bytes): process start */
     UBYTE   fcstate, flowctl;
+    ULONG   ack_fail;
     ULONG   rxskip_t0;
     UBYTE   poll, irq_on, chip_up, pad1;
     struct Interrupt irq;
@@ -326,6 +327,9 @@ static void event(struct WifiBase *w, const struct fm_event *e)
     case E_PSK_SUP:
         if (e->status == E_STATUS_FWSUP_COMPLETED) w->ev_keyed = 1;
         else wifi_log("supplicant state %u, reason %u\n", e->status, e->reason);
+        break;
+    case E_AUTH: case E_ASSOC: case E_REASSOC:
+        wifi_log("%s: status %u, reason %u\n", e->type == E_AUTH ? "authentication" : "association", e->status, e->reason);
         break;
     case E_DEAUTH: case E_DEAUTH_IND: case E_DISASSOC: case E_DISASSOC_IND:
         wifi_log("disconnected by the network (event %u, reason %u)\n", e->type, e->reason);
@@ -945,6 +949,8 @@ static void conn_tick(struct WifiBase *w)
                     (!best || w->scan[i].rssi > best->rssi))
                     best = &w->scan[i];
             if (!best) wifi_log("\"%s\" not seen in the scan\n", w->ssid);
+            else wifi_log("\"%s\": %d dBm, channel %u, security %x, ciphers %u/%u\n", w->ssid, best->rssi, best->channel,
+                          best->security, best->group_cipher, best->pairwise);
             join(w, best);
         }
     }
@@ -1196,7 +1202,10 @@ static void service(struct WifiBase *w)
 {
     if (!w->chip_up) return;
     uint32_t is, mb, wk = w->c.wakes;
-    chip_irq_ack(&w->c, &is, &mb);
+    if (chip_irq_ack(&w->c, &is, &mb)) {
+        if (++w->ack_fail == 50) wifi_log("the chip's status cannot be read (SDIO errors %u)\n", w->h.errors);
+    } else
+        w->ack_fail = 0;
     if (!wk && w->c.wakes) wifi_log("the chip sleeps when idle (save/restore): waking it as needed\n");
     if (mb & HMB_DATA_NAKHANDLED) w->rxskip = 0;
     if (is & I_HMB_FC_CHANGE) w->fcstate = (is & I_HMB_FC_STATE) != 0;
@@ -1219,7 +1228,9 @@ static void wifi_proc(void)
     w->sig_port = 1u << sb_port; w->sig_irq = 1u << sb_irq; w->sig_kick = 1u << sb_kick;
     struct MsgPort *tp = CreateMsgPort();
     struct timerequest *tr = tp ? CreateIORequest(tp, sizeof *tr) : 0;
-    int timer_ok = tr && !OpenDevice("timer.device", 0, tr, 0);
+    /* UNIT_VBLANK: the tick costs no CIA timer (Alice68's virtual CIA-A also
+       carries the keyboard handshake) */
+    int timer_ok = tr && !OpenDevice("timer.device", 1, tr, 0);
     w->dos = OpenLibrary("dos.library", 37);
     w->rxbuf = AllocMem(4 * BUFSZ, MEMF_PUBLIC | MEMF_CLEAR);
     /* the unit's port starts taking requests now */
@@ -1255,7 +1266,7 @@ static void wifi_proc(void)
             int busy = now - w->traffic_ms < 300 || w->state == WS_JOINING || w->state == WS_SCANNING || w->scan_busy;
             tr->io.io_Command = TR_ADDREQUEST;
             tr->tv_secs = 0;
-            tr->tv_micro = w->poll ? (busy ? 2000 : 15000) : 50000;
+            tr->tv_micro = w->poll ? (busy ? 1000 : 20000) : 50000;    /* VBLANK: rounded up to a frame */
             SendIO(tr);
             timer_out = 1;
         }

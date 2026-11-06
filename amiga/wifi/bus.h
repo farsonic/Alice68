@@ -74,7 +74,7 @@ int      chip_ram(struct chip *c, uint32_t addr, uint8_t *buf, uint32_t len, int
 int  chip_attach(struct chip *c, struct sdhost *h);         /* identify, cores, RAM, halt the CPU */
 int  chip_wake(struct chip *c);                             /* out of save/restore sleep (KSO) */
 int  chip_load(struct chip *c, const uint8_t *fw, uint32_t fwlen, const uint8_t *nv, uint32_t nvlen);  /* download, start, F2 */
-void chip_irq_ack(struct chip *c, uint32_t *intstatus, uint32_t *mailbox);
+int  chip_irq_ack(struct chip *c, uint32_t *intstatus, uint32_t *mailbox);
 /* frames on F2 */
 int  chip_frame(struct chip *c, void *buf, uint32_t len, int write);
 
