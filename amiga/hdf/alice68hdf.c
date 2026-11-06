@@ -17,128 +17,26 @@
  * drive is not mounted. Other hardfile partitions whose names are taken get
  * HF<unit><part>. Also: hdf.readonly, hdf=off.
  *
- * Writes go to the file's own clusters on the card, nowhere else; the FAT
+ * Hardfile writes go to the file's own clusters on the card, nowhere else; the FAT
  * itself is never changed. Partitions whose filesystem is not FFS and not
  * already in FileSystem.resource are left out.
  * One task does the card I/O, in arrival order; the filesystems' buffers are
  * handed straight to brcm-emmc.device (no copy).
  *
+ * Folders of the FAT partition (config.txt alice68.folder=..., and ALICE68)
+ * are mounted as read-write volumes: folders.c, with the FAT engine fatfs.c.
+ * Through them the FAT is written; hardfiles that are mounted stay read-only.
+ *
  * Everything writable lives in the device base: the code runs from the ROM
  * board, which is mapped read-only.
  */
-#include "../amiga.h"
-#include "hdf_core.h"
 
 #define VERSION   0
-#define REVISION  4
+#define REVISION  5
 const char hdf_devname[] = "alice68hdf.device";
-const char hdf_idstring[] = "alice68hdf.device 0.4 (05.11.2026) Alice68 hardfiles";
+const char hdf_idstring[] = "alice68hdf.device 0.5 (07.11.2026) Alice68 hardfiles and folders";
 
-#define HDF_MAGIC  0x41363848u              /* 'A68H', read by Alice68-HDF */
-#define LOG_SIZE   4096
-#define TASK_STACK 8192
-#define MAX_CHUNK  256u                     /* sectors per card request */
-
-#define MEMF_PUBLIC 1
-#define MEMF_CLEAR  0x10000
-#define NT_TASK     1
-#define NT_REPLYMSG 7
-#define NT_MSGPORT  4
-#define PA_SIGNAL   0
-
-#define CMD_READ        2
-#define CMD_WRITE       3
-#define CMD_UPDATE      4
-#define CMD_CLEAR       5
-#define TD_MOTOR        9
-#define TD_FORMAT       11
-#define TD_REMOVE       12
-#define TD_CHANGENUM    13
-#define TD_CHANGESTATE  14
-#define TD_PROTSTATUS   15
-#define TD_GETDRIVETYPE 18
-#define TD_GETNUMTRACKS 19
-#define TD_ADDCHANGEINT 20
-#define TD_REMCHANGEINT 21
-#define TD_GETGEOMETRY  22
-#define TD_EJECT        23
-#define TD_READ64       24
-#define TD_WRITE64      25
-#define TD_FORMAT64     27
-#define NSCMD_TD_READ64   0xc000
-#define NSCMD_TD_WRITE64  0xc001
-#define NSCMD_TD_FORMAT64 0xc002
-#define TDERR_WriteProt   28
-#define TDERR_NotSpecified 20
-#define IOERR_BADLENGTH  (-4)
-#define IOERR_BADADDRESS (-5)
-#define DRIVE3_5         1
-
-struct IOStdReq { struct IORequest req; ULONG io_Actual, io_Length; APTR io_Data; ULONG io_Offset; };
-ACHECK(sizeof(struct IOStdReq) == 48);
-
-struct Task {
-    struct Node tc_Node; UBYTE tc_Flags, tc_State; BYTE tc_IDNestCnt, tc_TDNestCnt;
-    ULONG tc_SigAlloc, tc_SigWait, tc_SigRecvd, tc_SigExcept;
-    UWORD tc_TrapAlloc, tc_TrapAble; APTR tc_ExceptData, tc_ExceptCode, tc_TrapData, tc_TrapCode;
-    APTR tc_SPReg, tc_SPLower, tc_SPUpper; APTR tc_Switch, tc_Launch;
-    struct List tc_MemEntry; APTR tc_UserData;
-};
-ACHECK(AOFF(struct Task, tc_SPReg) == 54);
-ACHECK(AOFF(struct Task, tc_UserData) == 88);
-
-struct DriveGeometry { ULONG dg_SectorSize, dg_TotalSectors, dg_Cylinders, dg_CylSectors, dg_Heads, dg_TrackSectors, dg_BufMemType;
-                       UBYTE dg_DeviceType, dg_Flags; UWORD dg_Reserved; };
-struct NSDeviceQueryResult { ULONG DevQueryFormat, SizeAvailable; UWORD DeviceType, DeviceSubType; const UWORD *SupportedCommands; };
-
-/* dos/filehandler.h DeviceNode, resources/filesysres.h FileSysEntry */
-struct DeviceNode { ULONG dn_Next, dn_Type, dn_Task, dn_Lock, dn_Handler, dn_StackSize; LONG dn_Priority;
-                    ULONG dn_Startup, dn_SegList, dn_GlobalVec, dn_Name; };
-struct FileSysEntry { struct Node fse_Node; ULONG fse_DosType, fse_Version, fse_PatchFlags; ULONG fse_Type; /* ... */ };
-struct FileSysResource { struct Node fsr_Node; char *fsr_Creator; struct List fsr_FileSysEntries; };
-struct BootNode { struct Node bn_Node; UWORD bn_Flags; struct DeviceNode *bn_DeviceNode; };
-ACHECK(AOFF(struct FileSysEntry, fse_Type) == 26);
-ACHECK(AOFF(struct DeviceNode, dn_Name) == 40);
-#define EB_MOUNTLIST 74                     /* struct ExpansionBase: MountList */
-
-struct HUnit {
-    struct Unit u;
-    struct hdf_file f;                      /* Alice68-HDF reads up to here */
-    struct hdf_rdb rdb;
-    ULONG index;
-    ULONG chosen;                           /* hdf.boot names it */
-    ULONG single;                           /* no RDB: one partition from block 0 */
-};
-
-struct HdfBase {
-    struct Library lib;
-    UWORD pad;
-    ULONG magic;                            /* 36: HDF_MAGIC */
-    ULONG nunits;                           /* 40 */
-    struct HUnit *unit[HDF_MAX_FILES];      /* 44 */
-    ULONG log_wr;                           /* bytes ever written to log[] */
-    char log[LOG_SIZE];                     /* Alice68-HDF reads up to here */
-    const char *card_dev;                   /* brcm-emmc.device or brcm-sdhc.device */
-    ULONG cmd64;                            /* 0: below 4 GB only, else the 64-bit read command */
-    ULONG readonly;                         /* hdf.readonly, or the card's unit 0 is read-only */
-    struct hdf_opts opts;
-    struct MsgPort port;                    /* requests for the task */
-    struct Task task;
-    APTR stack;
-    ULONG reads, read_errors, writes, write_errors;
-    /* volumes mounted, by name, so that none is there twice */
-    struct { char vol[32], drive[32]; } vols[48];
-    ULONG nvols;
-    /* filesystems loaded from hardfiles' RDBs */
-    struct { ULONG dostype, version, patchflags, dn[9]; } lfs[8];
-    ULONG nlfs;
-};
-ACHECK(AOFF(struct HdfBase, magic) == 36);
-ACHECK(AOFF(struct HdfBase, unit) == 44);
-ACHECK(AOFF(struct HdfBase, log) == 112);
-
-/* the card, for hdf_core: one IORequest, used by one task at a time */
-struct card { struct HdfBase *db; struct IOStdReq *io; };
+#include "hdf_dev.h"
 
 void *memcpy(void *d, const void *s, unsigned long n) { UBYTE *a = d; const UBYTE *b = s; while (n--) *a++ = *b++; return d; }
 void *memset(void *d, int c, unsigned long n) { UBYTE *a = d; while (n--) *a++ = (UBYTE)c; return d; }
@@ -169,7 +67,7 @@ static void NewList(struct List *l)
 }
 
 /* ---- log ------------------------------------------------------------------ */
-static void log_line(void *ctx, const char *line)
+void log_line(void *ctx, const char *line)
 {
     struct HdfBase *db = ((struct card *)ctx)->db;
     const char *p = "[alice68hdf] ";
@@ -202,7 +100,7 @@ static int card_xfer(struct card *c, int write, uint32_t sector, uint32_t n, APT
     return e;
 }
 
-static int card_read(void *ctx, uint32_t sector, uint32_t count, void *buf)
+int card_read(void *ctx, uint32_t sector, uint32_t count, void *buf)
 {
     struct card *c = ctx;
     UBYTE *p = buf;
@@ -215,7 +113,7 @@ static int card_read(void *ctx, uint32_t sector, uint32_t count, void *buf)
     return 0;
 }
 
-static int card_write(void *ctx, uint32_t sector, uint32_t count, const void *buf)
+int card_write(void *ctx, uint32_t sector, uint32_t count, const void *buf)
 {
     struct card *c = ctx;
     const UBYTE *p = buf;
@@ -228,11 +126,10 @@ static int card_write(void *ctx, uint32_t sector, uint32_t count, const void *bu
     }
     return 0;
 }
-static void *core_alloc(void *ctx, uint32_t n) { (void)ctx; return AllocMem(n, MEMF_PUBLIC | MEMF_CLEAR); }
-static void core_free(void *ctx, void *p, uint32_t n) { (void)ctx; FreeMem(p, n); }
-#define HDF_IO(c) { (c), card_read, card_write, core_alloc, core_free, log_line }
+void *core_alloc(void *ctx, uint32_t n) { (void)ctx; return AllocMem(n, MEMF_PUBLIC | MEMF_CLEAR); }
+void core_free(void *ctx, void *p, uint32_t n) { (void)ctx; FreeMem(p, n); }
 
-static int card_open(struct HdfBase *db, struct card *c, struct MsgPort **port)
+int card_open(struct HdfBase *db, struct card *c, struct MsgPort **port)
 {
     *port = CreateMsgPort();
     if (!*port) return -1;
@@ -249,7 +146,7 @@ static int card_open(struct HdfBase *db, struct card *c, struct MsgPort **port)
     return -1;
 }
 
-static void card_close(struct card *c, struct MsgPort *port)
+void card_close(struct card *c, struct MsgPort *port)
 {
     CloseDevice(c->io);
     DeleteIORequest(c->io);
@@ -306,7 +203,7 @@ static struct List *mountlist(APTR eb)
 }
 
 /* the boot node of a drive with this name, if one is mounted already */
-static struct BootNode *find_drive(APTR eb, const char *name)
+struct BootNode *find_drive(APTR eb, const char *name)
 {
     struct List *ml = mountlist(eb);
     if (!ml) return 0;
@@ -354,7 +251,7 @@ static int fs_known(struct HdfBase *db, ULONG dostype)
     return fs_version(db, dostype) != 0;
 }
 
-static int str_ieq(const char *a, const char *b)
+int str_ieq(const char *a, const char *b)
 {
     for (; *a && *b; a++, b++) {
         char x = *a, y = *b;
@@ -365,12 +262,12 @@ static int str_ieq(const char *a, const char *b)
     return !*a && !*b;
 }
 
-static int find_vol(struct HdfBase *db, const char *vol)
+int find_vol(struct HdfBase *db, const char *vol)
 {
     for (ULONG i = 0; i < db->nvols; i++) if (str_ieq(db->vols[i].vol, vol)) return (int)i;
     return -1;
 }
-static void add_vol(struct HdfBase *db, const char *vol, const char *drive)
+void add_vol(struct HdfBase *db, const char *vol, const char *drive)
 {
     if (db->nvols >= sizeof db->vols / sizeof db->vols[0]) return;
     unsigned k;
@@ -814,10 +711,13 @@ APTR dev_init(struct HdfBase *db, APTR seglist)
     struct fat f;
     struct hdf_file *files = AllocMem(sizeof(struct hdf_file) * HDF_MAX_FILES, MEMF_PUBLIC | MEMF_CLEAR);
     char *cmdline = AllocMem(1024, MEMF_PUBLIC | MEMF_CLEAR);
-    int n = 0;
+    char *config = AllocMem(CONFIG_MAX, MEMF_PUBLIC | MEMF_CLEAR);
+    int n = 0, have_fat = 0;
     if (files && cmdline && fat_open(&f, &io) == 0) {
+        have_fat = 1;
         n = fat_find_hdfs(&f, files, HDF_MAX_FILES);
         if (fat_read_cmdline(&f, cmdline, 1024) < 0) cmdline[0] = 0;
+        if (config && fat_read_config(&f, config, CONFIG_MAX) < 0) config[0] = 0;
         offer_wifi(&f, &io);
         fat_close(&f);
     }
@@ -840,7 +740,7 @@ APTR dev_init(struct HdfBase *db, APTR seglist)
     for (int i = 0; i < n; i++) any_chosen |= matches_boot(&db->opts, files[i].name);
     if (db->opts.boot[0] && !any_chosen && !db->opts.off) hdf_log(&io, "hdf.boot=%s: no hardfile of that name", db->opts.boot);
 
-    if (n) sd_volumes(db, &io);
+    sd_volumes(db, &io);
     APTR eb = OpenLibrary("expansion.library", 36);
     struct ConfigDev *cd = eb ? FindConfigDev(eb, 0, 0x6d73, 2) : 0;       /* Emu68's ROM board */
     /* the chosen hardfile first, so that it gets its names before the others ask */
@@ -880,6 +780,9 @@ APTR dev_init(struct HdfBase *db, APTR seglist)
             }
         }
     }
+    /* folders of the FAT partition as volumes (folders.c) */
+    if (have_fat && eb) folders_mount(db, &io, eb, cd, config ? config : "");
+    if (config) FreeMem(config, CONFIG_MAX);
     if (eb) CloseLibrary(eb);
     if (files) FreeMem(files, sizeof(struct hdf_file) * HDF_MAX_FILES);
     card_close(&c, rp);

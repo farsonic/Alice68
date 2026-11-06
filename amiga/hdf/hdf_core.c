@@ -304,13 +304,17 @@ static void scan_dir(struct fat *f, struct scan *sc, uint32_t dir_clus, int top)
                        file, never a hardfile. Their 8.3 names start with '_' and lose the dot,
                        so the long name tells */
                     if (ln[0] != '.') take(f, sc, e, ln);
-                } else if (top && !f->cmd_clus) {
-                    static const char cmd[11] = { 'C', 'M', 'D', 'L', 'I', 'N', 'E', ' ', 'T', 'X', 'T' };
-                    int k = 0;
-                    while (k < 11 && (e[k] == cmd[k] || (e[k] >= 'a' && e[k] <= 'z' && e[k] - 32 == cmd[k]))) k++;
-                    if (k == 11) {
-                        f->cmd_clus = le16(e + 26) | (f->fat32 ? le16(e + 20) << 16 : 0);
-                        f->cmd_size = le32(e + 28);
+                } else if (top) {                             /* cmdline.txt and config.txt */
+                    static const char names[2][11] = { { 'C', 'M', 'D', 'L', 'I', 'N', 'E', ' ', 'T', 'X', 'T' },
+                                                       { 'C', 'O', 'N', 'F', 'I', 'G', ' ', ' ', 'T', 'X', 'T' } };
+                    for (int w = 0; w < 2; w++) {
+                        int k = 0;
+                        while (k < 11 && (e[k] == names[w][k] || (e[k] >= 'a' && e[k] <= 'z' && e[k] - 32 == names[w][k]))) k++;
+                        uint32_t *clus = w ? &f->cfg_clus : &f->cmd_clus, *size = w ? &f->cfg_size : &f->cmd_size;
+                        if (k == 11 && !*clus) {
+                            *clus = le16(e + 26) | (f->fat32 ? le16(e + 20) << 16 : 0);
+                            *size = le32(e + 28);
+                        }
                     }
                 }
             }
@@ -335,12 +339,12 @@ int fat_find_hdfs(struct fat *f, struct hdf_file *files, int max)
     return sc.n;
 }
 
-int fat_read_cmdline(struct fat *f, char *buf, uint32_t max)
+static int read_small(struct fat *f, uint32_t clus, uint32_t size, char *buf, uint32_t max)
 {
     if (!max) return -1;
     buf[0] = 0;
-    if (!f->cmd_clus || f->cmd_clus < 2) return -1;
-    uint32_t n = f->cmd_size < max - 1 ? f->cmd_size : max - 1, got = 0, c = f->cmd_clus, guard = 64;
+    if (!clus || clus < 2) return -1;
+    uint32_t n = size < max - 1 ? size : max - 1, got = 0, c = clus, guard = 256;
     while (got < n && c && guard--) {
         for (uint32_t i = 0; i < f->spc && got < n; i++) {
             if (f->io->read(f->io->ctx, clus_sec(f, c) + i, 1, f->sec)) { buf[got] = 0; return -1; }
@@ -353,6 +357,8 @@ int fat_read_cmdline(struct fat *f, char *buf, uint32_t max)
     buf[got] = 0;
     return (int)got;
 }
+int fat_read_cmdline(struct fat *f, char *buf, uint32_t max) { return read_small(f, f->cmd_clus, f->cmd_size, buf, max); }
+int fat_read_config(struct fat *f, char *buf, uint32_t max) { return read_small(f, f->cfg_clus, f->cfg_size, buf, max); }
 
 static int is_space(char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }
 static int tok_eq(const char *t, unsigned n, const char *w)

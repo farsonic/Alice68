@@ -66,6 +66,7 @@ lvo(SYSBASE, -198, lambda o, p: setd0(alloc(d(R.D0))))
 lvo(SYSBASE, -210, lambda o, p: None)
 lvo(SYSBASE, -132, lambda o, p: None)
 lvo(SYSBASE, -138, lambda o, p: None)
+for off_ in (-558, -564, -570): lvo(SYSBASE, off_, lambda o, p: None)    # semaphores (folders)
 
 # ---- exec lists and ports --------------------------------------------------
 def newlist(l):

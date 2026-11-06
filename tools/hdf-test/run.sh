@@ -20,3 +20,8 @@ run card32_extra nofsres
 run card32_boot nofsres
 # the folders' FAT engine, checked with fsck.fat and mtools
 sh "$P/tools/hdf-test/fatfs.sh"
+# the folders as volumes: alice68hdf.device's DOS handler on the 68k emulator
+for o in '' cardro; do
+    printf '%-12s driver %-14s ' folders "${o:-default}"
+    python3 "$P/amiga/test/harness_folders.py" "$P/amiga/out/alice68hdf.device" "$P/amiga/out/alice68hdf.device.elf" "$T" $o | tail -1
+done

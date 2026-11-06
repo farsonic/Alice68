@@ -102,6 +102,8 @@ int  hdf_write(struct hdf_io *io, const struct hdf_file *h, uint32_t blk, uint32
 /* cmdline.txt from the root directory (after fat_find_hdfs), NUL-terminated;
    returns its length, or -1 if there is none */
 int  fat_read_cmdline(struct fat *f, char *buf, uint32_t max);
+/* config.txt, the same way */
+int  fat_read_config(struct fat *f, char *buf, uint32_t max);
 void hdf_parse_opts(const char *cmdline, struct hdf_opts *o);
 /* a file name as given in cmdline.txt: no case, and '_' stands for ' ' */
 int  hdf_name_match(const char *file, const char *want);
