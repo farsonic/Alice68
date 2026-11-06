@@ -31,6 +31,8 @@ def cstr(s): a = alloc(len(s) + 1); mem.w_block(a, s.encode() + b'\0'); return a
 libs = {'dos.library': DOS, 'intuition.library': INT, 'gadtools.library': GT, 'graphics.library': GFX, 'expansion.library': EXP}
 lvo(SYS, -552, lambda o, p: setd0(libs.get(mem.r_cstr(d(R.A1)), 0)))
 lvo(SYS, -414, lambda o, p: None)
+ME = alloc(232); mem.w32(ME + 172, 0x1234)             # a Shell process: pr_CLI set
+lvo(SYS, -294, lambda o, p: setd0(ME))
 lvo(EXP, -72, lambda o, p: setd0(0))                    # no board: status lines say so
 # exec: ports, requests, signals
 def newport(o, p): a = alloc(34); mem.w8(a + 15, 20); setd0(a)

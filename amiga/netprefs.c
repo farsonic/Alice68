@@ -22,7 +22,7 @@ ULONG lvo_y(APTR base, LONG off, ULONG d0, ULONG d1, ULONG d2, ULONG d3, ULONG a
 
 static APTR dos, intui, gt, gfx;
 static ULONG out;
-static void put(const char *s) { LONG n = 0; while (s[n]) n++; Write(dos, out, s, n); }
+static void put(const char *s) { LONG n = 0; while (s[n]) n++; if (out) Write(dos, out, s, n); }   /* none from Workbench */
 
 /* intuition, gadtools, exec */
 static APTR OpenWindowTagList(const struct TagItem *t)  { return (APTR)LY(intui, -606, 0, 0, 0, 0, 0, t, 0, 0); }
@@ -237,8 +237,15 @@ static void box_labels(UBYTE *w, int x0, int y0)
 LONG netprefs_main(const char *args, ULONG arglen)
 {
     (void)args; (void)arglen;
+    /* started from Workbench: its message first, answered at the very end */
+    UBYTE *me = FindTask(0);
+    APTR wbmsg = 0;
+    if (!*(ULONG *)(me + 172)) {                    /* pr_CLI */
+        lvo(SYSBASE, -384, 0, 0, (ULONG)(me + 92), 0);   /* WaitPort(pr_MsgPort) */
+        wbmsg = GetMsg(me + 92);
+    }
     dos = OpenLibrary("dos.library", 37);
-    if (!dos) return 20;
+    if (!dos) { if (wbmsg) { Forbid(); ReplyMsg(wbmsg); } return 20; }
     out = Output(dos);
     intui = OpenLibrary("intuition.library", 37);
     gt = OpenLibrary("gadtools.library", 37);
@@ -345,12 +352,14 @@ LONG netprefs_main(const char *args, ULONG arglen)
                     if (c[0] && c[1]) { jn.wj_Country[0] = (char)(c[0] & ~0x20); jn.wj_Country[1] = (char)(c[1] & ~0x20); }
                     note[0] = 0;
                     if (!jn.wj_Ssid[0]) ss(&b, "no network name");
+                    else if (busy_w) ss(&b, "busy - try again in a moment");
                     else {
                         pj = jn;
                         send(io_w, WIFI_CMD_JOIN, &jn, sizeof jn, &busy_w);
                         ss(&b, prefs_save() ? "joining; saved in ENVARC:alice68wifi.prefs" : "joining; the prefs could not be saved");
                     }
-                } else if (id == G_DISC && open_w) { send(io_w, WIFI_CMD_DISCONNECT, 0, 0, &busy_w); note[0] = 0; ss(&b, "disconnecting"); }
+                } else if ((id == G_DISC || id == G_WON || id == G_WOFF) && busy_w) { note[0] = 0; ss(&b, "busy - try again in a moment"); }
+                else if (id == G_DISC && open_w) { send(io_w, WIFI_CMD_DISCONNECT, 0, 0, &busy_w); note[0] = 0; ss(&b, "disconnecting"); }
                 else if (id == G_WON && open_w) { send(io_w, WIFI_CMD_START, 0, 0, &busy_w); note[0] = 0; ss(&b, "starting the WiFi"); }
                 else if (id == G_WOFF && open_w) { send(io_w, WIFI_CMD_OFF, 0, 0, &busy_w); note[0] = 0; ss(&b, "switching the WiFi off"); }
                 else if (id == G_EON && open_e) send(io_e, WIFI_CMD_START, 0, 0, &busy_e);
@@ -381,5 +390,6 @@ end:
     if (gt) CloseLibrary(gt);
     if (intui) CloseLibrary(intui);
     CloseLibrary(dos);
+    if (wbmsg) { Forbid(); ReplyMsg(wbmsg); }        /* Workbench unloads us after this */
     return rc;
 }

@@ -49,6 +49,17 @@ extern void frf_post_wifi(const char *text, int col);
 
 static int mcmp(const void *a, const void *b, unsigned n) { const uint8_t *x = a, *y = b; while (n--) if (*x++ != *y++) return 1; return 0; }
 
+/* copy between normal (uncached) memories, 8 bytes at a time: unaligned
+   accesses are allowed there, unlike device memory */
+typedef uint64_t u64u __attribute__((aligned(1), may_alias));
+static void ncopy(volatile void *dst, const volatile void *src, uint32_t n)
+{
+    uint8_t *d = (uint8_t *)(uintptr_t)dst; const uint8_t *s = (const uint8_t *)(uintptr_t)src;
+    while (n >= 8) { *(u64u *)d = *(const u64u *)s; d += 8; s += 8; n -= 8; }
+    while (n--) *d++ = *s++;
+    __asm__ volatile("" ::: "memory");
+}
+
 /* ---- time ---------------------------------------------------------------- */
 static inline uint64_t ticks(void) { uint64_t v; __asm__ volatile("mrs %0, CNTVCT_EL0" : "=r"(v)); return v; }
 static inline uint64_t tick_hz(void) { uint64_t v; __asm__ volatile("mrs %0, CNTFRQ_EL0" : "=r"(v)); return v; }
@@ -554,8 +565,7 @@ static void rx_payload(const uint8_t *p, unsigned len)
     if (dl < 14 || dl > AN_SLOT_BYTES - 8) { u->rx_drop++; return; }
     if (!u->rx_on || u->rx_head - u->rx_tail >= AN_RX_SLOTS) { u->rx_drop++; return; }
     volatile struct an_slot *s = (volatile struct an_slot *)(anb + AN_OFF_RX(0) + (u->rx_head % AN_RX_SLOTS) * AN_SLOT_BYTES);
-    volatile uint8_t *q = s->data;
-    for (unsigned i = 0; i < dl; i++) q[i] = d[i];
+    ncopy(s->data, d, dl);
     s->len = dl;
     s->flags = (d[0] & 1) ? (d[0] == 0xff && d[1] == 0xff ? AN_SF_BCAST : AN_SF_MCAST) : 0;
     __asm__ volatile("dmb ish" ::: "memory");
@@ -1329,8 +1339,8 @@ static int eth_find(void)
     of_property_t *m = dt_find_property(g, "local-mac-address");
     if (m && m->op_length >= 6) memcpy(E.mac, m->op_value, 6);
     if (!(E.mac[0] | E.mac[1] | E.mac[2] | E.mac[3] | E.mac[4] | E.mac[5])) {
-        /* GET_BOARD_MAC_ADDRESS: the six bytes come back in the two value words */
-        if (!mbox_tag(0x00010003u, 0, 0, 0)) memcpy(E.mac, (uint8_t *)mbuf + 20, 6);
+        eth_log("no local-mac-address in the device tree (start4.elf fills it in): no MAC address\n");
+        return -1;
     }
     /* the kernel drives it now: a driver in AmigaOS that reads the device tree leaves it alone */
     static char disabled[] = "disabled";
@@ -1374,7 +1384,7 @@ static void eth_start(void)
     gwr(G_CMD, 0);
     gwr(G_MIB_CTRL, 7); gwr(G_MIB_CTRL, 0);
     gwr(G_MAX_FRAME, 1536);
-    gwr(G_RBUF_CTRL, grd(G_RBUF_CTRL) | 2);             /* 2-byte alignment pad before each frame */
+    gwr(G_RBUF_CTRL, (grd(G_RBUF_CTRL) & ~1u) | 2);     /* 2-byte pad before each frame, no 64-byte status block */
     gwr(G_RBUF_TBUF_SZ, 1);
     gwr(G_MAC0, (uint32_t)E.mac[0] << 24 | (uint32_t)E.mac[1] << 16 | (uint32_t)E.mac[2] << 8 | E.mac[3]);
     gwr(G_MAC1, (uint32_t)E.mac[4] << 8 | E.mac[5]);
@@ -1388,6 +1398,7 @@ static void eth_start(void)
     gwr(G_RR + 0x1c, NRX * 12 / 4 - 1);
     E.cidx = grd(G_RR + 0x08) & 0xffff;                 /* the producer index cannot be set: follow it */
     gwr(G_RR + 0x0c, E.cidx);
+    gwr(G_RR + 0x00, (E.cidx & 0xff) * 3); gwr(G_RR + 0x2c, (E.cidx & 0xff) * 3);   /* pointers (words) where the index is */
     gwr(G_RR + 0x10, (uint32_t)NRX << 16 | GBUF);
     gwr(G_RR + 0x28, (5u << 16) | (NRX >> 4));
     gwr(G_RDMA + 0x00, 1u << 16);
@@ -1403,6 +1414,7 @@ static void eth_start(void)
     gwr(G_TR + 0x1c, 256 * 12 / 4 - 1);
     E.tprod = grd(G_TR + 0x08) & 0xffff;
     gwr(G_TR + 0x0c, E.tprod);
+    gwr(G_TR + 0x00, (E.tprod & 0xff) * 3); gwr(G_TR + 0x2c, (E.tprod & 0xff) * 3);
     gwr(G_TR + 0x24, 1); gwr(G_TR + 0x28, 0);
     gwr(G_TR + 0x10, 256u << 16 | GBUF);
     gwr(G_TDMA + 0x00, 1u << 16);
@@ -1423,22 +1435,13 @@ static void eth_start(void)
     E.state = E_PHYRESET;
     E.up = 0;
 }
-/* rgmii-rxid, as Linux's bcm54xx_config_clock_delay: the PHY delays RXC, not GTXCLK */
-static void phy_delays(void)
-{
-    phy_wr(0x18, (7u << 12) | 7);                         /* AUXCTL: select MISC for reading */
-    int misc = phy_rd(0x18);
-    if (misc >= 0) phy_wr(0x18, (uint16_t)(((uint32_t)misc | 0x0100u | 0x8000u | 7u) & 0xffffu));   /* RGMII RXC skew on, write enable */
-    phy_wr(0x1c, 3u << 10);                               /* shadow 3: clock alignment */
-    int clk = phy_rd(0x1c);
-    if (clk >= 0) phy_wr(0x1c, (uint16_t)(0x8000u | (3u << 10) | ((uint32_t)clk & 0x3ffu & ~0x200u)));   /* GTXCLK delay off */
-}
 static void eth_link(int bmsr)
 {
     volatile struct an_unit *u = U(1);
     int link = (bmsr & 4) != 0;
     if (link && !E.up) {
         int c1000 = phy_rd(9), s1000 = phy_rd(10), adv = phy_rd(4), lpa = phy_rd(5);
+        if (c1000 < 0 || s1000 < 0 || adv < 0 || lpa < 0) return;   /* an MDIO error: the next poll tries again */
         int com = adv & lpa;
         if ((c1000 & 0x200) && (s1000 & 0x800)) { E.speed = 1000; E.full = 1; }
         else if ((c1000 & 0x100) && (s1000 & 0x400)) { E.speed = 1000; E.full = 0; }
@@ -1447,7 +1450,8 @@ static void eth_link(int bmsr)
         else if (com & 0x040) { E.speed = 10; E.full = 1; }
         else { E.speed = 10; E.full = 0; }
         gwr(G_RGMII_OOB, (grd(G_RGMII_OOB) & ~(1u << 5)) | (1u << 4) | (1u << 6) | (1u << 16));
-        E.cmd_base = (uint32_t)(E.speed == 1000 ? 2 : E.speed == 100 ? 1 : 0) << 2 | (E.full ? 0 : CMD_HD_EN);
+        E.cmd_base = (uint32_t)(E.speed == 1000 ? 2 : E.speed == 100 ? 1 : 0) << 2 | (E.full ? 0 : CMD_HD_EN)
+                   | (1u << 8) | (1u << 28);           /* RX and TX pause ignored: pause is not advertised */
         gwr(G_CMD, E.cmd_base | (E.promisc ? CMD_PROMISC : 0) | CMD_TX_EN | CMD_RX_EN);
         E.up = 1;
         u->link = 1; u->speed_mbps = (unsigned)E.speed;
@@ -1469,6 +1473,7 @@ static void eth_rx(void)
 {
     volatile struct an_unit *u = U(1);
     uint32_t prod = grd(G_RR + 0x08) & 0xffff, n = 0;
+    __asm__ volatile("dmb oshld" ::: "memory");          /* the frames after the index that says they are there */
     while (E.cidx != prod && n < 64) {
         uint32_t d = E.cidx & 0xff, ls = grd(G_RXD + d * 12);
         uint32_t len = (ls >> 16) & 0xfff, st = ls & 0xffff;
@@ -1478,7 +1483,7 @@ static void eth_rx(void)
         else {
             len -= 2;
             volatile struct an_slot *s = (volatile struct an_slot *)(anb + AN_OFF_RX(1) + (u->rx_head % AN_RX_SLOTS) * AN_SLOT_BYTES);
-            for (uint32_t i = 0; i < len; i++) s->data[i] = f[i];
+            ncopy(s->data, f, len);
             s->len = len;
             s->flags = (f[0] & 1) ? (f[0] == 0xff && f[1] == 0xff ? AN_SF_BCAST : AN_SF_MCAST) : 0;
             __asm__ volatile("dmb ish" ::: "memory");
@@ -1489,7 +1494,7 @@ static void eth_rx(void)
         E.cidx = (E.cidx + 1) & 0xffff;
         n++;
     }
-    if (n) gwr(G_RR + 0x0c, E.cidx);
+    if (n) { __asm__ volatile("dmb osh" ::: "memory"); gwr(G_RR + 0x0c, E.cidx); }
 }
 static void eth_tx(void)
 {
@@ -1505,7 +1510,7 @@ static void eth_tx(void)
         else {
             uint32_t b = E.tprod % NTXB, d = E.tprod & 0xff;
             uint8_t *q = E.txb + b * GBUF;
-            for (uint32_t i = 0; i < len; i++) q[i] = s->data[i];
+            ncopy(q, s->data, len);
             for (; len < 60; len++) q[len] = 0;         /* the shortest Ethernet frame */
             uint64_t a = E.txp + (uint64_t)b * GBUF;
             gwr(G_TXD + d * 12 + 4, (uint32_t)a);
@@ -1576,7 +1581,7 @@ static void eth_poll(void)
     case E_PHYRESET: {
         int bmcr = phy_rd(0);
         if ((bmcr >= 0 && !(bmcr & 0x8000)) || now - E.t0 > 500) {
-            phy_delays();
+            /* the RGMII clock delays: the PHY's own defaults, as Linux and U-Boot leave them on a Pi 4 */
             phy_wr(4, 0x01e1);                            /* advertise 10/100 half and full */
             phy_wr(9, 0x0300);                            /* and 1000 half and full */
             phy_wr(0, 0x1200);                            /* autonegotiation on, restart */

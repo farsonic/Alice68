@@ -322,7 +322,7 @@ static LONG do_attach(struct NUnit *n, struct IOStdReq *io)
     k->ndc_Mtu = 1500;
     for (int i = 0; i < 6; i++) k->ndc_Mac[i] = U(n)->mac[i];
     k->ndc_TxMaxSegs = MAXSEGS;
-    k->ndc_Features = NDCF_LINK_EVENTS | NDCF_MCAST_FILTER;
+    k->ndc_Features = NDCF_LINK_EVENTS;              /* multicast: all of it (no exact filter) */
     k->ndc_TxRingSlots = TXRING;
     k->ndc_TxInFlightMax = TXRING;
     k->ndc_RxPoolBufs = c;
@@ -373,9 +373,10 @@ static int command(struct NUnit *n, struct IOStdReq *io)
     switch (io->io.io_Command) {
     case NETDEV_CMD_ATTACH:
         if (n->attach_io) { err = NDERR_BUSY; break; }
-        if (!mac_known(n)) {                        /* the chip is still starting, or (Ethernet) off */
-            if (n->idx == 1 && (U(n)->state == AN_ST_OFF || U(n)->state == AN_ST_FAILED)) q_add(n, AN_CMD_START, 0, 0, 0);
-            n->attach_io = io; n->attach_t0 = n->nb->ticks; return 1;
+        /* the Ethernet starts when a stack takes it (also after "Ethernet off", or a start that failed) */
+        if (n->idx == 1 && (U(n)->state == AN_ST_OFF || U(n)->state == AN_ST_FAILED)) q_add(n, AN_CMD_START, 0, 0, 0);
+        if (!mac_known(n) || (n->idx == 1 && U(n)->state != AN_ST_IDLE && U(n)->state != AN_ST_CONNECTED)) {
+            n->attach_io = io; n->attach_t0 = n->nb->ticks; return 1;   /* still starting */
         }
         err = do_attach(n, io);
         break;
@@ -519,7 +520,8 @@ static void net_proc(void)
         for (int i = 0; i < AN_UNITS; i++) {
             struct NUnit *nu = &n->u[i];
             if (nu->attach_io) {
-                if (mac_known(nu)) { io = nu->attach_io; nu->attach_io = 0; io->io.io_Error = (BYTE)do_attach(nu, io); ReplyMsg(io); }
+                int ready = mac_known(nu) && (nu->idx == 0 || U(nu)->state == AN_ST_IDLE || U(nu)->state == AN_ST_CONNECTED);
+                if (ready) { io = nu->attach_io; nu->attach_io = 0; io->io.io_Error = (BYTE)do_attach(nu, io); ReplyMsg(io); }
                 else if (n->ticks - nu->attach_t0 > 30u * 50) { io = nu->attach_io; nu->attach_io = 0; io->io.io_Error = IOERR_OPENFAIL; ReplyMsg(io); }
             }
             q_run(nu);
@@ -649,13 +651,23 @@ void dev_beginio(struct NetBase *n, struct IOStdReq *io)
 ULONG dev_abortio(struct NetBase *n, struct IOStdReq *io)
 {
     Forbid();
+    int done = 0;
     for (struct Node *x = n->port.mp_MsgList.lh_Head; x->ln_Succ; x = x->ln_Succ)
         if (x == (struct Node *)io) {
             Remove(x);
             io->io.io_Error = IOERR_ABORTED;
             ReplyMsg(io);
+            done = 1;
             break;
         }
+    /* already taken by the process: in a unit's command queue, or an attach waiting.
+       The kernel's command itself goes on; only the request is answered. */
+    for (int u = 0; u < AN_UNITS && !done; u++) {
+        struct NUnit *nu = &n->u[u];
+        for (UWORD i = nu->qhead; i != nu->qtail && !done; i++)
+            if (nu->q[i % NQ].io == io) { nu->q[i % NQ].io = 0; io->io.io_Error = IOERR_ABORTED; ReplyMsg(io); done = 1; }
+        if (!done && nu->attach_io == io) { nu->attach_io = 0; io->io.io_Error = IOERR_ABORTED; ReplyMsg(io); done = 1; }
+    }
     Permit();
     return 0;
 }
