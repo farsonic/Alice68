@@ -26,6 +26,9 @@ Alice68's history starts with three commits that keep the inputs apart:
      OpenBSD bwfm (ISC) as references; no code from other Amiga or RISC OS WiFi drivers
      was used.
      `netdev.h` is lwip-amiga's (BSD-3-Clause), copied unchanged;
+   - `Alice68-Network` (`amiga/netgui/`), built on the MUI layer of Riptide's RiptidePrefs
+     (GPL-2.0-only, https://github.com/farsonic/riptide at `4e5f73c`), copied into
+     `amiga/netgui/rt/` with the changes listed in its README;
    - the licensing documents.
 
 Later Emu68 changes are taken on the `upstream` branch and merged into `next`:

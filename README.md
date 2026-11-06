@@ -259,10 +259,21 @@ that reports sent frames as promptly as this one) can use it; Roadshow, AmiTCP a
 only) cannot. The WiFi chip's own firmware does the WPA2 handshake (and WPA3 where the
 firmware supports it).
 
-**`Alice68-Network`** (in `C:`, or drag it to `SYS:Prefs`) is the settings window: the state
-of both units, a Scan button and the list of networks in range (click one to take its
-name), the network name, password and country, **Join and save** (it joins and saves
-`ENVARC:alice68wifi.prefs`), Disconnect, WiFi on/off, and Ethernet on/off.
+**`Alice68-Network`** (in `C:`, or drag it to `SYS:Prefs`) is the settings window, in MUI
+(3.8 or later) and in the look of Riptide's preferences: a **Status** page, then the
+**Ethernet** pages (the link: rate, duplex, auto negotiation, what each side advertises,
+flow control, link downs; the MAC address; on/off; and a **traffic** page with rates,
+bytes, packets, drops and errors and a graph of the last minute) and the **WiFi** pages
+(the connection; network name, password - dots unless Show is ticked - and country,
+**Join and save**, Disconnect, on/off; **Networks**: Scan, and a click takes a network's
+name; traffic). **Save** keeps the WiFi network in `ENVARC:alice68wifi.prefs` and the MAC
+choices in `ENVARC:alice68net.prefs`. Without MUI, `Alice68-NetworkGT` is the simpler
+GadTools window.
+
+**Commodore's MAC prefix.** Tick *Use Commodore's OUI* on the Ethernet or WiFi page and
+that unit's address starts with Commodore International's `00:80:10`, the last three bytes
+staying the Pi's own. It changes at once (a TCP/IP stack already using the unit keeps the
+old address until it opens it again) and, saved, from the next start on.
 
 ### WiFi
 

@@ -1,0 +1,966 @@
+/*
+ * Alice68-Network: the graph, tabs, table and stext classes of Riptide's
+ * RiptidePrefs Status page (its mui_status.c, from the start of the file
+ * to the table class, and its stext class; the interface view and the page
+ * itself are left out). Riptide's comment follows.
+ *
+ Riptide - RiptidePrefs (MUI): the Status page. What Riptide is doing
+ * now, read once a second while the page is shown (status_amiga.c reads
+ * the tables, prefs_status.c turns them into numbers and text):
+ *
+ *   a summary (running, uptime, CPU, memory),
+ *   a graph of all traffic and one of the CPU share,
+ *   tabs: Interfaces (each with its own graph), Connections (a table and
+ *   a graph of the chosen connection's round trip time and window), Names
+ *   and time, Counters.
+ *
+ * The classes here draw in the theme like those of mui_classes.c:
+ *   graph   a 60 second history of two values (a struct rp_hist)
+ *   tabs    a row of labels that switches a page group (keys 1 to 4)
+ *   table   rows of two lines: a text, then columns separated by '\t';
+ *           a row can be chosen
+ *   ifview  every interface: three lines, its speeds and a small graph;
+ *           when they do not all fit, as many as fit and a line saying
+ *           which: a click shows the next ones (the cursor keys are the
+ *           page list's)
+ *   stext   a fixed number of lines of text that change
+ * The total-traffic graph also owns the timer: it starts when the page is
+ * shown and stops when it is hidden, so nothing is read on other pages.
+ * Its period is the Update setting (1, 2 or 5 s, or paused), and at
+ * least STOPPED_MS while Riptide is not running: then a read only looks
+ * for Riptide starting and draws nothing unless it did.
+ * SPDX-License-Identifier: GPL-2.0-only
+ */
+#include <stddef.h>
+#include "cmd/cmdlib.h"
+#include "prefs/mui_classes.h"
+#include "prefs/mui_theme.h"
+#include "prefs/mui_widgets.h"
+#include "prefs/stat_util.h"
+
+
+#define RAW_1 0x01
+#define RAW_LEFT  0x4f
+#define RAW_RIGHT 0x4e
+#ifndef SELECTDOWN
+#define SELECTDOWN 0x68
+#endif
+
+struct MUI_CustomClass *graph_mcc, *tabs_mcc, *table_mcc, *stext_mcc;
+
+/* ---- drawing helpers ---- */
+/* text cut to fit maxw pixels (the longest start that fits, found by
+ * halving: a few TextLength() calls, not one per character) */
+static void text_fit(struct RastPort *rp, LONG x, LONG y, LONG maxw, const char *s, LONG pen, int bold)
+{
+	char t[160];
+	int n, lo, hi;
+
+	rt_strlcpy(t, s, sizeof(t));
+	n = (int)strlen(t);
+	if (n && theme_textlen(rp, t) > maxw) {
+		lo = 0;
+		hi = n;
+		while (lo < hi) {
+			int mid = (lo + hi + 1) / 2;
+			char c = t[mid];
+			t[mid] = 0;
+			if (theme_textlen(rp, t) <= maxw)
+				lo = mid;
+			else
+				hi = mid - 1;
+			t[mid] = c;
+		}
+		n = lo;
+		t[n] = 0;
+	}
+	if (n > 0)
+		theme_text(rp, x, y, t, pen, bold);
+}
+
+/* A line of text that changes: drawn again only when it differs from what
+ * is on screen (cache, at least 120 bytes), its old pixels cleared first.
+ * The 68020 and a planar screen make every pixel count. */
+static void text_line(struct RastPort *rp, LONG x, LONG y, LONG w, const char *s, LONG pen, int bold, char *cache,
+                      int redraw)
+{
+	if (!redraw && !strcmp(cache, s))
+		return;
+	if (!redraw)
+		theme_fill(rp, x, y, x + w - 1, y + theme_fh(), tpen(T_WINDOW));
+	text_fit(rp, x, y, w, s, pen, bold);
+	rt_strlcpy(cache, s, 120);
+}
+
+/* ---- graphs ----
+ * A graph of an rp_hist in a box: a legend line on top, then the plot.
+ * Bytes: receive as filled columns (accent), send as a line (green), one
+ * scale. CPU: busy share as columns, scale 100 %. Connection: the window
+ * as columns, the round trip time as a line (orange), each on its own
+ * scale. Every sample is a column cw pixels wide; the newest is at the
+ * right. When one sample was added and the scale stayed, the plot is
+ * scrolled by one column and only that is drawn (graph_update()). */
+struct gstate {
+	const struct rp_hist *h;
+	u32 pushes, sc0, sc1;
+	LONG x0, y0, x1, y1;
+	int legend, valid;
+};
+
+struct gbox {
+	LONG py0, py1, ph, cw, xr;
+};
+
+static void graph_box(LONG x0, LONG y0, LONG x1, LONG y1, int legend, struct gbox *b)
+{
+	b->py0 = legend ? y0 + theme_fh() + 2 : y0;
+	b->py1 = y1;
+	b->ph = b->py1 - b->py0 - 1;
+	b->cw = (x1 - x0 - 1) / RP_HIST;
+	if (b->cw < 1)
+		b->cw = 1;
+	b->xr = x1 - 1;
+}
+
+static void graph_scales(const struct rp_hist *h, int kind, u32 *sc0, u32 *sc1)
+{
+	if (kind == GK_CPU) {
+		*sc0 = *sc1 = 1000;
+	} else if (kind == GK_CONN) {
+		*sc0 = rp_nice_scale(rp_hist_max(h, 0), 10);       /* RTT, 0.1 ms */
+		*sc1 = rp_nice_scale(rp_hist_max(h, 1), 10);       /* window, packets */
+	} else {
+		*sc0 = *sc1 = rp_nice_scale(rp_hist_max(h, -1), 1024);
+	}
+}
+
+/* the legend: name and newest values; the scale on the right */
+static void graph_legend(struct RastPort *rp, LONG x0, LONG y0, LONG x1, const struct rp_hist *h, int kind,
+                         const char *title, u32 sc0, u32 sc1)
+{
+	char lg[120], a[24], b[24], sc[24];
+	u32 v0 = h->n ? rp_hist_at(h, 0, h->n - 1) : 0, v1 = h->n ? rp_hist_at(h, 1, h->n - 1) : 0;
+	LONG sw;
+
+	if (kind == GK_CPU) {
+		rt_snprintf(lg, sizeof(lg), "%s %lu %%", title, (unsigned long)((v0 + 5) / 10));
+		rt_strlcpy(sc, "100 %", sizeof(sc));
+	} else if (kind == GK_CONN) {
+		rp_fmt_ms(a, sizeof(a), v0 * 100u);
+		rt_snprintf(lg, sizeof(lg), "%s: round trip %s, window %lu", title, a, (unsigned long)v1);
+		rp_fmt_ms(b, sizeof(b), sc0 * 100u);
+		rt_snprintf(sc, sizeof(sc), "%s / %lu", b, (unsigned long)sc1);
+	} else {
+		rp_fmt_rate(a, sizeof(a), v0);
+		rp_fmt_rate(b, sizeof(b), v1);
+		rt_snprintf(lg, sizeof(lg), "%s%s%s in, %s out", title, title[0] ? ": " : "", a, b);
+		rp_fmt_rate(sc, sizeof(sc), sc0);
+	}
+	theme_fill(rp, x0, y0, x1, y0 + theme_fh(), tpen(T_WINDOW));
+	sw = theme_textlen(rp, sc);
+	text_fit(rp, x0, y0, x1 - x0 - sw - 8, lg, tpen(T_TEXT), 0);
+	theme_text(rp, x1 - sw, y0, sc, tpen(T_DIM), 0);
+}
+
+/* the column of sample i (0 the oldest of h->n) and the line to it from
+ * sample i - 1; mid: the half-scale line under it too (a scrolled plot) */
+static void graph_column(struct RastPort *rp, const struct gbox *b, LONG x0, const struct rp_hist *h, int i, int kind,
+                         u32 sc0, u32 sc1, int mid_line)
+{
+	int slot = RP_HIST - h->n + i;
+	LONG cx1 = b->xr - (LONG)(RP_HIST - 1 - slot) * b->cw, cx0 = cx1 - b->cw + 1, mid = b->py0 + b->ph / 2;
+	u32 v = rp_hist_at(h, kind == GK_CONN ? 1 : 0, i);
+	int yy = rp_scale_y(v, kind == GK_CONN ? sc1 : sc0, (int)(b->ph - 1));
+
+	if (cx1 <= x0)
+		return;
+	if (cx0 <= x0)
+		cx0 = x0 + 1;
+	if (mid_line)
+		theme_line(rp, cx0, mid, cx1, mid, tpen(T_HOVER));
+	if (yy > 0)
+		theme_fill(rp, cx0, b->py1 - yy, cx1, b->py1 - 1, tpen(T_ACCENT));
+	if (kind != GK_CPU) {
+		LONG pen = tpen(kind == GK_CONN ? T_ORANGE : T_GREEN);
+		int s = kind == GK_CONN ? 0 : 1;
+		u32 sc = kind == GK_CONN ? sc0 : sc1;
+		LONG cy = b->py1 - 1 - rp_scale_y(rp_hist_at(h, s, i), sc, (int)(b->ph - 2));
+		LONG cx = (cx0 + cx1) / 2;
+		if (i > 0) {
+			LONG px = cx - b->cw;
+			LONG py = b->py1 - 1 - rp_scale_y(rp_hist_at(h, s, i - 1), sc, (int)(b->ph - 2));
+			if (px > x0) {
+				theme_line(rp, px, py, cx, cy, pen);
+				theme_line(rp, px, py - 1, cx, cy - 1, pen);
+			}
+		} else {
+			theme_fill(rp, cx, cy - 1, cx, cy, pen);
+		}
+	}
+}
+
+static void graph_full(struct RastPort *rp, LONG x0, LONG y0, LONG x1, LONG y1, const struct rp_hist *h, int kind,
+                       const char *title, int legend, struct gstate *gs)
+{
+	struct gbox b;
+	u32 sc0, sc1;
+	int i;
+
+	gs->valid = 0;
+	if (x1 - x0 < 20 || y1 - y0 < 8)
+		return;
+	graph_box(x0, y0, x1, y1, legend, &b);
+	if (b.ph < 4)
+		return;
+	graph_scales(h, kind, &sc0, &sc1);
+	if (legend)
+		graph_legend(rp, x0, y0, x1, h, kind, title, sc0, sc1);
+	theme_fill(rp, x0, b.py0, x1, b.py1, tpen(T_HEAD));
+	theme_rect(rp, x0, b.py0, x1, b.py1, tpen(T_BORDER));
+	theme_line(rp, x0 + 1, b.py0 + b.ph / 2, x1 - 1, b.py0 + b.ph / 2, tpen(T_HOVER));
+	for (i = 0; i < h->n; i++)
+		graph_column(rp, &b, x0, h, i, kind, sc0, sc1, 0);
+	gs->h = h;
+	gs->pushes = h->pushes;
+	gs->sc0 = sc0;
+	gs->sc1 = sc1;
+	gs->x0 = x0;
+	gs->y0 = y0;
+	gs->x1 = x1;
+	gs->y1 = y1;
+	gs->legend = legend;
+	gs->valid = 1;
+}
+
+/* only what is new since the last drawing, when that is one sample on the
+ * same scale; else everything */
+static void graph_update(struct RastPort *rp, LONG x0, LONG y0, LONG x1, LONG y1, const struct rp_hist *h, int kind,
+                         const char *title, int legend, struct gstate *gs)
+{
+	struct gbox b;
+	u32 sc0, sc1;
+
+	graph_scales(h, kind, &sc0, &sc1);
+	if (!gs->valid || gs->h != h || h->pushes != gs->pushes + 1 || sc0 != gs->sc0 || sc1 != gs->sc1 ||
+	    gs->x0 != x0 || gs->y0 != y0 || gs->x1 != x1 || gs->y1 != y1 || gs->legend != legend) {
+		if (!gs->valid || gs->h != h || h->pushes != gs->pushes)
+			graph_full(rp, x0, y0, x1, y1, h, kind, title, legend, gs);
+		return;
+	}
+	graph_box(x0, y0, x1, y1, legend, &b);
+	if (legend)
+		graph_legend(rp, x0, y0, x1, h, kind, title, sc0, sc1);
+	/* everything one column to the left; the new one at the right */
+	SetBPen(rp, (ULONG)tpen(T_HEAD));
+	ScrollRaster(rp, b.cw, 0, x0 + 1, b.py0 + 1, x1 - 1, b.py1 - 1);
+	graph_column(rp, &b, x0, h, h->n - 1, kind, sc0, sc1, 1);
+	gs->pushes = h->pushes;
+}
+
+/* ==================================================================
+ * graph
+ * ================================================================== */
+struct graph_data {
+	const struct rp_hist *hist;
+	const char *title;
+	int kind, lines, shown, ticker, timer_on;
+	struct gstate gs;
+	struct MUI_InputHandlerNode ihn;
+};
+
+static void (*tick_fn)(void);
+
+/* the Update setting: 0 every second, 1 every 2 s, 2 every 5 s, 3 paused */
+#define STOPPED_MS 3000
+static const ULONG upd_ms[4] = { 1000, 2000, 5000, 0 };
+static int upd, upd_running = -1;
+
+/* the timer's period now, 0 for none */
+static ULONG status_period(void)
+{
+	ULONG ms = upd_ms[upd & 3];
+
+	if (ms && upd_running == 0 && ms < STOPPED_MS)
+		ms = STOPPED_MS;
+	return ms;
+}
+
+static void graph_timer(Object *obj, struct graph_data *d, int on)
+{
+	if (!d->ticker || on == d->timer_on)
+		return;
+	if (on && !status_period())
+		return;
+	if (on) {
+		memset(&d->ihn, 0, sizeof(d->ihn));
+		d->ihn.ihn_Object = obj;
+		d->ihn.ihn_millis = status_period();
+		d->ihn.ihn_Flags = MUIIHNF_TIMER;
+		d->ihn.ihn_Method = MUIM_Graph_Tick;
+		mui_do(_app(obj), MUIM_Application_AddInputHandler, (ULONG)&d->ihn);
+	} else {
+		mui_do(_app(obj), MUIM_Application_RemInputHandler, (ULONG)&d->ihn);
+	}
+	d->timer_on = on;
+}
+
+DISPATCHER(graph_dispatch)
+{
+	struct graph_data *d;
+
+	switch (msg->MethodID) {
+	case OM_NEW:
+		if (!(obj = (Object *)DoSuperMethodA(cl, obj, msg)))
+			return 0;
+		d = INST_DATA(cl, obj);
+		memset(d, 0, sizeof(*d));
+		d->hist = (const struct rp_hist *)mc_tagval(msg, MUIA_Graph_Hist, 0);
+		d->kind = (int)mc_tagval(msg, MUIA_Graph_Kind, GK_BYTES);
+		d->title = (const char *)mc_tagval(msg, MUIA_Graph_Title, (ULONG)"");
+		d->lines = (int)mc_tagval(msg, MUIA_Graph_Lines, 4);
+		d->ticker = (int)mc_tagval(msg, MUIA_Graph_Ticker, 0);
+		return (ULONG)obj;
+	case OM_SET:
+		d = INST_DATA(cl, obj);
+		if (mc_has_tag(msg, MUIA_Graph_Hist)) {
+			d->hist = (const struct rp_hist *)mc_tagval(msg, MUIA_Graph_Hist, 0);
+			if (d->shown)
+				MUI_Redraw(obj, MADF_DRAWUPDATE);
+		}
+		break;
+	case MUIM_AskMinMax: {
+		LONG h;
+		d = INST_DATA(cl, obj);
+		h = (LONG)d->lines * (theme_fh() + 1) + 4;
+		DoSuperMethodA(cl, obj, msg);
+		mc_minmax(msg, 80, 240, MUI_MAXMAX, 3 * (theme_fh() + 1) + 4, h, h);
+		return 0;
+	}
+	case MUIM_Setup:
+		if (!DoSuperMethodA(cl, obj, msg))
+			return FALSE;
+		theme_setup(obj);
+		return TRUE;
+	case MUIM_Cleanup:
+		d = INST_DATA(cl, obj);
+		graph_timer(obj, d, 0);
+		theme_cleanup(obj);
+		break;
+	case MUIM_Show:
+		d = INST_DATA(cl, obj);
+		d->shown = 1;
+		d->gs.valid = 0;
+		if (d->ticker && !d->timer_on) {
+			graph_timer(obj, d, 1);
+			/* the first read at once, after this layout */
+			mui_do(_app(obj), MUIM_Application_PushMethod, (ULONG)obj, 1, MUIM_Graph_Tick);
+		}
+		break;
+	case MUIM_Hide:
+		d = INST_DATA(cl, obj);
+		d->shown = 0;
+		graph_timer(obj, d, 0);
+		break;
+	case MUIM_Graph_Tick:
+		d = INST_DATA(cl, obj);
+		if (d->shown && tick_fn)
+			tick_fn();
+		return 0;
+	case MUIM_Graph_Retime:
+		d = INST_DATA(cl, obj);
+		if (d->ticker && d->shown && (!d->timer_on || d->ihn.ihn_millis != status_period())) {
+			graph_timer(obj, d, 0);
+			graph_timer(obj, d, 1);
+		}
+		return 0;
+	case MUIM_Draw: {
+		ULONG f;
+		/* the Area class fills in the flags (MUI_Redraw() leaves them to it) */
+		DoSuperMethodA(cl, obj, msg);
+		f = ((struct MUIP_Draw *)msg)->flags;
+		d = INST_DATA(cl, obj);
+		if (!d->hist)
+			return 0;
+		if (f & MADF_DRAWOBJECT)
+			graph_full(_rp(obj), _mleft(obj), _mtop(obj), _mright(obj), _mbottom(obj), d->hist, d->kind,
+			           tr(d->title), 1, &d->gs);
+		else if (f & MADF_DRAWUPDATE)
+			graph_update(_rp(obj), _mleft(obj), _mtop(obj), _mright(obj), _mbottom(obj), d->hist, d->kind,
+			             tr(d->title), 1, &d->gs);
+		return 0;
+	}
+	}
+	return DoSuperMethodA(cl, obj, msg);
+}
+
+/* ==================================================================
+ * tabs
+ * ================================================================== */
+struct tabs_data {
+	struct MUI_EventHandlerNode ehn;
+	const char *const *labels;
+	int n, active, hot, shown;
+};
+
+static LONG tab_w(struct RastPort *rp, const char *s)
+{
+	return theme_textlen(rp, s) + 20;
+}
+
+/* the tab under x, or -1 */
+static int tabs_hit(struct tabs_data *d, Object *obj, LONG x)
+{
+	struct RastPort rp;
+	LONG lx = _mleft(obj);
+	int i;
+
+	InitRastPort(&rp);
+	for (i = 0; i < d->n; i++) {
+		LONG w = tab_w(&rp, d->labels[i]);
+		if (x >= lx && x < lx + w)
+			return i;
+		lx += w;
+	}
+	return -1;
+}
+
+static void tabs_draw(struct tabs_data *d, Object *obj)
+{
+	struct RastPort *rp = _rp(obj);
+	LONG x = _mleft(obj), t = _mtop(obj), b = _mbottom(obj);
+	int i;
+
+	theme_line(rp, _mleft(obj), b, _mright(obj), b, tpen(T_BORDER));
+	for (i = 0; i < d->n; i++) {
+		LONG w = tab_w(rp, d->labels[i]);
+		/* every tab paints its own background, so a hover change is
+		 * a MADF_DRAWUPDATE without clearing the strip first (flicker) */
+		theme_fill(rp, x, t, x + w - 1, b - 1, tpen(i == d->hot && i != d->active ? T_HOVER : T_WINDOW));
+		theme_text(rp, x + 10, t + (b - t - theme_fh()) / 2, d->labels[i], tpen(i == d->active ? T_TEXT : T_DIM),
+		           i == d->active);
+		if (i == d->active)
+			theme_fill(rp, x + 4, b - 2, x + w - 5, b, tpen(T_ACCENT));
+		x += w;
+	}
+}
+
+static void tabs_go(Object *obj, int i)
+{
+	struct TagItem t[2];
+
+	t[0].ti_Tag = MUIA_Tabs_Active;
+	t[0].ti_Data = (ULONG)i;
+	t[1].ti_Tag = TAG_DONE;
+	t[1].ti_Data = 0;
+	SetAttrsA(obj, t);
+}
+
+DISPATCHER(tabs_dispatch)
+{
+	struct tabs_data *d;
+
+	switch (msg->MethodID) {
+	case OM_NEW:
+		if (!(obj = (Object *)DoSuperMethodA(cl, obj, msg)))
+			return 0;
+		d = INST_DATA(cl, obj);
+		memset(d, 0, sizeof(*d));
+		d->labels = (const char *const *)mc_tagval(msg, MUIA_Tabs_Labels, 0);
+		while (d->labels && d->labels[d->n])
+			d->n++;
+		d->active = (int)mc_tagval(msg, MUIA_Tabs_Active, 0);
+		d->hot = -1;
+		return (ULONG)obj;
+	case OM_SET:
+		d = INST_DATA(cl, obj);
+		if (mc_has_tag(msg, MUIA_Tabs_Active)) {
+			int a = (int)mc_tagval(msg, MUIA_Tabs_Active, 0);
+			if (a >= 0 && a < d->n && a != d->active) {
+				d->active = a;
+				if (d->shown)
+					MUI_Redraw(obj, MADF_DRAWOBJECT);
+			}
+		}
+		break;
+	case OM_GET:
+		if (((struct opGet *)msg)->opg_AttrID == MUIA_Tabs_Active) {
+			*((struct opGet *)msg)->opg_Storage = (ULONG)((struct tabs_data *)INST_DATA(cl, obj))->active;
+			return TRUE;
+		}
+		break;
+	case MUIM_AskMinMax: {
+		LONG w = 0, h = theme_fh() + (theme_compact() ? 4 : 8);
+		int i;
+		d = INST_DATA(cl, obj);
+		for (i = 0; i < d->n; i++)
+			w += mc_measure(d->labels[i], 0) + 20;
+		DoSuperMethodA(cl, obj, msg);
+		mc_minmax(msg, w, w, MUI_MAXMAX, h, h, h);
+		return 0;
+	}
+	case MUIM_Setup:
+		if (!DoSuperMethodA(cl, obj, msg))
+			return FALSE;
+		theme_setup(obj);
+		d = INST_DATA(cl, obj);
+		mc_handler(obj, cl, &d->ehn, IDCMP_MOUSEBUTTONS | IDCMP_MOUSEMOVE | IDCMP_RAWKEY, 1);
+		return TRUE;
+	case MUIM_Cleanup:
+		d = INST_DATA(cl, obj);
+		mc_handler(obj, cl, &d->ehn, 0, 0);
+		theme_cleanup(obj);
+		break;
+	case MUIM_Show:
+		((struct tabs_data *)INST_DATA(cl, obj))->shown = 1;
+		break;
+	case MUIM_Hide:
+		((struct tabs_data *)INST_DATA(cl, obj))->shown = 0;
+		break;
+	case MUIM_Draw:
+		DoSuperMethodA(cl, obj, msg);
+		if (((struct MUIP_Draw *)msg)->flags & (MADF_DRAWOBJECT | MADF_DRAWUPDATE))
+			tabs_draw(INST_DATA(cl, obj), obj);
+		return 0;
+	case MUIM_HandleEvent: {
+		struct IntuiMessage *im = ((struct MUIP_HandleEvent *)msg)->imsg;
+		int i;
+		d = INST_DATA(cl, obj);
+		if (!im || !d->shown)
+			return 0;
+		if (im->Class == IDCMP_MOUSEMOVE) {
+			i = mc_inside(obj, im) ? tabs_hit(d, obj, im->MouseX) : -1;
+			if (i != d->hot) {
+				d->hot = i;
+				MUI_Redraw(obj, MADF_DRAWUPDATE);
+			}
+			return 0;
+		}
+		if (im->Class == IDCMP_MOUSEBUTTONS && im->Code == SELECTDOWN && mc_inside(obj, im)) {
+			i = tabs_hit(d, obj, im->MouseX);
+			if (i >= 0)
+				tabs_go(obj, i);
+			return MUI_EventHandlerRC_Eat;
+		}
+		/* 1 to 4 choose a tab; cursor left and right step */
+		if (im->Class == IDCMP_RAWKEY && !(im->Code & IECODE_UP_PREFIX)) {
+			if (im->Code >= RAW_1 && im->Code < RAW_1 + d->n) {
+				tabs_go(obj, im->Code - RAW_1);
+				return MUI_EventHandlerRC_Eat;
+			}
+			if (im->Code == RAW_LEFT || im->Code == RAW_RIGHT) {
+				tabs_go(obj, (d->active + (im->Code == RAW_LEFT ? d->n - 1 : 1)) % d->n);
+				return MUI_EventHandlerRC_Eat;
+			}
+		}
+		return 0;
+	}
+	}
+	return DoSuperMethodA(cl, obj, msg);
+}
+
+/* ==================================================================
+ * table
+ * ================================================================== */
+#define TB_COLS 8
+#define TB_ROWS 40                      /* rows a table holds (Riptide: RP_ST_NCONN, 24) */
+struct table_data {
+	struct MUI_EventHandlerNode ehn;
+	const char *header;
+	const char *const *rows;
+	int n, active, hot, shown;
+	/* what is on screen, for updates */
+	int valid, drawn_n, drawn_active, drawn_hot, drawn_fit;
+	LONG drawn_x[TB_COLS + 1], drawn_w;
+	char cache[TB_ROWS][200];
+};
+
+/* the header's height and a row's (two lines) */
+static LONG tb_headh(void)
+{
+	return theme_fh() + (theme_compact() ? 1 : 3);
+}
+
+static LONG tb_rowh(void)
+{
+	return 2 * theme_fh() + (theme_compact() ? 2 : 5);
+}
+
+/* the columns of a row: what follows its first line */
+static const char *cols(const char *row)
+{
+	const char *nl = strchr(row, '\n');
+
+	return nl ? nl + 1 : row;
+}
+
+/* cell c of a row's columns into buf */
+static void cell(const char *row, int c, char *buf, int len)
+{
+	int k = 0;
+
+	row = cols(row);
+	while (c > 0 && *row) {
+		if (*row++ == '\t')
+			c--;
+	}
+	while (*row && *row != '\t' && k < len - 1)
+		buf[k++] = *row++;
+	buf[k] = 0;
+}
+
+static int ncols(const char *row)
+{
+	int n = 1;
+
+	while (*row)
+		n += *row++ == '\t';
+	return n > TB_COLS ? TB_COLS : n;
+}
+
+/* The x of each column in a width of w: each as wide as its widest cell,
+ * the last one giving way when that is too wide. */
+static void tb_layout(struct table_data *d, struct RastPort *rp, LONG w, LONG *x, int *nc)
+{
+	LONG cw[TB_COLS] = { 0 }, sum = 0;
+	char t[64];
+	int c, r, n = ncols(d->header);
+
+	for (c = 0; c < n; c++) {
+		cell(d->header, c, t, sizeof(t));
+		cw[c] = theme_textlen(rp, t) + 10;
+		for (r = 0; r < d->n; r++) {
+			LONG tw;
+			cell(d->rows[r], c, t, sizeof(t));
+			if ((tw = theme_textlen(rp, t) + 10) > cw[c])
+				cw[c] = tw;
+		}
+		sum += cw[c];
+	}
+	if (sum > w && cw[n - 1] > sum - w)
+		cw[n - 1] -= sum - w;
+	x[0] = 0;
+	for (c = 1; c <= n; c++)
+		x[c] = x[c - 1] + cw[c - 1];
+	*nc = n;
+}
+
+/* row r at y: its background (chosen, under the pointer, plain), the
+ * first line across the width and the cells below it */
+static void tb_row(struct table_data *d, Object *obj, struct RastPort *rp, const LONG *x, int nc, int r, LONG ry)
+{
+	LONG l = _mleft(obj) + 2, rh = tb_rowh(), fh = theme_fh(), y1 = ry + (theme_compact() ? 1 : 2);
+	char t[120];
+	const char *nl = strchr(d->rows[r], '\n');
+	int c, k;
+
+	if (r == d->active) {
+		theme_fill(rp, _mleft(obj) + 1, ry, _mright(obj) - 1, ry + rh - 1, tpen(T_PRESSED));
+		theme_fill(rp, _mleft(obj) + 1, ry, _mleft(obj) + 2, ry + rh - 1, tpen(T_ACCENT));
+	} else {
+		theme_fill(rp, _mleft(obj) + 1, ry, _mright(obj) - 1, ry + rh - 1, tpen(r == d->hot ? T_HOVER : T_HEAD));
+	}
+	k = nl ? (int)(nl - d->rows[r]) : 0;
+	if (k > (int)sizeof(t) - 1)
+		k = (int)sizeof(t) - 1;
+	memcpy(t, d->rows[r], (size_t)k);
+	t[k] = 0;
+	text_fit(rp, l + 2, y1, _mwidth(obj) - 10, t, tpen(T_TEXT), 0);
+	for (c = 0; c < nc; c++) {
+		cell(d->rows[r], c, t, sizeof(t));
+		text_fit(rp, l + x[c], y1 + fh + 1, x[c + 1] - x[c] - 6, t, tpen(c == 0 ? T_TEXT : T_DIM), 0);
+	}
+	rt_strlcpy(d->cache[r], d->rows[r], sizeof(d->cache[r]));
+}
+
+static void tb_draw(struct table_data *d, Object *obj, int update)
+{
+	struct RastPort *rp = _rp(obj);
+	LONG x[TB_COLS + 1], l = _mleft(obj) + 2, rh = tb_rowh(), hh = tb_headh(), y = _mtop(obj), fh = theme_fh();
+	LONG w = _mwidth(obj) - 4;
+	char t[64];
+	int nc, c, r, fit;
+
+	tb_layout(d, rp, w, x, &nc);
+	fit = (int)((_mbottom(obj) - y - hh) / rh);
+	/* only the rows that changed, when the columns and rows stayed */
+	if (update && d->valid && d->drawn_n == d->n && d->drawn_fit == fit && d->drawn_w == w &&
+	    d->drawn_active == d->active && d->drawn_hot == d->hot && d->n <= fit && d->n > 0 &&
+	    !memcmp(d->drawn_x, x, sizeof(LONG) * (size_t)(nc + 1))) {
+		for (r = 0; r < d->n; r++)
+			if (strcmp(d->cache[r], d->rows[r]))
+				tb_row(d, obj, rp, x, nc, r, y + hh + (LONG)r * rh);
+		return;
+	}
+	theme_fill(rp, _mleft(obj), _mtop(obj), _mright(obj), _mbottom(obj), tpen(T_HEAD));
+	theme_rect(rp, _mleft(obj), _mtop(obj), _mright(obj), _mbottom(obj), tpen(T_BORDER));
+	for (c = 0; c < nc; c++) {
+		cell(d->header, c, t, sizeof(t));
+		text_fit(rp, l + x[c], y + (hh - fh) / 2, x[c + 1] - x[c] - 6, t, tpen(T_DIM), 1);
+	}
+	y += hh;
+	theme_line(rp, _mleft(obj) + 1, y - 1, _mright(obj) - 1, y - 1, tpen(T_BORDER));
+	d->valid = 1;
+	d->drawn_n = d->n;
+	d->drawn_fit = fit;
+	d->drawn_w = w;
+	d->drawn_active = d->active;
+	d->drawn_hot = d->hot;
+	memcpy(d->drawn_x, x, sizeof(d->drawn_x));
+	if (d->n == 0) {
+		theme_text(rp, l, y + 2, "No TCP connections.", tpen(T_DIM), 0);
+		return;
+	}
+	for (r = 0; r < d->n && r < fit; r++) {
+		LONG ry = y + (LONG)r * rh;
+		if (r == fit - 1 && d->n > fit) {
+			rt_snprintf(t, sizeof(t), "%d more ...", d->n - r);
+			theme_text(rp, l, ry + (rh - fh) / 2, t, tpen(T_DIM), 0);
+			break;
+		}
+		tb_row(d, obj, rp, x, nc, r, ry);
+	}
+}
+
+static int tb_hit(struct table_data *d, Object *obj, LONG y)
+{
+	LONG top = _mtop(obj) + tb_headh();
+	int r;
+
+	if (y < top)
+		return -1;
+	r = (int)((y - top) / tb_rowh());
+	return r < d->n ? r : -1;
+}
+
+DISPATCHER(table_dispatch)
+{
+	struct table_data *d;
+
+	switch (msg->MethodID) {
+	case OM_NEW:
+		if (!(obj = (Object *)DoSuperMethodA(cl, obj, msg)))
+			return 0;
+		d = INST_DATA(cl, obj);
+		memset(d, 0, sizeof(*d));
+		d->header = (const char *)mc_tagval(msg, MUIA_Table_Header, (ULONG)"");
+		d->active = -1;
+		d->hot = -1;
+		return (ULONG)obj;
+	case OM_SET:
+		d = INST_DATA(cl, obj);
+		if (mc_has_tag(msg, MUIA_Table_NRows))
+			d->n = (int)mc_tagval(msg, MUIA_Table_NRows, 0);
+		if (mc_has_tag(msg, MUIA_Table_Rows)) {
+			d->rows = (const char *const *)mc_tagval(msg, MUIA_Table_Rows, 0);
+			if (!d->rows)
+				d->n = 0;
+			if (d->n > TB_ROWS)
+				d->n = TB_ROWS;
+			if (d->active >= d->n)
+				d->active = d->n - 1;
+			if (d->shown)
+				MUI_Redraw(obj, MADF_DRAWUPDATE);
+		}
+		if (mc_has_tag(msg, MUIA_Table_Active)) {
+			int a = (int)(LONG)mc_tagval(msg, MUIA_Table_Active, (ULONG)-1);
+			if (a != d->active) {
+				d->active = a;
+				if (d->shown)
+					MUI_Redraw(obj, MADF_DRAWUPDATE);
+			}
+		}
+		break;
+	case OM_GET:
+		if (((struct opGet *)msg)->opg_AttrID == MUIA_Table_Active) {
+			*((struct opGet *)msg)->opg_Storage = (ULONG)(LONG)((struct table_data *)INST_DATA(cl, obj))->active;
+			return TRUE;
+		}
+		break;
+	case MUIM_AskMinMax: {
+		LONG h = tb_headh() + tb_rowh() * 2 + 4;
+		DoSuperMethodA(cl, obj, msg);
+		mc_minmax(msg, 160, 400, MUI_MAXMAX, h, tb_headh() + tb_rowh() * 4, MUI_MAXMAX);
+		return 0;
+	}
+	case MUIM_Setup:
+		if (!DoSuperMethodA(cl, obj, msg))
+			return FALSE;
+		theme_setup(obj);
+		d = INST_DATA(cl, obj);
+		mc_handler(obj, cl, &d->ehn, IDCMP_MOUSEBUTTONS | IDCMP_MOUSEMOVE, 1);
+		return TRUE;
+	case MUIM_Cleanup:
+		d = INST_DATA(cl, obj);
+		mc_handler(obj, cl, &d->ehn, 0, 0);
+		theme_cleanup(obj);
+		break;
+	case MUIM_Show:
+		d = INST_DATA(cl, obj);
+		d->shown = 1;
+		d->valid = 0;
+		break;
+	case MUIM_Hide:
+		((struct table_data *)INST_DATA(cl, obj))->shown = 0;
+		break;
+	case MUIM_Draw: {
+		ULONG f;
+		/* the Area class fills in the flags (MUI_Redraw() leaves them to it) */
+		DoSuperMethodA(cl, obj, msg);
+		f = ((struct MUIP_Draw *)msg)->flags;
+		d = INST_DATA(cl, obj);
+		if (f & (MADF_DRAWOBJECT | MADF_DRAWUPDATE))
+			tb_draw(d, obj, !(f & MADF_DRAWOBJECT));
+		return 0;
+	}
+	case MUIM_HandleEvent: {
+		struct IntuiMessage *im = ((struct MUIP_HandleEvent *)msg)->imsg;
+		int i;
+		d = INST_DATA(cl, obj);
+		if (!im || !d->shown)
+			return 0;
+		i = mc_inside(obj, im) ? tb_hit(d, obj, im->MouseY) : -1;
+		if (im->Class == IDCMP_MOUSEMOVE) {
+			if (i != d->hot) {
+				d->hot = i;
+				MUI_Redraw(obj, MADF_DRAWUPDATE);
+			}
+			return 0;
+		}
+		if (im->Class == IDCMP_MOUSEBUTTONS && im->Code == SELECTDOWN && mc_inside(obj, im)) {
+			if (i >= 0) {
+				struct TagItem t[2];
+				t[0].ti_Tag = MUIA_Table_Active;
+				t[0].ti_Data = (ULONG)i;
+				t[1].ti_Tag = TAG_DONE;
+				t[1].ti_Data = 0;
+				SetAttrsA(obj, t);
+			}
+			return MUI_EventHandlerRC_Eat;
+		}
+		return 0;
+	}
+	}
+	return DoSuperMethodA(cl, obj, msg);
+}
+
+/* ==================================================================
+ * stext: lines of text that change
+ * ================================================================== */
+#define ST_LINES 14
+struct stext_data {
+	const char *text;
+	int lines, shown;
+	char cache[ST_LINES][120];
+};
+
+static void st_draw(struct stext_data *d, Object *obj, int update)
+{
+	struct RastPort *rp = _rp(obj);
+	const char *s = d->text;
+	LONG y = _mtop(obj);
+	char line[160];
+	int n;
+
+	for (n = 0; n < d->lines && n < ST_LINES; n++) {
+		int k = 0;
+		while (*s && *s != '\n' && k < (int)sizeof(line) - 1)
+			line[k++] = *s++;
+		line[k] = 0;
+		if (*s == '\n')
+			s++;
+		if (!update)
+			d->cache[n][0] = 0;
+		text_line(rp, _mleft(obj), y, _mwidth(obj), line, tpen(T_TEXT), 0, d->cache[n], !update);
+		y += theme_fh() + 1;
+	}
+}
+
+DISPATCHER(stext_dispatch)
+{
+	struct stext_data *d;
+
+	switch (msg->MethodID) {
+	case OM_NEW:
+		if (!(obj = (Object *)DoSuperMethodA(cl, obj, msg)))
+			return 0;
+		d = INST_DATA(cl, obj);
+		memset(d, 0, sizeof(*d));
+		d->text = (const char *)mc_tagval(msg, MUIA_SText_Text, (ULONG)"");
+		d->lines = (int)mc_tagval(msg, MUIA_SText_Lines, 1);
+		return (ULONG)obj;
+	case OM_SET:
+		d = INST_DATA(cl, obj);
+		if (mc_has_tag(msg, MUIA_SText_Text)) {
+			d->text = (const char *)mc_tagval(msg, MUIA_SText_Text, (ULONG)"");
+			if (d->shown)
+				MUI_Redraw(obj, MADF_DRAWUPDATE);
+		}
+		break;
+	case MUIM_AskMinMax: {
+		LONG h;
+		d = INST_DATA(cl, obj);
+		h = (LONG)d->lines * (theme_fh() + 1);
+		DoSuperMethodA(cl, obj, msg);
+		mc_minmax(msg, 100, 300, MUI_MAXMAX, h, h, h);
+		return 0;
+	}
+	case MUIM_Setup:
+		if (!DoSuperMethodA(cl, obj, msg))
+			return FALSE;
+		theme_setup(obj);
+		return TRUE;
+	case MUIM_Cleanup:
+		theme_cleanup(obj);
+		break;
+	case MUIM_Show:
+		((struct stext_data *)INST_DATA(cl, obj))->shown = 1;
+		break;
+	case MUIM_Hide:
+		((struct stext_data *)INST_DATA(cl, obj))->shown = 0;
+		break;
+	case MUIM_Draw: {
+		ULONG f;
+		/* the Area class fills in the flags (MUI_Redraw() leaves them to it) */
+		DoSuperMethodA(cl, obj, msg);
+		f = ((struct MUIP_Draw *)msg)->flags;
+		if (f & (MADF_DRAWOBJECT | MADF_DRAWUPDATE))
+			st_draw(INST_DATA(cl, obj), obj, !(f & MADF_DRAWOBJECT));
+		return 0;
+	}
+	}
+	return DoSuperMethodA(cl, obj, msg);
+}
+
+/* ==================================================================
+ * Alice68-Network: making the classes, and the timer's work
+ * ================================================================== */
+void widgets_set_tick(void (*fn)(void))
+{
+	tick_fn = fn;
+}
+
+static struct MUI_CustomClass *wmk(int size, APTR disp)
+{
+	return MUI_CreateCustomClass(NULL, (CONST_STRPTR)MUIC_Area, NULL, size, disp);
+}
+
+int widgets_classes_make(void)
+{
+	graph_mcc = wmk(sizeof(struct graph_data), DISPATCHER_REF(graph_dispatch));
+	tabs_mcc = wmk(sizeof(struct tabs_data), DISPATCHER_REF(tabs_dispatch));
+	table_mcc = wmk(sizeof(struct table_data), DISPATCHER_REF(table_dispatch));
+	stext_mcc = wmk(sizeof(struct stext_data), DISPATCHER_REF(stext_dispatch));
+	return graph_mcc && tabs_mcc && table_mcc && stext_mcc ? 0 : -1;
+}
+
+void widgets_classes_free(void)
+{
+	struct MUI_CustomClass **c[] = { &graph_mcc, &tabs_mcc, &table_mcc, &stext_mcc };
+	int i;
+
+	for (i = 0; i < (int)(sizeof(c) / sizeof(c[0])); i++)
+		if (*c[i]) {
+			MUI_DeleteCustomClass(*c[i]);
+			*c[i] = NULL;
+		}
+}

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Alice68-Network on a 68k emulator (machine68k) with fake intuition,
+"""Alice68-NetworkGT (the GadTools network window) on a 68k emulator (machine68k) with fake intuition,
 gadtools, graphics, dos, exec and alice68net.device: the gadgets are made,
 the user types a network and presses "Join and save", then "Scan", then
 closes the window. Checks what reaches the device and the prefs file, and
 that every request is answered before the program ends.
 
-    harness_netprefs.py amiga/out/Alice68-Network
+    harness_netprefs.py amiga/out/Alice68-NetworkGT
 SPDX-License-Identifier: GPL-2.0-only"""
 import struct, sys
 import machine68k as M

@@ -23,9 +23,23 @@
   `alice68net.device` unit 1 is the port for the TCP/IP stack. It starts when a stack opens
   unit 1, or at boot with `eth=on`; `eth=off` leaves the port to rondoval's `genet.device`.
   The splash shows a LAN field.
-- **`C:Alice68-Network` (new): the network settings window.** Status of the WiFi and the
-  Ethernet, scanning and choosing a network, joining (and saving the prefs), WiFi and
-  Ethernet on/off.
+- **`C:Alice68-Network` (new): the network settings window, in MUI.** It looks like
+  Riptide's preferences (its MUI layer is reused, `amiga/netgui/rt`): a page list with
+  Status, then **Ethernet** (link, rate and duplex, auto negotiation, what each side
+  advertises, flow control, link downs, MAC addresses) and **Ethernet traffic** (rates,
+  bytes, packets, drops and errors in and out, and a graph of the last minute, after
+  MikroTik's RouterOS), then **WiFi** (the connection, joining a network: the password
+  shows as dots unless Show is ticked), **Networks** (scan; a click takes a network's
+  name) and **WiFi traffic**. Save, Apply, Close. It needs MUI 3.8 or later;
+  `C:Alice68-NetworkGT` is the earlier GadTools window, for machines without MUI.
+- **Commodore's OUI for the MAC addresses (new).** A tick box on the Ethernet and the
+  WiFi pages makes the first three bytes of the unit's address Commodore International's,
+  `00:80:10`; the last three stay the Pi's. It takes effect at once (the WiFi leaves the
+  network for a moment and joins again; a stack already using a unit keeps the old
+  address until it opens it again) and Save keeps it in `ENVARC:alice68net.prefs`
+  (`MAC0=`/`MAC1=`: `COMMODORE`, an address, or nothing for the hardware's own), which
+  `alice68net.device` 2.6 applies when it starts. Stacks can set an address with netdev's
+  `NETDEV_CMD_SET_MAC` too.
 - **The WiFi gives the firmware the WPA key itself** (PBKDF2 of the password and the
   network name, as Linux does), which its supplicant needs; the first test on a Pi
   associated but never finished the handshake.

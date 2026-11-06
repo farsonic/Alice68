@@ -26,7 +26,9 @@ build Alice68-NetCheck netcheck_start.S netcheck.c lvo.S
 build alice68net.device device_start.S net/alice68net.c wifi/lvox.S lvo.S
 build Alice68-WiFi wifi/wifitool_start.S wifi/wifitool.c wifi/lvox.S lvo.S
 build Alice68-Monitor monitor_start.S monitor.c wifi/lvox.S lvo.S
-build Alice68-Network netprefs_start.S netprefs.c lvoy.S wifi/lvox.S lvo.S
+build Alice68-NetworkGT netprefs_start.S netprefs.c lvoy.S wifi/lvox.S lvo.S
+# Alice68-Network: the MUI window, built as Riptide's RiptidePrefs is (amiga/netgui/Makefile)
+make -s -C netgui OUT="$(pwd)/out"
 # alice68hdf.device runs from Emu68's ROM board, which is mapped read-only:
 # it must not have writable static data
 python3 -I - out/alice68hdf.c.o out/hdf_core.c.o out/hdf_start.S.o <<'PY'

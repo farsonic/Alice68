@@ -1,0 +1,5 @@
+# Alice68-Network: library calls beyond Riptide's tables (format: rt/tools/gen_lvos.py).
+# SPDX-License-Identifier: GPL-2.0-only
+
+@lib expansion ExpansionBase basetype=Library
+72  APTR FindConfigDev(APTR oldConfigDev a0, LONG manufacturer d0, LONG product d1)

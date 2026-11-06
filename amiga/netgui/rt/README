@@ -1,0 +1,43 @@
+Riptide's MUI layer, as Alice68-Network uses it
+================================================
+
+Alice68-Network (amiga/netgui/netgui.c) looks like Riptide's preferences
+editor because it is built from the same parts. These files come from
+Riptide (https://github.com/farsonic/riptide), commit 4e5f73c
+("Riptide 0.37: version strings"), GPL-2.0-only like Alice68's Amiga parts:
+
+  os/amiga.h devices.h dos.h exec.h intuition.h sana2.h os_lvos.txt
+                         src/amiga/os/            (unchanged)
+  amiga_os.h             src/amiga/amiga_os.h     (unchanged)
+  include/string.h       src/amiga/include/       (unchanged)
+  rt/rt_types.h          include/rt/              (unchanged)
+  startup.S link.ld libc.c
+                         src/amiga/               (unchanged)
+  printf.c               src/core/printf.c        (unchanged)
+  tools/gen_lvos.py elf2hunk.py hunk.py
+                         tools/                   (unchanged)
+  prefs/mui.h            src/amiga/prefs/         (+ MUIA_String_Secret)
+  prefs/mui_util.c mui_lang.c mui_ids.h mui_lvos.txt mui_classes.h mui_theme.h
+                         src/amiga/prefs/         (mui_theme.h: Alice68's icon list)
+  prefs/mui_theme.c      src/amiga/prefs/         (the icon table rearranged for
+                                                   Alice68's pages; WiFi, traffic and
+                                                   "i" icons added)
+  prefs/mui_classes.c    src/amiga/prefs/         (the nav list's headings "Ethernet"
+                                                   and "WiFi", Status first, About last)
+  prefs/mui_thunks.S     src/amiga/prefs/         (the dispatchers not taken left out)
+  prefs/mui_widgets.c    src/amiga/prefs/mui_status.c: the graph, tabs, table and
+                         stext classes only (no interface view, no Status page);
+                         its tags in prefs/mui_widgets.h; class making added
+  prefs/stat_util.c/.h   src/amiga/prefs/prefs_status.c/.h: the graph history and
+                         the number wording only
+
+Written for Alice68: cmd/cmdlib.h and prefs/prefs_fields.h (small stand-ins for
+Riptide's, which describe its own tools and pages).
+
+The library calls are Riptide's generated inline functions (tools/gen_lvos.py,
+register variables, as Riptide builds them). Elsewhere Alice68's 68k code calls
+libraries through lvo.S instead; this directory keeps Riptide's way, which its
+releases are built with.
+
+To take a newer Riptide: copy the files above again and redo the changes in the
+brackets.

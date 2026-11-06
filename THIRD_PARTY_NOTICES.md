@@ -71,6 +71,15 @@ was copied from them, but they deserve the credit:
   Copyright (c) 2026, lwip-amiga contributors; the licence text is in
   `amiga/wifi/LICENSE-netdev.txt`.
 
+## In Alice68-Network
+
+* `amiga/netgui/rt/` – the MUI layer of [Riptide](https://github.com/farsonic/riptide)'s
+  RiptidePrefs (its theme, page list, heads, buttons, labels, graph, table and tabs
+  classes, the library call generator and the freestanding startup), from commit
+  `4e5f73c`, GPL-2.0-only, by the Riptide authors. Which files, and what was changed,
+  is in `amiga/netgui/rt/README`. No MUI SDK file is included; the MUI numbers are
+  Riptide's own definitions.
+
 ## Not included
 
 Kickstart ROMs and other AmigaOS files, the Raspberry Pi firmware

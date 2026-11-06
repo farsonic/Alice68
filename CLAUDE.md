@@ -28,7 +28,9 @@ User-facing docs: README.md. History of where code came from: docs/PROVENANCE.md
   brcmfmac and OpenBSD bwfm only: **never copy from WiFiPi.device** (no licence on most files), nor
   from RISC OS's binary-only WLanBWFM. Firmware messages are built byte by byte.
 - `amiga/net/alice68net.c` — `alice68net.device`: netdev client of the network board (unit 0 WiFi,
-  unit 1 the kernel's GENET Ethernet, `eth_*` in `alice_net.c`). `amiga/netprefs.c` — `Alice68-Network`,
+  unit 1 the kernel's GENET Ethernet, `eth_*` in `alice_net.c`). `amiga/netgui/` — `Alice68-Network` (MUI,
+  built with Riptide's MUI layer in `amiga/netgui/rt/`, see its README; `make -C amiga/netgui`
+  from `build.sh`); `amiga/netprefs.c` — `Alice68-NetworkGT`,
   the GadTools settings window (`lvoy.S` for calls with a2/a3). `amiga/wifi/` — `Alice68-WiFi`, `wifi_api.h`, `netdev.h`.
   `alice68hdf.device` hands the `WIFI` folder's files to the kernel at boot (`offer_wifi`).
 - `amiga/monitor.c` — `Alice68-Monitor`: debugging window (tasks, backtraces, the board's log rings,
@@ -62,7 +64,7 @@ python3 amiga/test/harness_netcheck.py amiga/out/Alice68-NetCheck   # the networ
 tools/wifi-test/run.sh                   # WiFi protocol layer on the PC (expect "ALL OK")
 python3 amiga/test/harness_wifitool.py amiga/out/Alice68-WiFi   # the WiFi tool against a fake driver
 python3 amiga/test/harness_monitor.py amiga/out/Alice68-Monitor  # Alice68-Monitor DUMP against a fake board
-python3 amiga/test/harness_netprefs.py amiga/out/Alice68-Network # the network settings window against fake libraries
+python3 amiga/test/harness_netprefs.py amiga/out/Alice68-NetworkGT # the GadTools network window against fake libraries
 tools/splash-preview/build.sh > out.ppm  # the splash, drawn by the kernel's own code
 ```
 
@@ -125,7 +127,7 @@ tools/splash-preview/build.sh > out.ppm  # the splash, drawn by the kernel's own
   build from a fresh clone of that commit, then zip `README.md`, `RELEASE-NOTES.md`,
   `SHA256SUMS`, `boot/` (kernel8.img, kernel8-nousb.img, config.txt, cmdline.txt,
   floppy.txt, overlays/), `amiga/` (DEVS/USBHardware/alice68-usb.device,
-  DEVS/alice68net.device, C/Alice68-USBLog, C/Alice68-HDF, C/Alice68-NetCheck, C/Alice68-WiFi, C/Alice68-Monitor, C/Alice68-Network,
+  DEVS/alice68net.device, C/Alice68-USBLog, C/Alice68-HDF, C/Alice68-NetCheck, C/Alice68-WiFi, C/Alice68-Monitor, C/Alice68-Network, C/Alice68-NetworkGT,
   ReadMe-USB.txt), `Licenses/` (with amiga/wifi/LICENSE-netdev.txt) and `source/` (git archive
   of the commit plus the three submodules, and SOURCE.txt). The kernels report
   `git:<commit>`; the release must be that commit.
