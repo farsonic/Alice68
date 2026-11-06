@@ -24,14 +24,20 @@
   unit 1, or at boot with `eth=on`; `eth=off` leaves the port to rondoval's `genet.device`.
   The splash shows a LAN field.
 - **`C:Alice68-Network` (new): the network settings window, in MUI.** It looks like
-  Riptide's preferences (its MUI layer is reused, `amiga/netgui/rt`): a page list with
-  Status, then **Ethernet** (link, rate and duplex, auto negotiation, what each side
-  advertises, flow control, link downs, MAC addresses) and **Ethernet traffic** (rates,
-  bytes, packets, drops and errors in and out, and a graph of the last minute, after
-  MikroTik's RouterOS), then **WiFi** (the connection, joining a network: the password
-  shows as dots unless Show is ticked), **Networks** (scan; a click takes a network's
-  name) and **WiFi traffic**. Save, Apply, Close. It needs MUI 3.8 or later;
+  Riptide's preferences (its MUI layer is reused, `amiga/netgui/rt`). Pages: About,
+  Status; **Networks** - Ethernet (link, rate and duplex, autonegotiation, what each side
+  offers, flow control, link downs, time up, MAC addresses) and WiFi (the connection and
+  the networks in range); **Settings** - Ethernet (autonegotiation and the speeds and
+  duplexes offered, or a fixed speed; flow control; on/off) and WiFi (network, password
+  shown as dots unless Show is ticked, country, power saving); **Traffic** - per unit,
+  after MikroTik's RouterOS: rates, bytes, packets, drops and errors in and out and a
+  graph of the last minute. Save, Apply, Close. It needs MUI 3.8 or later;
   `C:Alice68-NetworkGT` is the earlier GadTools window, for machines without MUI.
+- **Ethernet and WiFi settings in the kernel (new).** The Ethernet's PHY offers the speeds
+  and duplexes asked for, or takes a fixed speed; flow control (pause frames) when both
+  sides offer it; WiFi power saving. `alice68net.device` 2.7 takes them
+  (`NET_CMD_ETHCFG`, `NET_CMD_WIFICFG`) and applies the saved ones
+  (`ENVARC:alice68net.prefs`: `ETH=`, `WIFI=`) when it starts.
 - **The splash has an animation (new).** Between the emblem and the header's text, a
   desktop computer is opened, a USB card and a network card go into its expansion slots,
   the lid closes and a monitor comes down onto it. The cards' LEDs show the real state
@@ -39,14 +45,10 @@
   Original drawing, made by the kernel's code (`al_anim` in `alice_splash.c`), about 20
   frames a second from CPU1 while the splash is up; `tools/splash-preview/build.sh W H MS`
   renders any moment of it on a PC.
-- **Commodore's OUI for the MAC addresses (new).** A tick box on the Ethernet and the
-  WiFi pages makes the first three bytes of the unit's address Commodore International's,
-  `00:80:10`; the last three stay the Pi's. It takes effect at once (the WiFi leaves the
-  network for a moment and joins again; a stack already using a unit keeps the old
-  address until it opens it again) and Save keeps it in `ENVARC:alice68net.prefs`
-  (`MAC0=`/`MAC1=`: `COMMODORE`, an address, or nothing for the hardware's own), which
-  `alice68net.device` 2.6 applies when it starts. Stacks can set an address with netdev's
-  `NETDEV_CMD_SET_MAC` too.
+- **Commodore's OUI for the MAC addresses (new).** Both units' addresses start with
+  Commodore International's `00:80:10`; the last three bytes stay the Pi's.
+  `net.oui=off` in `cmdline.txt` keeps the Pi's own. Stacks can still set an address with
+  netdev's `NETDEV_CMD_SET_MAC`.
 - **The WiFi gives the firmware the WPA key itself** (PBKDF2 of the password and the
   network name, as Linux does), which its supplicant needs; the first test on a Pi
   associated but never finished the handshake.

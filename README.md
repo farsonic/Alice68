@@ -166,6 +166,7 @@ aga.look=0 aga.scale=1
 | `wifi=off` | Leave the WiFi chip off |
 | `eth=on` | Start the kernel's Ethernet at boot (it also starts when a stack opens `alice68net.device` unit 1) |
 | `eth=off` | Keep the kernel off the Ethernet port (for rondoval's `genet.device`) |
+| `net.oui=off` | Keep the Pi's own MAC addresses (otherwise both network units use Commodore's OUI, `00:80:10`) |
 | `net.trace=1` | Log every ICMP (ping) frame and the first dropped frames to the network log (Alice68-Monitor DUMP), kernel and alice68net.device |
 
 Examples:
