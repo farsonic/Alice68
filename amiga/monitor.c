@@ -543,6 +543,43 @@ static LONG timers(void)
     } else put("  E-clock: timer.device unit 2 would not open\n");
     if (tr) DeleteIORequest(tr);
     if (tp) DeleteMsgPort(tp);
+
+    /* Are requests ever lost? Short waits, one after another, for 10 s, each 1..16 ms on
+       MICROHZ (the CIA-A timer, as Riptide's sleeps), then VBLANK. A request not back within
+       2 s of the Pi's timer is counted LOST and taken back with AbortIO. Run it while traffic
+       flows (a speed test in another window): that is when level 2 is busiest. */
+    for (ULONG unit = 0; unit < 2; unit++) {
+        struct MsgPort *sp = CreateMsgPort();
+        struct timerequest *sr = sp ? CreateIORequest(sp, sizeof *sr) : 0;
+        if (!sr || OpenDevice("timer.device", unit ? 1 : 0, sr, 0)) { put("  stress: timer.device would not open\n"); rc = 5; }
+        else {
+            ULONG n = 0, lost = 0, late = 0, worst = 0, t0 = usecs(), seed = t0;
+            put(unit ? "  VBLANK  waits for 10 s: " : "  MICROHZ waits for 10 s: ");
+            while (usecs() - t0 < 10000000u) {
+                seed = seed * 1103515245u + 12345u;
+                ULONG want = 1000u + (seed >> 16) % 16000u;
+                sr->io.io_Command = TR_ADDREQUEST; sr->tv_secs = 0; sr->tv_micro = want;
+                ULONG a = usecs();
+                SendIO(sr);
+                int done = 0;
+                while (usecs() - a < want + 2000000u) if (CheckIO(sr)) { done = 1; break; }
+                ULONG took = usecs() - a;
+                if (!done) { lost++; AbortIO(sr); }
+                WaitIO(sr);
+                n++;
+                if (done && took > want + 40000u) late++;
+                if (done && took - want > worst && took > want) worst = took - want;
+            }
+            char l[160]; struct sb b = { l, 0, sizeof l };
+            sdec(&b, n); ss(&b, " waits, "); sdec(&b, lost); ss(&b, " LOST, "); sdec(&b, late);
+            ss(&b, " more than 40 ms late, worst "); sdec(&b, worst / 1000); ss(&b, " ms late\n");
+            put(l);
+            if (lost) rc = 5;
+            CloseDevice(sr);
+        }
+        if (sr) DeleteIORequest(sr);
+        if (sp) DeleteMsgPort(sp);
+    }
     return rc;
 }
 
