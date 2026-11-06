@@ -23,11 +23,13 @@ User-facing docs: README.md. History of where code came from: docs/PROVENANCE.md
   `wifi/sdio.c` Arasan host, `wifi/chip.c` bring-up, `wifi/fmac.c` protocol (host-independent,
   tested by `tools/wifi-test`). CPU1 runs it from the xHCI main loop (`alice_net_poll()`) or alone
   (`alice_net_cpu1_main()`, no-USB kernel). The coroutine must yield at every wait; the kernel
-  reserves x12-x29 (`-ffixed`), so the switch saves only x19, x30, sp, d8-d15. Written from Linux
+  reserves only x12 (and v19-v26) in these files, so the switch saves the full AAPCS64 callee-saved
+  set: x19-x29, x30, sp, d8-d15. Written from Linux
   brcmfmac and OpenBSD bwfm only: **never copy from WiFiPi.device** (no licence on most files), nor
   from RISC OS's binary-only WLanBWFM. Firmware messages are built byte by byte.
 - `amiga/net/alice68net.c` — `alice68net.device`: netdev client of the network board (unit 0 WiFi,
-  unit 1 reserved for the kernel's Ethernet). `amiga/wifi/` — `Alice68-WiFi`, `wifi_api.h`, `netdev.h`.
+  unit 1 the kernel's GENET Ethernet, `eth_*` in `alice_net.c`). `amiga/netprefs.c` — `Alice68-Network`,
+  the GadTools settings window (`lvoy.S` for calls with a2/a3). `amiga/wifi/` — `Alice68-WiFi`, `wifi_api.h`, `netdev.h`.
   `alice68hdf.device` hands the `WIFI` folder's files to the kernel at boot (`offer_wifi`).
 - `amiga/monitor.c` — `Alice68-Monitor`: debugging window (tasks, backtraces, the board's log rings,
   the WiFi driver's `pt_wstat` "where"). The board layout is in `alice68_usbpt.h`; it survives a 68k reset.
@@ -60,6 +62,7 @@ python3 amiga/test/harness_netcheck.py amiga/out/Alice68-NetCheck   # the networ
 tools/wifi-test/run.sh                   # WiFi protocol layer on the PC (expect "ALL OK")
 python3 amiga/test/harness_wifitool.py amiga/out/Alice68-WiFi   # the WiFi tool against a fake driver
 python3 amiga/test/harness_monitor.py amiga/out/Alice68-Monitor  # Alice68-Monitor DUMP against a fake board
+python3 amiga/test/harness_netprefs.py amiga/out/Alice68-Network # the network settings window against fake libraries
 tools/splash-preview/build.sh > out.ppm  # the splash, drawn by the kernel's own code
 ```
 
@@ -122,7 +125,7 @@ tools/splash-preview/build.sh > out.ppm  # the splash, drawn by the kernel's own
   build from a fresh clone of that commit, then zip `README.md`, `RELEASE-NOTES.md`,
   `SHA256SUMS`, `boot/` (kernel8.img, kernel8-nousb.img, config.txt, cmdline.txt,
   floppy.txt, overlays/), `amiga/` (DEVS/USBHardware/alice68-usb.device,
-  DEVS/alice68net.device, C/Alice68-USBLog, C/Alice68-HDF, C/Alice68-NetCheck, C/Alice68-WiFi, C/Alice68-Monitor,
+  DEVS/alice68net.device, C/Alice68-USBLog, C/Alice68-HDF, C/Alice68-NetCheck, C/Alice68-WiFi, C/Alice68-Monitor, C/Alice68-Network,
   ReadMe-USB.txt), `Licenses/` (with amiga/wifi/LICENSE-netdev.txt) and `source/` (git archive
   of the commit plus the three submodules, and SOURCE.txt). The kernels report
   `git:<commit>`; the release must be that commit.

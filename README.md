@@ -164,6 +164,8 @@ aga.look=0 aga.scale=1
 | `wifi.ssid="NAME"` `wifi.psk="PASSWORD"` | Join this WiFi network at boot (see [WiFi](#wifi-new-not-yet-tested-on-a-pi)) |
 | `wifi.country=GB` | Your country: the WiFi channels allowed |
 | `wifi=off` | Leave the WiFi chip off |
+| `eth=on` | Start the kernel's Ethernet at boot (it also starts when a stack opens `alice68net.device` unit 1) |
+| `eth=off` | Keep the kernel off the Ethernet port (for rondoval's `genet.device`) |
 
 Examples:
 
@@ -243,16 +245,24 @@ Shell.
 - **Leaving the USB-A ports to AmigaOS:** `frf_usb=neptune` in `cmdline.txt` keeps the
   kernel off them, so rondoval's `xhci.device` can drive them instead.
 
-## WiFi (new, not yet tested on a Pi)
+## WiFi and Ethernet: Alice68's network card (new, not yet tested on a Pi)
 
-The **kernel** runs the Pi 4's built-in WiFi (the Cypress CYW43455 chip) on CPU1, beside
-USB, and AmigaOS sees it as a network card: `alice68net.device` hands frames between that
-card and rondoval's **lwip-amiga** TCP/IP stack (the one in the
-[driver stack](https://github.com/rondoval/emu68-driver-stack/releases)'s archives). It
-speaks lwip-amiga's `netdev` interface, which is faster than SANA-II (the stack and the
-driver call each other directly), so Roadshow, AmiTCP, Miami and Riptide cannot use it
-yet. The chip's own firmware does the WPA2 handshake (and WPA3 where the firmware
-supports it). The card has room for a second unit, the kernel's own Ethernet driver, to come.
+The **kernel** runs the Pi 4's built-in WiFi (the Cypress CYW43455 chip) and its Gigabit
+Ethernet port (GENET) on CPU1, beside USB, and AmigaOS sees one network card with two
+units: `alice68net.device` **unit 0 is the WiFi, unit 1 the Ethernet**. The driver speaks
+lwip-amiga's `netdev` interface, which is faster than SANA-II (the stack and the driver call
+each other directly): rondoval's **lwip-amiga** (the
+[driver stack](https://github.com/rondoval/emu68-driver-stack/releases)'s archives) and
+**Riptide**, which now speaks netdev too, can use it; Roadshow, AmiTCP and Miami (SANA-II
+only) cannot. The WiFi chip's own firmware does the WPA2 handshake (and WPA3 where the
+firmware supports it).
+
+**`Alice68-Network`** (in `C:`, or drag it to `SYS:Prefs`) is the settings window: the state
+of both units, a Scan button and the list of networks in range (click one to take its
+name), the network name, password and country, **Join and save** (it joins and saves
+`ENVARC:alice68wifi.prefs`), Disconnect, WiFi on/off, and Ethernet on/off.
+
+### WiFi
 
 1. **Firmware**, on the SD card's FAT partition (where `kick31.rom` is), in a folder
    named **`WIFI`**. Alice68 does not include it. Take these from Raspberry Pi's
@@ -289,6 +299,21 @@ supports it). The card has room for a second unit, the kernel's own Ethernet dri
    (`AddNetInterface` in `S:Network-Startup` adds the files in that folder). lwip-amiga
    carries one interface at a time: WiFi or the Ethernet port, so give the other file
    `STATE=DOWN`.
+
+### Ethernet (unit 1)
+
+The kernel's Ethernet starts when a TCP/IP stack opens `alice68net.device` unit 1 (or at
+boot with `eth=on` in `cmdline.txt`, so the splash's **LAN** field shows the link):
+```
+DEVICE=alice68net.device
+UNIT=1
+TYPE=NETDEV
+ADDRESS=DHCP
+```
+in `DEVS:NetInterfaces/eth` for lwip-amiga. It then marks the port disabled in the device
+tree for AmigaOS: **use either the kernel's Ethernet or rondoval's `genet.device`, not
+both**. `eth=off` in `cmdline.txt` keeps the kernel off the port entirely, for
+`genet.device`. It runs at 10, 100 or 1000 Mbit/s, as the link negotiates.
 
 **Remove any other WiFi driver from AmigaOS's start-up** (WiFiPi.device and the like, in
 `DEVS:NetInterfaces/`, `S:User-Startup` or a stack's own settings): the kernel drives the

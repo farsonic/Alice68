@@ -18,6 +18,18 @@
   The kernel marks the WiFi's SD host disabled in the device tree for AmigaOS, notices when
   another driver (WiFiPi.device on a first test) resets it anyway and says so, and starts a
   lost chip again after 5 s (5 times in a row at most).
+- **Gigabit Ethernet in the kernel, unit 1 of the network card.** The kernel drives the
+  Pi 4's Ethernet port (GENET v5 and its BCM54213PE PHY, 10/100/1000 Mbit/s) on CPU1;
+  `alice68net.device` unit 1 is the port for the TCP/IP stack. It starts when a stack opens
+  unit 1, or at boot with `eth=on`; `eth=off` leaves the port to rondoval's `genet.device`.
+  The splash shows a LAN field.
+- **`C:Alice68-Network` (new): the network settings window.** Status of the WiFi and the
+  Ethernet, scanning and choosing a network, joining (and saving the prefs), WiFi and
+  Ethernet on/off.
+- **The WiFi gives the firmware the WPA key itself** (PBKDF2 of the password and the
+  network name, as Linux does), which its supplicant needs; the first test on a Pi
+  associated but never finished the handshake.
+- Riptide now speaks netdev, so it can use `alice68net.device` as well as lwip-amiga.
 - **The splash shows the hardfiles again, and the WiFi.** It keeps drawing after the 68k
   starts and stops at AmigaOS's first picture (or 30 s later at most); stopping at the
   68k's start had hidden `alice68hdf.device`'s HARDFILES summary. The status strip has a
