@@ -19,10 +19,8 @@
   barrier-wrapped operation per 32-byte line.
   The built-in `68040.library` is 2.0, which uses them too. `Alice68-NetCheck` 1.6 no
   longer calls genet.device 4.x wrong for Alice68: it is the driver for lwip-amiga.
-- **The boot splash no longer keeps drawing for 20 s** after the 68k starts: it stops at
-  once, so nothing is drawn over AmigaOS's or the RTG screen. `aga.splash=N` in
-  `cmdline.txt` brings the old behaviour back for `N` seconds (0–600), e.g.
-  `aga.splash=20` to watch the hardfile count and late USB lines arrive.
+- **The boot splash stops drawing when the 68k starts**, instead of 20 s later, so
+  nothing is drawn over AmigaOS's or the RTG screen.
 - **`C:Alice68-NetCheck`** (new): what a SANA-II network driver reports, as text in a
   Shell, on any AmigaOS (rondoval's `genet-stats` needs 3.2's ReAction classes). For
   the Pi's own Ethernet (`genet.device` 3.x) it shows link rate, MAC address, packet and

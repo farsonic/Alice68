@@ -837,13 +837,6 @@ void parse_cmdline(const char *cmdline)
         if ((t = find_token(cmdline, "aga.look=")))  frf_boot_look  = t[sizeof("aga.look=") - 1] - '0';
         if ((t = find_token(cmdline, "aga.scale=")))  frf_boot_scale = t[sizeof("aga.scale=") - 1] - '0';
         if (find_token(cmdline, "aga.nobootlog")) { extern volatile int frf_bootlog_on; frf_bootlog_on = 0; }
-        /* aga.splash=N: the splash keeps drawing N s after the 68k starts (default 0) */
-        if ((t = find_token(cmdline, "aga.splash="))) {
-            extern unsigned frf_splash_secs;
-            unsigned n = 0;
-            for (t += sizeof("aga.splash=") - 1; *t >= '0' && *t <= '9' && n <= 600; t++) n = n * 10 + (unsigned)(*t - '0');
-            frf_splash_secs = n > 600 ? 600 : n;
-        }
     }
 #endif
     if (find_token(cmdline, "aga.nosandbox"))

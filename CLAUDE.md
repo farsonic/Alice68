@@ -84,8 +84,8 @@ tools/splash-preview/build.sh > out.ppm  # the splash, drawn by the kernel's own
   forwards serial lines starting `[alice68` to `kprintf` (splash SYSTEM panel + serial
   log). The line `[alice68hdf] hardfiles: B bootable, N non-bootable, L left out` is
   **parsed by the kernel** for the status strip: keep its format.
-- The splash may only be drawn until `aga.splash` seconds (default 0) after the 68k starts (`alice_live()`); after that
-  the framebuffer may belong to RTG.
+- The splash may only be drawn until the 68k starts (`alice_live()`); after that the
+  framebuffer may belong to RTG.
 - Hardfile rules users rely on: every `.hdf` mounted, none boots unless `hdf.boot=NAME`;
   clashing names → `HF<unit><part>`; a duplicate FFS volume is left out unless chosen; dot
   files (`._*`) ignored; writes only inside the file's own clusters, never the FAT.
