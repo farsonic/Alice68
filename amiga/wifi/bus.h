@@ -27,7 +27,8 @@ struct sdhost {
     uint8_t  spec;          /* SDHCI spec version (0 = 1.0, 2 = 3.0) */
     uint8_t  slow;          /* identification clock: space register writes */
     uint8_t  swap;          /* data FIFO words need a byte swap (detected) */
-    uint8_t  streak;        /* recent transfer errors (weighted): slow the clock down */
+    uint8_t  nerr;          /* transfer errors in the current second */
+    uint32_t errwin;        /* start of that second (wifi_usecs) */
     uint32_t errors;
     uint32_t last_int;      /* interrupt status at the last error */
 };
@@ -72,6 +73,7 @@ void     chip_w32(struct chip *c, uint32_t addr, uint32_t v);
 int      chip_ram(struct chip *c, uint32_t addr, uint8_t *buf, uint32_t len, int write);
 
 int  chip_attach(struct chip *c, struct sdhost *h);         /* identify, cores, RAM, halt the CPU */
+void chip_card_int(struct chip *c, int on);                 /* CCCR interrupt enable */
 int  chip_wake(struct chip *c);                             /* out of save/restore sleep (KSO) */
 int  chip_load(struct chip *c, const uint8_t *fw, uint32_t fwlen, const uint8_t *nv, uint32_t nvlen);  /* download, start, F2 */
 int  chip_irq_ack(struct chip *c, uint32_t *intstatus, uint32_t *mailbox);

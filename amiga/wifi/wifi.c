@@ -18,8 +18,8 @@
 
 #define DEVNAME     "alice68wifi.device"
 #define VERSION     1
-#define REVISION    4
-#define IDSTRING    "alice68wifi 1.4 (06.11.2026)\r\n"
+#define REVISION    5
+#define IDSTRING    "alice68wifi 1.5 (06.11.2026)\r\n"
 
 #define BUFSZ       2048            /* one frame buffer */
 #define CTLMAX      1600            /* largest control payload */
@@ -45,6 +45,8 @@ struct WifiBase {
     ULONG   sem[12];                /* struct SignalSemaphore (46 bytes): process start */
     UBYTE   fcstate, flowctl;
     ULONG   ack_fail;
+    struct timerequest *naptr;
+    UBYTE   rx_more, cardint_off;
     ULONG   rxskip_t0;
     UBYTE   poll, irq_on, chip_up, pad1;
     struct Interrupt irq;
@@ -209,6 +211,8 @@ static void say(struct WifiBase *w, const char *m)
 /* ---- control messages (ioctls and iovars) ---------------------------------- */
 static void rx_all(struct WifiBase *w);
 static void tx_fail(struct WifiBase *w);
+static void poll_frames(struct WifiBase *w);
+static void nap(struct WifiBase *w);
 
 static void ctl_rx(struct WifiBase *w, const UBYTE *m, unsigned len)
 {
@@ -224,8 +228,9 @@ static int wait_credit(struct WifiBase *w)
 {
     ULONG t0 = wifi_usecs();
     while (!sdpcm_credit(w->txseq, w->maxseq)) {
-        rx_all(w);
+        poll_frames(w);
         if (wifi_usecs() - t0 > 1000000) return -1;
+        if (wifi_usecs() - t0 > 3000) nap(w);
     }
     return 0;
 }
@@ -248,8 +253,10 @@ static LONG ctl(struct WifiBase *w, ULONG cmd, int set, void *buf, unsigned len,
     w->txseq++;
     ULONG t0 = wifi_usecs();
     while (!w->ctl_got) {
-        rx_all(w);
+        poll_frames(w);
+        if (w->ctl_got) break;
         if (wifi_usecs() - t0 > 2000000) { wifi_log("command %u: no answer\n", cmd); w->ctl_wait = 0; return -104; }
+        if (wifi_usecs() - t0 > 3000) nap(w);   /* a slow answer: let the rest of the system run */
     }
     w->ctl_wait = 0;
     return w->ctl_status;
@@ -446,6 +453,7 @@ static void rx_all(struct WifiBase *w)
         if (now_ms(w) - w->rxskip_t0 < 200) return;
         w->rxskip = 0;
     }
+    w->rx_more = 1;                                 /* cleared when the chip has nothing more */
     for (int guard = 0; guard < 64; guard++) {
         UBYTE *b = (w->attached && w->started) ? pool_get(w) : 0;
         UBYTE *buf = b ? b : w->rxbuf;
@@ -453,17 +461,18 @@ static void rx_all(struct WifiBase *w)
         if (chip_frame(&w->c, buf, first, 0)) { if (b) pool_put(w, b); break; }
         struct sdpcm_rx r;
         int k = sdpcm_parse(buf, &r);
-        if (k == 1) { if (b) pool_put(w, b); break; }
+        if (k == 1) { if (b) pool_put(w, b); w->rx_more = 0; break; }
         if (k < 0 || (nextlen && r.len > first)) {
             wifi_log("bad frame header (%d)\n", k);
             if (b) pool_put(w, b);
             rx_fail(w);
+            w->rx_more = 0;                         /* NAKHANDLED brings it back */
             break;
         }
         /* the window, sanity-checked as Linux does */
         w->maxseq = (UBYTE)(r.maxseq - w->txseq) > 0x40 ? (UBYTE)(w->txseq + 2) : r.maxseq;
         w->flowctl = r.flowctl;
-        if (r.len > BUFSZ) { if (b) pool_put(w, b); rx_fail(w); break; }
+        if (r.len > BUFSZ) { if (b) pool_put(w, b); rx_fail(w); w->rx_more = 0; break; }
         unsigned total = (r.len + 3) & ~3u;
         if (total > first && chip_frame(&w->c, buf + first, total - first, 0)) { if (b) pool_put(w, b); break; }
         nextlen = r.nextlen;
@@ -778,6 +787,7 @@ static void irq_setup(struct WifiBase *w)
     if (AddIntServerEx(w->gic, GIC_IRQ, 0, 0, &w->irq)) { wifi_log("interrupt %u taken: polling\n", GIC_IRQ); return; }
     w->irq_on = 1;
     w->poll = 0;
+    chip_card_int(&w->c, 1);
     sdh_card_irq(&w->h, 1);
     wifi_log("card interrupt on GIC %u\n", GIC_IRQ);
 }
@@ -791,7 +801,7 @@ void dev_irq(struct WifiBase *w)
         Signal(w->task, w->sig_irq);
     } else if (++w->spurious > 5000) {      /* someone else's level interrupt we cannot clear */
         DisableIntGic(w->gic, GIC_IRQ);
-        w->poll = 1;
+        w->poll = 1;                        /* the process turns the chip's interrupt off */
         Signal(w->task, w->sig_irq);
     }
 }
@@ -979,7 +989,7 @@ static void conn_tick(struct WifiBase *w)
             m[i] = 0;
             say(w, m);
             wifi_log("channel %u, %d dBm, %u Mbit/s\n", w->cur.channel, w->rssi, w->rate);
-        } else if (now - w->join_t0 > 15000)
+        } else if (now - w->join_t0 > 20000)
             retry(w, w->ev_link_up ? "no WPA handshake: is the password right?" : "the network did not answer");
         break;
     case WS_CONNECTED:
@@ -1198,16 +1208,20 @@ static int command(struct WifiBase *w, struct IOStdReq *io)
 }
 
 /* ---- the process --------------------------------------------------------------- */
-static void service(struct WifiBase *w)
+/* As Linux: read the chip's interrupt status and read frames only when it
+   says some are waiting (FRAME_IND) - a read of F2 with nothing waiting
+   returns junk. */
+static void poll_frames(struct WifiBase *w)
 {
     if (!w->chip_up) return;
     uint32_t is, mb, wk = w->c.wakes;
     if (chip_irq_ack(&w->c, &is, &mb)) {
         if (++w->ack_fail == 50) wifi_log("the chip's status cannot be read (SDIO errors %u)\n", w->h.errors);
-    } else
-        w->ack_fail = 0;
+        return;
+    }
+    w->ack_fail = 0;
     if (!wk && w->c.wakes) wifi_log("the chip sleeps when idle (save/restore): waking it as needed\n");
-    if (mb & HMB_DATA_NAKHANDLED) w->rxskip = 0;
+    if (mb & HMB_DATA_NAKHANDLED) { w->rxskip = 0; is |= I_HMB_FRAME_IND; }
     if (is & I_HMB_FC_CHANGE) w->fcstate = (is & I_HMB_FC_STATE) != 0;
     if (mb & HMB_DATA_FWHALT) {
         say(w, "the WiFi firmware stopped");
@@ -1216,8 +1230,24 @@ static void service(struct WifiBase *w)
         link_set(w, 0);
         return;
     }
-    rx_all(w);
-    tx_all(w);
+    if ((is & I_HMB_FRAME_IND) || w->rx_more) rx_all(w);
+}
+
+/* wait about a frame without holding the CPU */
+static void nap(struct WifiBase *w)
+{
+    if (!w->naptr) return;
+    w->naptr->io.io_Command = TR_ADDREQUEST;
+    w->naptr->tv_secs = 0;
+    w->naptr->tv_micro = 1000;
+    DoIO(w->naptr);
+}
+
+static void service(struct WifiBase *w)
+{
+    if (!w->chip_up) return;
+    poll_frames(w);
+    if (w->chip_up) tx_all(w);
 }
 
 static void wifi_proc(void)
@@ -1231,6 +1261,9 @@ static void wifi_proc(void)
     /* UNIT_VBLANK: the tick costs no CIA timer (Alice68's virtual CIA-A also
        carries the keyboard handshake) */
     int timer_ok = tr && !OpenDevice("timer.device", 1, tr, 0);
+    struct MsgPort *np = CreateMsgPort();
+    struct timerequest *ntr = np ? CreateIORequest(np, sizeof *ntr) : 0;
+    if (ntr && !OpenDevice("timer.device", 1, ntr, 0)) w->naptr = ntr;
     w->dos = OpenLibrary("dos.library", 37);
     w->rxbuf = AllocMem(4 * BUFSZ, MEMF_PUBLIC | MEMF_CLEAR);
     /* the unit's port starts taking requests now */
@@ -1276,6 +1309,7 @@ static void wifi_proc(void)
         while ((io = GetMsg(&w->unit.unit_MsgPort)))
             if (!command(w, io)) ReplyMsg(io);
         if (w->chip_up) {
+            if (w->poll && w->irq_on && !w->cardint_off) { chip_card_int(&w->c, 0); w->cardint_off = 1; }
             service(w);
             if ((s & w->sig_irq) && w->irq_on && !w->poll) sdh_card_irq(&w->h, 1);
             conn_tick(w);
@@ -1305,6 +1339,10 @@ static void wifi_proc(void)
     if (timer_ok) CloseDevice(tr);
     if (tr) DeleteIORequest(tr);
     if (tp) DeleteMsgPort(tp);
+    if (w->naptr) CloseDevice(w->naptr);
+    w->naptr = 0;
+    if (ntr) DeleteIORequest(ntr);
+    if (np) DeleteMsgPort(np);
     Forbid();
     Disable();
     w->task = 0;
@@ -1350,7 +1388,7 @@ LONG dev_open(struct WifiBase *w, struct IOStdReq *io, ULONG unit, ULONG flags)
         if (dos) {
             static const char pname[] = "alice68wifi";
             struct TagItem t[] = { { NP_Entry, (ULONG)wifi_proc }, { NP_Name, (ULONG)pname },
-                                   { NP_StackSize, 16384 }, { NP_Priority, 5 }, { TAG_DONE, 0 } };
+                                   { NP_StackSize, 16384 }, { NP_Priority, 0 }, { TAG_DONE, 0 } };
             w->waiter = FindTask(0);
             w->quit = 0;
             SetSignal(0, SIGF_SINGLE);

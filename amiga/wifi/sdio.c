@@ -326,16 +326,17 @@ int sdh_cmd53(struct sdhost *h, int write, unsigned fn, uint32_t addr, void *buf
 {
     for (int attempt = 0; ; attempt++) {
         int e = cmd53_once(h, write, fn, addr, buf, len, incr);
-        if (!e) { if (h->streak) h->streak--; return 0; }
+        if (!e) return 0;
         if (e == -0x30000) return e;            /* alignment: the caller's bug, not the line */
         if (e <= -0x20000 && ((-e - 0x20000) & 0x40)) return e;   /* illegal command: the chip is asleep (chip.c wakes it) */
         sdh_abort(h, fn);
-        h->streak += 4;
-        if (h->streak >= 12 && h->sd_hz > 6000000) {
+        uint32_t now = wifi_usecs();
+        if (now - h->errwin > 1000000) { h->errwin = now; h->nerr = 0; }
+        if (++h->nerr >= 8 && h->sd_hz > 6000000) {     /* 8 errors within a second: slower */
             uint32_t to = h->sd_hz / 2;
             wifi_log("SDIO errors: slowing down to %u Hz\n", to);
             sdh_set_clock(h, to);
-            h->streak = 0;
+            h->nerr = 0;
         }
         if (fn != 1 || attempt >= 8) return e;
     }

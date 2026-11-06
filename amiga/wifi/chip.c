@@ -380,6 +380,14 @@ static int verify(struct chip *c, uint32_t addr, const uint8_t *want, uint32_t l
     return 0;
 }
 
+/* CCCR interrupt enable: master, F1, F2. Off while polling: the chip would
+   otherwise drive DAT1 between transfers. */
+void chip_card_int(struct chip *c, int on)
+{
+    uint8_t v = on ? 0x07 : 0x00;
+    sdh_cmd52(c->h, 1, 0, CCCR_INTEN, &v);
+}
+
 int chip_load(struct chip *c, const uint8_t *fw, uint32_t fwlen, const uint8_t *nv, uint32_t nvlen)
 {
     if (clock_wait(c, CLK_ALP_AVAIL_REQ, CLK_ALP_AVAIL, 100000)) { wifi_log("no ALP clock for the download\n"); return -1; }
@@ -431,8 +439,7 @@ int chip_load(struct chip *c, const uint8_t *fw, uint32_t fwlen, const uint8_t *
         chip_w8(c, F1_CHIPCLKCSR, CLK_FORCE_HT);
     } else
         chip_w8(c, F1_CHIPCLKCSR, clk);
-    v = 0x07;                                                       /* card interrupts: master, F1, F2 */
-    sdh_cmd52(c->h, 1, 0, CCCR_INTEN, &v);
+    chip_card_int(c, 0);                    /* the chip's interrupt on DAT1 only when it is used */
     return 0;
 }
 
