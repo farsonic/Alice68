@@ -8,7 +8,10 @@
   the SD host and SDIO, the chip's bring-up and firmware download, its FullMAC protocol,
   scanning, and joining with the firmware's own WPA2/WPA3 supplicant. The card interrupt
   (through `gic400.library`) wakes it; without one it polls. `Alice68-WiFi JOIN "name"
-  "password"` sets the network up; `Alice68-WiFi`, `SCAN` and `LOG` show what it does. The
+  "password"` sets the network up; `Alice68-WiFi`, `SCAN` and `LOG` show what it does.
+  Opening the device leaves the chip off until `START`, `JOIN` or the TCP/IP stack asks
+  for it; `START` shows each step, and `STEP=n` in the prefs stops after step n. The tool
+  reports a driver that does not answer instead of waiting for ever. The
   chip firmware comes from Raspberry Pi OS (see the README). The protocol layer is tested
   on the PC (`tools/wifi-test`); the hardware side needs a Pi to confirm.
 - **Emu68's data-cache range opcodes** (Emu68 `582253e` by Lukasz Winczura, from Emu68's

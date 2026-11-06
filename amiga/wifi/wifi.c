@@ -18,8 +18,8 @@
 
 #define DEVNAME     "alice68wifi.device"
 #define VERSION     1
-#define REVISION    8
-#define IDSTRING    "alice68wifi 1.8 (06.11.2026)\r\n"
+#define REVISION    9
+#define IDSTRING    "alice68wifi 1.9 (07.11.2026)\r\n"
 
 #define BUFSZ       2048            /* one frame buffer */
 #define CTLMAX      1600            /* largest control payload */
@@ -104,7 +104,7 @@ struct WifiBase {
     /* prefs */
     char    ssid[33], pass[65], country[3], fwdir[96];
     ULONG   sdclock;
-    UBYTE   pm, force_poll;
+    UBYTE   pm, force_poll, stepmax, start_req, hw_tried, hw_powered;
 
     /* log */
     char    log[LOGSZ];
@@ -250,6 +250,7 @@ static void rx_all(struct WifiBase *w);
 static void tx_fail(struct WifiBase *w);
 static void poll_frames(struct WifiBase *w);
 static void nap(struct WifiBase *w);
+static void start_chip(struct WifiBase *w);
 
 static void ctl_rx(struct WifiBase *w, const UBYTE *m, unsigned len)
 {
@@ -667,6 +668,7 @@ static void prefs(struct WifiBase *w)
     w->sdclock = 10000000;                 /* safe; SDCLOCK= raises it */
     w->pm = 0;
     w->force_poll = 0;
+    w->stepmax = 0;
     ULONG len = 0;
     UBYTE *b = load(w, "ENV:alice68wifi.prefs", &len, 1);
     if (!b) b = load(w, "ENVARC:alice68wifi.prefs", &len, 1);
@@ -695,6 +697,7 @@ static void prefs(struct WifiBase *w)
         else if (sieq(k, "SDCLOCK")) { ULONG n = 0; while (*v >= '0' && *v <= '9') n = n * 10 + (ULONG)(*v++ - '0'); if (n >= 400000 && n <= 50000000) w->sdclock = n; }
         else if (sieq(k, "POWERSAVE")) w->pm = (UBYTE)(*v == '1' ? 1 : *v == '2' ? 2 : 0);
         else if (sieq(k, "POLL")) w->force_poll = (UBYTE)(*v == '1' || sieq(v, "on") || sieq(v, "yes"));
+        else if (sieq(k, "STEP")) w->stepmax = (UBYTE)(*v >= '1' && *v <= '9' ? *v - '0' : 0);
         else wifi_log("prefs: unknown setting %s\n", k);
     }
     FreeMem(b, len + 1 + 16);
@@ -721,6 +724,45 @@ static int clm_upload(struct WifiBase *w, const UBYTE *blob, ULONG len)
     return 0;
 }
 
+/* The WiFi controller shares GIC 158 with the SD card controller, whose driver
+   (brcm-emmc) owns the line and silences only its own controller: ours must
+   never assert it. Checked at every step of the bring-up. */
+static void line_guard(struct WifiBase *w)
+{
+    volatile ULONG *r = (volatile ULONG *)SDH_BASE;
+    ULONG en = r[0x38 / 4], st = r[0x30 / 4];
+    en = en >> 24 | (en >> 8 & 0xff00) | (en << 8 & 0xff0000) | en << 24;
+    st = st >> 24 | (st >> 8 & 0xff00) | (st << 8 & 0xff0000) | st << 24;
+    if (en && !w->irq_on) {
+        wifi_log("the WiFi controller's interrupt output was on (enable %x, status %x): off\n", en, st);
+        r[0x38 / 4] = 0;
+    }
+}
+
+/* one step of the bring-up: shown as the status message; STEP=n in the prefs stops after step n */
+static int step(struct WifiBase *w, int n, const char *what)
+{
+    if (n >= 4) line_guard(w);       /* the controller is set up from step 3 on */
+    char m[96];
+    unsigned i = 0;
+    for (const char *p = "step "; *p; ) m[i++] = *p++;
+    m[i++] = (char)('0' + n);
+    m[i++] = ':'; m[i++] = ' ';
+    for (const char *p = what; *p && i < 90; ) m[i++] = *p++;
+    m[i] = 0;
+    say(w, m);
+    if (w->stepmax && n > w->stepmax) {
+        char s[64]; unsigned k = 0;
+        for (const char *p = "stopped before step "; *p; ) s[k++] = *p++;
+        s[k++] = (char)('0' + n);
+        for (const char *p = " (STEP= in the prefs)"; *p; ) s[k++] = *p++;
+        s[k] = 0;
+        say(w, s);
+        return 1;
+    }
+    return 0;
+}
+
 static int bringup(struct WifiBase *w)
 {
     char which[160];
@@ -743,7 +785,7 @@ static int bringup(struct WifiBase *w)
     UBYTE *fwb = 0, *nvb = 0;
     w->clm = 0;
     for (int pass = 0; pass < 2; pass++) {
-        wifi_log("step: reading the firmware files\n");
+        if (!pass && step(w, 1, "reading the firmware files")) return -100;
         fwb = load_any(w, fw, ".bin", &fwlen, 0, which);
         if (!fwb) { say(w, fw == s43456 ? "firmware missing: copy brcmfmac43456-sdio.bin to DEVS:Firmware/" : "firmware missing: copy cyfmac43455-sdio-standard.bin to DEVS:Firmware/"); return -5; }
         wifi_log("firmware %s (%u bytes)\n", which, fwlen);
@@ -754,10 +796,9 @@ static int bringup(struct WifiBase *w)
         w->clmlen = clmlen;
         if (w->clm) wifi_log("CLM %s\n", which);
         if (pass) break;
-        wifi_log("step: files read; now the WiFi hardware\n");
-
-        wifi_log("step: pins and power\n");
+        if (step(w, 2, "pins and power")) goto fail;
         sdh_pins();
+        w->hw_powered = 1;
         MB_SetGPIOState(w->mbox, 1, 0);         /* WL_ON low: chip off */
         wifi_udelay(20000);
         MB_SetGPIOState(w->mbox, 1, 1);         /* and on */
@@ -770,9 +811,9 @@ static int bringup(struct WifiBase *w)
             base = ((caps >> 8) & 0xff) * 1000000u;
             if (!base) base = 250000000u;
         }
-        wifi_log("step: SD host\n");
+        if (step(w, 3, "SD host")) goto fail;
         if (sdh_init(&w->h, base) || sdh_bus4(&w->h, w->sdclock)) { say(w, "the WiFi chip does not answer on SDIO"); goto fail; }
-        wifi_log("step: chip\n");
+        if (step(w, 4, "chip")) goto fail;
         if (chip_attach(&w->c, &w->h)) { say(w, "WiFi chip not recognised"); goto fail; }
         if (w->c.id != 0x4345) wifi_log("chip %x is not a 43455/43456: trying the 43455 files\n", w->c.id);
         if (!(w->c.id == 0x4345 && w->c.rev == 9)) break;
@@ -783,7 +824,7 @@ static int bringup(struct WifiBase *w)
         fw = s43456; nvn = nv43456;
     }
     {
-        wifi_log("step: firmware download\n");
+        if (step(w, 5, "firmware download")) goto fail;
         UBYTE *nvimg = AllocMem(nvlen + 32, MEMF_PUBLIC | MEMF_CLEAR);
         ULONG nvimglen = nvimg ? fm_nvram(nvb, nvlen, nvimg) : 0;
         FreeMem(nvb, nvlen + 16 + 16);
@@ -794,7 +835,7 @@ static int bringup(struct WifiBase *w)
         if (nvimg) FreeMem(nvimg, nvlen + 32);
         if (e) { say(w, "firmware did not start"); goto fail_clm; }
     }
-    wifi_log("step: firmware setup\n");
+    if (step(w, 6, "firmware setup")) goto fail_clm;
     w->chip_up = 1;
     w->txseq = 0xff;
     w->maxseq = 0;
@@ -837,6 +878,7 @@ static int bringup(struct WifiBase *w)
     cmd_int(w, WLC_SET_INFRA, 1);
     cmd_int(w, WLC_SET_AP, 0);
     w->state = WS_IDLE;
+    line_guard(w);
     wifi_log("step: done\n");
     say(w, w->ssid[0] ? "ready" : "ready - no network set: put SSID= in ENV:alice68wifi.prefs");
     return 0;
@@ -1089,7 +1131,7 @@ static void conn_tick(struct WifiBase *w)
 static const UWORD cmds[] = {
     NSCMD_DEVICEQUERY, NETDEV_CMD_ATTACH, NETDEV_CMD_DETACH, NETDEV_CMD_START, NETDEV_CMD_STOP,
     NETDEV_CMD_SET_RXFILTER, NETDEV_CMD_SET_COALESCE, NETDEV_CMD_GET_STATS, NETDEV_CMD_GET_LINK, NETDEV_CMD_SET_MAC,
-    WIFI_CMD_STATUS, WIFI_CMD_SCAN, WIFI_CMD_LOG, WIFI_CMD_RECONNECT, WIFI_CMD_DISCONNECT, WIFI_CMD_OFF, 0
+    WIFI_CMD_STATUS, WIFI_CMD_SCAN, WIFI_CMD_LOG, WIFI_CMD_RECONNECT, WIFI_CMD_DISCONNECT, WIFI_CMD_OFF, WIFI_CMD_START, 0
 };
 
 static void pool_free(struct WifiBase *w)
@@ -1103,6 +1145,7 @@ static int do_attach(struct WifiBase *w, struct IOStdReq *io)
     struct NetDevAttach *a = io->io_Data;
     if (!a || io->io_Length < sizeof *a) return NDERR_BADPARAMS;
     if (w->attached) return NDERR_BUSY;
+    if (!w->hw_tried) { prefs(w); start_chip(w); }
     if (!w->chip_up) { wifi_log("netdev attach: the chip is not running (%s)\n", w->msg); return IOERR_OPENFAIL; }
     if (a->nda_AbiVersion < 1) return NDERR_BADVERSION;
     ULONG n = a->nda_RxHoldReq ? a->nda_RxHoldReq + 32u : 96u;
@@ -1258,6 +1301,7 @@ static int command(struct WifiBase *w, struct IOStdReq *io)
     }
     case WIFI_CMD_RECONNECT:
         prefs(w);
+        if (!w->hw_tried) { w->start_req = 1; w->want = 1; break; }
         if (w->state == WS_CONNECTED || w->state == WS_JOINING) cmd_int(w, WLC_DISASSOC, 0);
         link_set(w, 0);
         w->want = 1;
@@ -1270,6 +1314,9 @@ static int command(struct WifiBase *w, struct IOStdReq *io)
         link_set(w, 0);
         if (w->chip_up) w->state = WS_IDLE;
         say(w, "disconnected");
+        break;
+    case WIFI_CMD_START:
+        if (!w->hw_tried) { prefs(w); w->start_req = 1; }
         break;
     case WIFI_CMD_OFF:
         if (w->attached) { say(w, "not switched off: a TCP/IP stack is using it"); err = NDERR_BUSY; break; }
@@ -1330,6 +1377,21 @@ static void service(struct WifiBase *w)
     if (w->chip_up) tx_all(w);
 }
 
+/* the bring-up, once per run of the process: on START, JOIN/RECONNECT or a netdev attach */
+static void start_chip(struct WifiBase *w)
+{
+    w->hw_tried = 1;
+    w->start_req = 0;
+    if (!w->c.bounce || bringup(w)) {
+        w->state = WS_FAILED;
+        w->chip_up = 0;
+        if (w->mbox && w->hw_powered) MB_SetGPIOState(w->mbox, 1, 0);   /* the chip off again */
+    } else {
+        irq_setup(w);
+        w->want = 1;
+    }
+}
+
 static void wifi_proc(void)
 {
     struct WifiBase *w = g_w;
@@ -1363,12 +1425,9 @@ static void wifi_proc(void)
         w->c.bounce = AllocMem(CHIP_BOUNCE, MEMF_PUBLIC);
         w->last_us = wifi_usecs();
         wifi_log("%s", IDSTRING);
-        if (!w->c.bounce || bringup(w)) {
-            w->state = WS_FAILED;
-            w->chip_up = 0;
-            if (w->mbox) MB_SetGPIOState(w->mbox, 1, 0);   /* the chip off again */
-        }
-        else { irq_setup(w); w->want = 1; }
+        w->state = WS_OFF;
+        w->hw_tried = w->start_req = w->hw_powered = 0;     /* a new run after OFF starts afresh */
+        scpy(w->msg, "off - Alice68-WiFi START (or JOIN, or the TCP/IP stack) starts it", sizeof w->msg);
     }
 
     ULONG tick_mask = timer_ok ? 1u << tp->mp_SigBit : 0;
@@ -1388,6 +1447,7 @@ static void wifi_proc(void)
         struct IOStdReq *io;
         while ((io = GetMsg(&w->unit.unit_MsgPort)))
             if (!command(w, io)) ReplyMsg(io);
+        if (w->start_req && !w->hw_tried) start_chip(w);
         if (w->chip_up) {
             if (w->poll && w->irq_on && !w->cardint_off) { chip_card_int(&w->c, 0); w->cardint_off = 1; }
             service(w);
@@ -1468,7 +1528,10 @@ LONG dev_open(struct WifiBase *w, struct IOStdReq *io, ULONG unit, ULONG flags)
         if (dos) {
             static const char pname[] = "alice68wifi";
             struct TagItem t[] = { { NP_Entry, (ULONG)wifi_proc }, { NP_Name, (ULONG)pname },
-                                   { NP_StackSize, 16384 }, { NP_Priority, 0 }, { TAG_DONE, 0 } };
+                                   { NP_StackSize, 16384 }, { NP_Priority, 0 },
+                                   /* no locks or variables copied from the opener: starting the
+                                      process asks nothing of any filesystem */
+                                   { NP_CurrentDir, 0 }, { NP_HomeDir, 0 }, { NP_CopyVars, 0 }, { TAG_DONE, 0 } };
             w->waiter = FindTask(0);
             w->quit = 0;
             SetSignal(0, SIGF_SINGLE);

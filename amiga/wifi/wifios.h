@@ -32,9 +32,12 @@ struct NSDeviceQueryResult { ULONG DevQueryFormat, SizeAvailable; UWORD DeviceTy
 #define OFFSET_BEGINNING (-1)
 #define OFFSET_END    1
 #define NP_Entry      (TAG_USER + 1003)
+#define NP_CurrentDir (TAG_USER + 1010)
 #define NP_StackSize  (TAG_USER + 1011)
 #define NP_Name       (TAG_USER + 1012)
 #define NP_Priority   (TAG_USER + 1013)
+#define NP_HomeDir    (TAG_USER + 1016)
+#define NP_CopyVars   (TAG_USER + 1017)
 
 static inline APTR AllocMem(ULONG n, ULONG fl)            { return (APTR)lvo(SYSBASE, -198, n, fl, 0, 0); }
 static inline APTR FindTask(const char *n)                { return (APTR)lvo(SYSBASE, -294, 0, 0, 0, (ULONG)n); }

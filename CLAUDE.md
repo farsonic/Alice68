@@ -49,6 +49,7 @@ tools/hdf-test/run.sh                    # hardfile tests: core on the PC + driv
 python3 amiga/test/harness.py amiga/out/alice68-usb.device   # USB pass-through driver on the 68k emulator
 python3 amiga/test/harness_netcheck.py amiga/out/Alice68-NetCheck   # the network check tool against a fake SANA-II driver
 tools/wifi-test/run.sh                   # WiFi protocol layer on the PC (expect "ALL OK")
+python3 amiga/test/harness_wifitool.py amiga/out/Alice68-WiFi   # the WiFi tool against a fake driver
 tools/splash-preview/build.sh > out.ppm  # the splash, drawn by the kernel's own code
 ```
 

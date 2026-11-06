@@ -270,7 +270,8 @@ firmware supports it): no separate supplicant program is needed.
    ```
    `COUNTRY` is your two-letter country code (the channels allowed). Optional:
    `POWERSAVE=1`, `SDCLOCK=25000000` (SDIO faster than the safe 10 MHz default), `POLL=1` (no
-   interrupt), `FIRMWARE=dir/` (another firmware folder).
+   interrupt), `FIRMWARE=dir/` (another firmware folder), `STEP=n` (stop the start-up after
+   step n of 6, to find a step that hangs).
 4. Tell lwip-amiga about it: a file `DEVS:NetInterfaces/wifi` with
    ```
    DEVICE=alice68wifi.device
@@ -283,6 +284,9 @@ firmware supports it): no separate supplicant program is needed.
    `STATE=DOWN`. Keep the driver in `DEVS:` itself (not `DEVS:Networks/`): that is where
    `Alice68-WiFi` looks for it.
 
+Opening the device does not switch the chip on: `Alice68-WiFi START`, `JOIN`, `RECONNECT`
+or the TCP/IP stack does, and `START` prints each step of the start-up (1 reading the files,
+2 pins and power, 3 SD host, 4 chip, 5 firmware download, 6 firmware setup).
 `Alice68-WiFi` on its own shows the state, the network, the signal and the counters;
 `Alice68-WiFi SCAN` lists the networks in range; `Alice68-WiFi LOG` shows the driver's log
 (the same lines go to the serial log as `[alice68wifi] ...`) - send that if WiFi does not

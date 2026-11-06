@@ -11,6 +11,7 @@
 #define WIFI_CMD_RECONNECT  0x8a43      /* read the prefs again and connect */
 #define WIFI_CMD_DISCONNECT 0x8a44
 #define WIFI_CMD_OFF        0x8a45      /* switch the chip off; the driver ends when the last user closes it */
+#define WIFI_CMD_START      0x8a46      /* start the chip (opening the device does not) */
 
 #define WIFI_API_VERSION    1
 
