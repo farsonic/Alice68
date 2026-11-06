@@ -635,6 +635,38 @@ static void alice_serial_char(uint8_t c)
 }
 #endif
 
+#ifdef FRF_VIRTUAL_AGA
+/* Level 2 is a level: CIA-A's /INT and the expansion boards' INT2 share it,
+   and on an Amiga Paula sets PORTS again the moment it is cleared while any
+   of them still holds the line. The virtual sources raise PORTS only when
+   something happens, so a clear that comes after a source fired - Exec
+   clears PORTS once the whole server chain has run, and a CIA-A timer can
+   underflow while the chain runs for a network frame - dropped that
+   request for good: the line stayed held with nothing to raise it again.
+   That stopped timer.device's UNIT_MICROHZ (CIA-A) until a key was pressed:
+   Riptide's timers, ping's one-second wait, Workbench (2026-11-06, WiFi
+   frames on Alice68's network board raising level 2 for each burst).
+   Under the chipset lock, from the 68k's INTREQ write. The CIA's line is
+   read without the CIA lock (the order is CIA -> chipset): a line that
+   rises just after is published by its own aga_virtual_cia_irq(), which
+   waits for this lock; one that falls just after costs one extra level 2
+   with nothing to do. PORTS only: EXTER (CIA-B) keeps its storm guard.
+   CIA-A's line only: the network and USB boards' flags stay set when no
+   driver serves them (a WHDLoad game has the machine), and their drivers
+   look at them every frame anyway. */
+extern int frf_vcia_line(int is_a) __attribute__((weak));
+static void ports_still_held(void)
+{
+    if (!aga || game_taken) return;
+    if (!(frf_vcia_line && frf_vcia_line(1))) return;
+    static uint32_t frame, n;                       /* no handler acknowledges a held line forever */
+    uint32_t f = aga_diag_ctr[AGA_D_FRAMES];
+    if (f != frame) { frame = f; n = 0; }
+    if (++n > 2000) return;
+    aga_custom_wput(aga, INTREQ, 0x8000 | INTF_PORTS);
+}
+#endif
+
 static void hook_ext_write_body(void *u, uint32_t reg, uint16_t v)
 {
     (void)u;
@@ -649,6 +681,9 @@ static void hook_ext_write_body(void *u, uint32_t reg, uint16_t v)
         break;
     case POTGO:
         __atomic_store_n(&frf_potgo, (uint16_t)(v & 0xFF00u), __ATOMIC_RELEASE);
+        break;
+    case INTREQ:
+        if (!(v & 0x8000) && (v & INTF_PORTS)) ports_still_held();
         break;
     default:
         break;

@@ -600,11 +600,18 @@ static int frf_vcia_irq_active(const struct frf_vcia *c)
     return (c->icr & c->imask & 0x1fu) != 0u;
 }
 
+/* Alice68: each CIA's /INT line as last published, for the chipset to read
+   without the CIA lock (aga_glue.c: a guest clear of PORTS/EXTER while the
+   line is still held sets the request again, as Paula does) */
+static volatile uint8_t frf_vcia_line_v[2];
+int frf_vcia_line(int is_a) { return frf_vcia_line_v[is_a ? 0 : 1]; }
+
 static void frf_vcia_publish_irq_locked(struct frf_vcia *c, int is_a)
 {
     int active = frf_vcia_irq_active(c);
     if (active) c->icr |= 0x80u;
     else        c->icr &= 0x7fu;
+    __atomic_store_n(&frf_vcia_line_v[is_a ? 0 : 1], (uint8_t)active, __ATOMIC_RELEASE);
     aga_virtual_cia_irq(is_a ? FRF_INTF_PORTS : FRF_INTF_EXTER, active);
 }
 
