@@ -152,6 +152,41 @@ void wifi_log(const char *fmt, ...)
     kprintf("%s", b.s);
     ring_put(b.s + 7, b.n - 7);
 }
+/* Tracing what the Amiga is given: every ICMP frame received, and the first frames dropped,
+   with the reason. ICMP is rare (ping), so this costs nothing; "net.trace=0" in cmdline.txt
+   switches it off. */
+static int bootarg_word(const char *w);
+static int an_trace = -1;
+static unsigned an_drops_logged;
+static void trace_rx(int unit, const uint8_t *f, unsigned len, const char *verdict)
+{
+    if (an_trace < 0) an_trace = !bootarg_word("net.trace=0");
+    if (!an_trace || len < 14) return;
+    unsigned et = (unsigned)f[12] << 8 | f[13];
+    int icmp = et == 0x0800 && len >= 14 + 20 && f[14 + 9] == 1;
+    int drop = verdict[0] == 'D';
+    if (!icmp && !(drop && an_drops_logged < 40)) return;
+    if (drop) an_drops_logged++;
+    if (icmp) {
+        const uint8_t *ip = f + 14;
+        unsigned ihl = (ip[0] & 15u) * 4u, ty = len >= 14 + ihl + 8 ? ip[ihl] : 255u;
+        unsigned seq = len >= 14 + ihl + 8 ? (unsigned)ip[ihl + 6] << 8 | ip[ihl + 7] : 0;
+        wifi_log("unit %d rx ICMP type %u seq %u %u.%u.%u.%u -> %u.%u.%u.%u len %u: %s\n", unit, ty, seq,
+                 ip[12], ip[13], ip[14], ip[15], ip[16], ip[17], ip[18], ip[19], len, verdict);
+    } else
+        wifi_log("unit %d rx type %04x len %u: %s\n", unit, et, len, verdict);
+}
+
+static void trace_tx(int unit, const uint8_t *f, unsigned len, int ok)
+{
+    if (an_trace < 0) an_trace = !bootarg_word("net.trace=0");
+    if (!an_trace || len < 14 + 20 + 8 || f[12] != 0x08 || f[13] != 0x00 || f[14 + 9] != 1) return;
+    const uint8_t *ip = f + 14, *ic = ip + (ip[0] & 15u) * 4u;
+    wifi_log("unit %d tx ICMP type %u seq %u %u.%u.%u.%u -> %u.%u.%u.%u len %u: %s\n", unit, ic[0],
+             (unsigned)ic[6] << 8 | ic[7], ip[12], ip[13], ip[14], ip[15], ip[16], ip[17], ip[18], ip[19], len,
+             ok ? "sent" : "NOT SENT");
+}
+
 void wifi_where(const char *fmt, ...)
 {
     if (!anb) return;
@@ -562,8 +597,10 @@ static void rx_payload(const uint8_t *p, unsigned len)
     volatile struct an_unit *u = U(0);
     if (!d) return;
     if (fm_event_parse(d, dl, &e)) { event(&e); return; }
-    if (dl < 14 || dl > AN_SLOT_BYTES - 8) { u->rx_drop++; return; }
-    if (!u->rx_on || u->rx_head - u->rx_tail >= AN_RX_SLOTS) { u->rx_drop++; return; }
+    if (dl < 14 || dl > AN_SLOT_BYTES - 8) { u->rx_drop++; trace_rx(0, d, dl, "DROPPED: length"); return; }
+    if (!u->rx_on) { u->rx_drop++; trace_rx(0, d, dl, "DROPPED: the Amiga takes no frames (RXOFF)"); return; }
+    if (u->rx_head - u->rx_tail >= AN_RX_SLOTS) { u->rx_drop++; trace_rx(0, d, dl, "DROPPED: all 16 slots full"); return; }
+    trace_rx(0, d, dl, "to the Amiga");
     volatile struct an_slot *s = (volatile struct an_slot *)(anb + AN_OFF_RX(0) + (u->rx_head % AN_RX_SLOTS) * AN_SLOT_BYTES);
     ncopy(s->data, d, dl);
     s->len = dl;
@@ -694,7 +731,9 @@ static void tx_all(void)
             uint8_t *f = W.txbuf, *q = f + SDPCM_HDRLEN + BCDC_DATA_HDR;
             for (uint32_t i = 0; i < len; i++) q[i] = s->data[i];
             unsigned n = sdpcm_frame(f, SDPCM_CHAN_DATA, W.txseq, len);
-            if (chip_frame(&W.c, f, n, 1)) { u->tx_err++; tx_fail(); }
+            int bad = chip_frame(&W.c, f, n, 1);
+            trace_tx(0, q, len, !bad);
+            if (bad) { u->tx_err++; tx_fail(); }
             else { W.txseq++; u->tx_pkts++; u->tx_bytes += len; }
         }
         __asm__ volatile("dmb ish" ::: "memory");
@@ -1482,10 +1521,15 @@ static void eth_rx(void)
         uint32_t d = E.cidx & 0xff, ls = grd(G_RXD + d * 12);
         uint32_t len = (ls >> 16) & 0xfff, st = ls & 0xffff;
         const uint8_t *f = E.rxb + d * GBUF + 2;
-        if ((st & (DESC_SOP | DESC_EOP)) != (DESC_SOP | DESC_EOP) || (st & 0x1f) || len < 16 || len > 1536 + 2) E.rx_err++, u->rx_drop++;
-        else if (!u->rx_on || u->rx_head - u->rx_tail >= AN_RX_SLOTS) u->rx_drop++;
+        if ((st & (DESC_SOP | DESC_EOP)) != (DESC_SOP | DESC_EOP) || (st & 0x1f) || len < 16 || len > 1536 + 2) {
+            E.rx_err++, u->rx_drop++;
+            if (len >= 16 && len <= 1536 + 2) trace_rx(1, f, len - 2, (st & 0x1f) ? "DROPPED: GENET says the frame is bad" : "DROPPED: not one buffer");
+            else if (an_drops_logged < 40) { an_drops_logged++; eth_log("rx descriptor status %04x len %u: DROPPED\n", st, len); }
+        } else if (!u->rx_on) { u->rx_drop++; trace_rx(1, f, len - 2, "DROPPED: the Amiga takes no frames (RXOFF)"); }
+        else if (u->rx_head - u->rx_tail >= AN_RX_SLOTS) { u->rx_drop++; trace_rx(1, f, len - 2, "DROPPED: all 16 slots full"); }
         else {
             len -= 2;
+            trace_rx(1, f, len, "to the Amiga");
             volatile struct an_slot *s = (volatile struct an_slot *)(anb + AN_OFF_RX(1) + (u->rx_head % AN_RX_SLOTS) * AN_SLOT_BYTES);
             ncopy(s->data, f, len);
             s->len = len;
@@ -1515,6 +1559,7 @@ static void eth_tx(void)
             uint32_t b = E.tprod % NTXB, d = E.tprod & 0xff;
             uint8_t *q = E.txb + b * GBUF;
             ncopy(q, s->data, len);
+            trace_tx(1, q, len, 1);
             for (; len < 60; len++) q[len] = 0;         /* the shortest Ethernet frame */
             uint64_t a = E.txp + (uint64_t)b * GBUF;
             gwr(G_TXD + d * 12 + 4, (uint32_t)a);

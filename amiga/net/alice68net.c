@@ -18,8 +18,8 @@
 
 #define DEVNAME     "alice68net.device"
 #define VERSION     2
-#define REVISION    2
-#define IDSTRING    "alice68net 2.2 (07.11.2026)\r\n"
+#define REVISION    3
+#define IDSTRING    "alice68net 2.3 (07.11.2026)\r\n"
 
 #define BUFSZ       2048            /* one receive buffer: HEADROOM, the frame, spare room after it */
 #define HEADROOM    64              /* bytes before the frame, as genet.device leaves (its status block):
@@ -182,11 +182,25 @@ static void pool_put(struct NUnit *n, UBYTE *b)
     Enable();
     if (bad && ++n->bad_release <= 5) plog("RxRelease of a buffer that is not out:", (ULONG)b);
 }
+static void pdec(ULONG v) { char t[12]; int k = 0; do t[k++] = (char)('0' + v % 10); while ((v /= 10) && k < 11); while (k) RawPutChar(t[--k]); }
+static void pstr(const char *s) { while (*s) RawPutChar(*s++); }
+/* ICMP frames (ping) on their way to the stack, one line each: with the kernel's own
+   "rx ICMP" lines this shows where a reply is lost */
+static void trace_icmp(struct NUnit *n, const struct NetDevRxDesc *r, int taken)
+{
+    const UBYTE *f = r->nrd_Data;
+    if (r->nrd_Len < 14 + 20 + 8 || f[12] != 0x08 || f[13] != 0x00 || f[14 + 9] != 1) return;
+    const UBYTE *ic = f + 14 + (f[14] & 15) * 4;
+    pstr("[alice68net] unit "); pdec(n->idx); pstr(" ICMP type "); pdec(ic[0]);
+    pstr(" seq "); pdec((ULONG)ic[6] << 8 | ic[7]); pstr(" len "); pdec(r->nrd_Len);
+    pstr(taken ? " handed to the stack\n" : " REFUSED by the stack (no buffer)\n");
+}
 static void rx_flush(struct NUnit *n)
 {
     if (!n->nrxd) return;
     ULONG c = n->nrxd, took = 0;
     if (n->attached && n->started) took = n->sops->nso_RxInput(n->stackctx, n->rxd, c);
+    for (ULONG i = 0; i < c; i++) trace_icmp(n, &n->rxd[i], i < took);
     for (ULONG i = took; i < c; i++) pool_put(n, n->rxd[i].nrd_Cookie);
     n->nrxd = 0;
 }
@@ -237,6 +251,14 @@ static void tx_all(struct NUnit *n)
             if (len + l > AN_SLOT_BYTES - 8) { len = 0; break; }
             for (ULONG k = 0; k < l; k++) s->data[len + k] = p[k];
             len += l;
+        }
+        if (len && t->sg[0].nsg_Len >= 14 + 20 + 8) {
+            const UBYTE *f = t->sg[0].nsg_Data;
+            if (f[12] == 0x08 && f[13] == 0x00 && f[14 + 9] == 1) {
+                const UBYTE *ic = f + 14 + (f[14] & 15) * 4;
+                pstr("[alice68net] unit "); pdec(n->idx); pstr(" ICMP type "); pdec(ic[0]);
+                pstr(" seq "); pdec((ULONG)ic[6] << 8 | ic[7]); pstr(" len "); pdec(len); pstr(" sent to the kernel\n");
+            }
         }
         if (len) {
             s->len = len;

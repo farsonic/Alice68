@@ -166,6 +166,7 @@ aga.look=0 aga.scale=1
 | `wifi=off` | Leave the WiFi chip off |
 | `eth=on` | Start the kernel's Ethernet at boot (it also starts when a stack opens `alice68net.device` unit 1) |
 | `eth=off` | Keep the kernel off the Ethernet port (for rondoval's `genet.device`) |
+| `net.trace=0` | Stop logging ICMP (ping) frames and dropped frames to the network log (on by default while the network is new) |
 
 Examples:
 
