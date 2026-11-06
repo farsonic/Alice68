@@ -95,10 +95,38 @@ static void window(struct chip *c, uint32_t addr)
 /* the chip is little-endian: a backplane word arrives as 4 bytes in order */
 static uint32_t le(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
 
+/* Wake a chip whose save/restore engine put it to sleep: while asleep it takes
+   only the KSO write and answers everything else "illegal command". As Linux's
+   brcmf_sdio_kso_control: write KSO, then read back until KSO and DEVON are set. */
+int chip_wake(struct chip *c)
+{
+    uint8_t v = SLEEPCSR_KSO;
+    sdh_cmd52(c->h, 1, 1, F1_SLEEPCSR, &v);
+    wifi_udelay(2500);
+    for (int i = 0; i < 64; i++) {
+        uint8_t r = 0;
+        if (!sdh_cmd52(c->h, 0, 1, F1_SLEEPCSR, &r) && (r & 3) == 3) { c->wakes++; return 0; }
+        wifi_udelay(50);
+        v = SLEEPCSR_KSO;
+        sdh_cmd52(c->h, 1, 1, F1_SLEEPCSR, &v);
+    }
+    wifi_log("the chip does not wake up\n");
+    return -1;
+}
+
+static int asleep(int e) { return e <= -0x20000 && e > -0x30000 && ((-e - 0x20000) & 0x40); }
+
+static int f1_xfer(struct chip *c, int write, uint32_t addr, uint8_t *buf, uint32_t len)
+{
+    int e = sdh_cmd53(c->h, write, 1, (addr & SB_OFT_MASK) | SB_ACCESS_4B, buf, len, 1);
+    if (asleep(e) && !chip_wake(c)) e = sdh_cmd53(c->h, write, 1, (addr & SB_OFT_MASK) | SB_ACCESS_4B, buf, len, 1);
+    return e;
+}
+
 uint32_t chip_r32(struct chip *c, uint32_t addr)
 {
     window(c, addr);
-    if (sdh_cmd53(c->h, 0, 1, (addr & SB_OFT_MASK) | SB_ACCESS_4B, c->bounce, 4, 1)) return 0xffffffffu;
+    if (f1_xfer(c, 0, addr, c->bounce, 4)) return 0xffffffffu;
     return le(c->bounce);
 }
 
@@ -106,7 +134,7 @@ void chip_w32(struct chip *c, uint32_t addr, uint32_t v)
 {
     window(c, addr);
     c->bounce[0] = (uint8_t)v; c->bounce[1] = (uint8_t)(v >> 8); c->bounce[2] = (uint8_t)(v >> 16); c->bounce[3] = (uint8_t)(v >> 24);
-    sdh_cmd53(c->h, 1, 1, (addr & SB_OFT_MASK) | SB_ACCESS_4B, c->bounce, 4, 1);
+    f1_xfer(c, 1, addr, c->bounce, 4);
 }
 
 int chip_ram(struct chip *c, uint32_t addr, uint8_t *buf, uint32_t len, int write)
@@ -121,7 +149,7 @@ int chip_ram(struct chip *c, uint32_t addr, uint8_t *buf, uint32_t len, int writ
             memcpy(c->bounce, buf, n);
             memset(c->bounce + n, 0, n4 - n);
         }
-        int e = sdh_cmd53(c->h, write, 1, off | SB_ACCESS_4B, c->bounce, n4, 1);
+        int e = f1_xfer(c, write, off, c->bounce, n4);
         if (e) return e;
         if (!write) memcpy(buf, c->bounce, n);
         addr += n; buf += n; len -= n;
@@ -423,5 +451,7 @@ void chip_irq_ack(struct chip *c, uint32_t *intstatus, uint32_t *mailbox)
 int chip_frame(struct chip *c, void *buf, uint32_t len, int write)
 {
     window(c, c->cc_base);
-    return sdh_cmd53(c->h, write, 2, (c->cc_base & SB_OFT_MASK) | SB_ACCESS_4B, buf, len, write);
+    int e = sdh_cmd53(c->h, write, 2, (c->cc_base & SB_OFT_MASK) | SB_ACCESS_4B, buf, len, write);
+    if (asleep(e) && !chip_wake(c)) e = sdh_cmd53(c->h, write, 2, (c->cc_base & SB_OFT_MASK) | SB_ACCESS_4B, buf, len, write);
+    return e;
 }

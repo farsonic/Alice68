@@ -251,9 +251,11 @@ static int xfer(struct sdhost *h, int write, unsigned fn, uint32_t addr, uint32_
     int e = cmd(h, 53, arg, CMD_RSP_48 | CMD_CRCCHK | CMD_IXCHK | CMD_ISDATA | tm, &r);
     if (e) return e;
     if (r & R5_ERRORS) {
-        h->errors++;
         reset_lines(h);
-        wifi_log("CMD53 %s F%u %x: R5 flags %x\n", write ? "write" : "read", fn, addr, (r >> 8) & 0xff);
+        if (!(r & 0x4000)) {                    /* not "illegal command" (a sleeping chip) */
+            h->errors++;
+            wifi_log("CMD53 %s F%u %x: R5 flags %x\n", write ? "write" : "read", fn, addr, (r >> 8) & 0xff);
+        }
         return -0x20000 - (int)((r >> 8) & 0xff);
     }
     for (uint32_t b = 0; b < nblk; b++) {
@@ -326,6 +328,7 @@ int sdh_cmd53(struct sdhost *h, int write, unsigned fn, uint32_t addr, void *buf
         int e = cmd53_once(h, write, fn, addr, buf, len, incr);
         if (!e) { if (h->streak) h->streak--; return 0; }
         if (e == -0x30000) return e;            /* alignment: the caller's bug, not the line */
+        if (e <= -0x20000 && ((-e - 0x20000) & 0x40)) return e;   /* illegal command: the chip is asleep (chip.c wakes it) */
         sdh_abort(h, fn);
         h->streak += 4;
         if (h->streak >= 12 && h->sd_hz > 6000000) {

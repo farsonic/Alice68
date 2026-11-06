@@ -18,8 +18,8 @@
 
 #define DEVNAME     "alice68wifi.device"
 #define VERSION     1
-#define REVISION    2
-#define IDSTRING    "alice68wifi 1.2 (06.11.2026)\r\n"
+#define REVISION    3
+#define IDSTRING    "alice68wifi 1.3 (06.11.2026)\r\n"
 
 #define BUFSZ       2048            /* one frame buffer */
 #define CTLMAX      1600            /* largest control payload */
@@ -1195,8 +1195,9 @@ static int command(struct WifiBase *w, struct IOStdReq *io)
 static void service(struct WifiBase *w)
 {
     if (!w->chip_up) return;
-    uint32_t is, mb;
+    uint32_t is, mb, wk = w->c.wakes;
     chip_irq_ack(&w->c, &is, &mb);
+    if (!wk && w->c.wakes) wifi_log("the chip sleeps when idle (save/restore): waking it as needed\n");
     if (mb & HMB_DATA_NAKHANDLED) w->rxskip = 0;
     if (is & I_HMB_FC_CHANGE) w->fcstate = (is & I_HMB_FC_STATE) != 0;
     if (mb & HMB_DATA_FWHALT) {
