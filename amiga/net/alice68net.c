@@ -18,8 +18,8 @@
 
 #define DEVNAME     "alice68net.device"
 #define VERSION     2
-#define REVISION    4
-#define IDSTRING    "alice68net 2.4 (07.11.2026)\r\n"
+#define REVISION    5
+#define IDSTRING    "alice68net 2.5 (07.11.2026)\r\n"
 
 #define BUFSZ       2048            /* one receive buffer: HEADROOM, the frame, spare room after it */
 #define HEADROOM    64              /* bytes before the frame, as genet.device leaves (its status block):
@@ -67,6 +67,11 @@ struct NUnit {                      /* one unit of the board: 0 WiFi, 1 Ethernet
     struct NetDevRxDesc rxd[RXBATCH];
     ULONG   nrxd, rxbatch_max;
     ULONG   tx_drop, rx_nobuf, bad_release, bad_tx;
+    /* receive: the board's slots, handed to the stack where they are (zero-copy) */
+    ULONG   rx_next;                /* the next slot to hand up; rx_tail (the kernel's) trails it */
+    UBYTE   held[AN_RX_SLOTS];      /* 1: the stack has this slot's frame */
+    UBYTE   zc, pad6;               /* 1: zero-copy; 0: copy (the stack keeps buffers) */
+    ULONG   zc_frames, copied_frames;
 };
 
 struct NetBase {
@@ -195,23 +200,88 @@ static void trace_icmp(struct NUnit *n, const struct NetDevRxDesc *r, int taken)
     pstr(" seq "); pdec((ULONG)ic[6] << 8 | ic[7]); pstr(" len "); pdec(r->nrd_Len);
     pstr(taken ? " handed to the stack\n" : " REFUSED by the stack (no buffer)\n");
 }
+/* Zero-copy receive. A frame is handed to the stack in its board slot; the slot goes back
+   to the kernel (rx_tail) once the stack releases it, and the tail only moves over released
+   slots, in order. Riptide copies and releases inside nso_RxInput, so it costs no copy here.
+   A stack that keeps buffers (lwip-amiga holds a receive window) would hold the board's 16
+   slots: the first time a slot is still held after nso_RxInput, this attachment copies. */
+static volatile UBYTE *slot_data(struct NUnit *n, ULONG i)
+{
+    return ((volatile struct an_slot *)(n->nb->b + AN_OFF_RX(n->idx) + (i % AN_RX_SLOTS) * AN_SLOT_BYTES))->data;
+}
+static int slot_of(struct NUnit *n, APTR p)        /* -1: not one of this unit's slots */
+{
+    ULONG base = (ULONG)(n->nb->b + AN_OFF_RX(n->idx)), off = (ULONG)p - base;
+    if (off >= AN_RX_SLOTS * AN_SLOT_BYTES || off % AN_SLOT_BYTES != 8) return -1;
+    return (int)(off / AN_SLOT_BYTES);
+}
+static void slots_return(struct NUnit *n)          /* the tail over every released slot */
+{
+    volatile struct an_unit *u = U(n);
+    Disable();
+    while ((LONG)(n->rx_next - u->rx_tail) > 0 && !n->held[u->rx_tail % AN_RX_SLOTS]) { barrier(); u->rx_tail++; }
+    Enable();
+}
+static void slot_release(struct NUnit *n, int k)
+{
+    Disable();
+    if (n->held[k]) n->held[k] = 0;
+    else if (++n->bad_release <= 5) plog("RxRelease of a slot that is not out:", (ULONG)k);
+    Enable();
+    slots_return(n);
+}
+static void rx_release(struct NUnit *n, APTR cookie)
+{
+    int k = slot_of(n, cookie);
+    if (k >= 0) slot_release(n, k); else pool_put(n, cookie);
+}
+
 static void rx_flush(struct NUnit *n)
 {
     if (!n->nrxd) return;
     ULONG c = n->nrxd, took = 0;
     if (n->attached && n->started) took = n->sops->nso_RxInput(n->stackctx, n->rxd, c);
     for (ULONG i = 0; i < c; i++) trace_icmp(n, &n->rxd[i], i < took);
-    for (ULONG i = took; i < c; i++) pool_put(n, n->rxd[i].nrd_Cookie);
+    for (ULONG i = took; i < c; i++) rx_release(n, n->rxd[i].nrd_Cookie);
+    if (n->zc)
+        for (ULONG i = 0; i < took; i++) {
+            int k = slot_of(n, n->rxd[i].nrd_Cookie);
+            if (k >= 0 && n->held[k]) {
+                n->zc = 0;                           /* the stack keeps buffers: copy from now on */
+                plog("the stack keeps receive buffers: copying frames from now on, slots held", 0);
+                break;
+            }
+        }
     n->nrxd = 0;
 }
 static void rx_all(struct NUnit *n)
 {
     volatile struct an_unit *u = U(n);
-    while (u->rx_tail != u->rx_head) {
+    /* the kernel starts a new session at 0 (after a 68k reset); never run ahead of it */
+    if ((LONG)(u->rx_head - n->rx_next) < 0 || (LONG)(n->rx_next - u->rx_tail) < 0) {
+        Disable(); n->rx_next = u->rx_tail; memset(n->held, 0, sizeof n->held); Enable();
+    }
+    while (n->rx_next != u->rx_head) {
         barrier();
-        volatile struct an_slot *s = (volatile struct an_slot *)(n->nb->b + AN_OFF_RX(n->idx) + (u->rx_tail % AN_RX_SLOTS) * AN_SLOT_BYTES);
+        ULONG k = n->rx_next % AN_RX_SLOTS;
+        volatile struct an_slot *s = (volatile struct an_slot *)(n->nb->b + AN_OFF_RX(n->idx) + k * AN_SLOT_BYTES);
         ULONG len = s->len;
-        UBYTE *buf = (n->attached && n->started && len <= FRAMEMAX) ? pool_get(n) : 0;
+        int ok = n->attached && n->started && len <= FRAMEMAX;
+        if (ok && n->zc) {
+            struct NetDevRxDesc *r = &n->rxd[n->nrxd++];
+            r->nrd_Data = (APTR)slot_data(n, k);
+            r->nrd_Len = len;
+            r->nrd_Flags = s->flags & AN_SF_BCAST ? NDRF_BCAST : s->flags & AN_SF_MCAST ? NDRF_MCAST : 0;
+            r->nrd_CsumRaw = 0;
+            r->nrd_VlanTci = 0;
+            r->nrd_Cookie = r->nrd_Data;
+            n->held[k] = 1;
+            n->zc_frames++;
+            n->rx_next++;
+            if (n->nrxd >= n->rxbatch_max) rx_flush(n);
+            continue;
+        }
+        UBYTE *buf = ok ? pool_get(n) : 0;
         if (buf) {
             const volatile ULONG *src = (const volatile ULONG *)s->data;
             ULONG *dst = (ULONG *)(buf + HEADROOM);
@@ -223,12 +293,13 @@ static void rx_all(struct NUnit *n)
             r->nrd_CsumRaw = 0;
             r->nrd_VlanTci = 0;
             r->nrd_Cookie = buf;
+            n->copied_frames++;
         } else n->rx_nobuf++;
-        barrier();
-        u->rx_tail++;
+        n->rx_next++;                               /* copied or dropped: the slot is free again */
         if (n->nrxd >= n->rxbatch_max) rx_flush(n);
     }
     rx_flush(n);
+    slots_return(n);
 }
 
 /* ---- transmit ------------------------------------------------------------------ */
@@ -308,7 +379,7 @@ static LONG ndo_TxSubmit(APTR ctx, const struct NetDevTxDesc *d, ULONG count)
     return (LONG)k;
 }
 static VOID ndo_TxKick(APTR ctx) { struct NUnit *n = ctx; Disable(); if (n->nb->task) Signal(n->nb->task, n->nb->sig_kick); Enable(); }
-static VOID ndo_RxRelease(APTR ctx, APTR cookie) { pool_put(ctx, cookie); }
+static VOID ndo_RxRelease(APTR ctx, APTR cookie) { rx_release(ctx, cookie); }
 static APTR ndo_DmaAlloc(APTR ctx, ULONG size, ULONG align)
 {
     (void)ctx;
@@ -377,6 +448,9 @@ static LONG do_attach(struct NUnit *n, struct IOStdReq *io)
     k->ndc_RxPoolBufs = c;
     n->tx_head = n->tx_tail = 0;
     n->ndone = n->nrxd = 0;
+    n->rx_next = U(n)->rx_tail;
+    memset(n->held, 0, sizeof n->held);
+    n->zc = 1;
     n->attached = 1;
     n->started = 0;
     n->link = 0;
@@ -439,6 +513,9 @@ static int command(struct NUnit *n, struct IOStdReq *io)
     case NETDEV_CMD_START:
         if (!n->attached) { err = NDERR_NOTATTACHED; break; }
         U(n)->rx_tail = U(n)->rx_head;              /* old frames: skipped (the tail is ours) */
+        n->rx_next = U(n)->rx_head;
+        memset(n->held, 0, sizeof n->held);
+        n->zc = 1;
         n->started = 1;
         q_add(n, AN_CMD_RXON, 0, 0, 0);
         n->link = 0xff;                             /* tell the stack the link state now */
@@ -518,7 +595,7 @@ void dev_irq(struct NetBase *n)
     for (int i = 0; i < AN_UNITS; i++) {
         struct NUnit *nu = &n->u[i];
         volatile struct an_unit *u = U(nu);
-        if ((nu->started && u->rx_head != u->rx_tail) || (nu->busy && u->cmd_done == nu->busy_seq)) { Signal(n->task, n->sig_irq); return; }
+        if ((nu->started && u->rx_head != nu->rx_next) || (nu->busy && u->cmd_done == nu->busy_seq)) { Signal(n->task, n->sig_irq); return; }
     }
 }
 
