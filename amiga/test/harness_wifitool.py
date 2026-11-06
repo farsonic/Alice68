@@ -44,7 +44,23 @@ def run(hunk, args, dev):
     lvo(DOSBASE, -60, lambda o, p: setd0(1))
     lvo(DOSBASE, -48, lambda o, p: (st['out'].append(bytes(mem.r_block(d(R.D2), d(R.D3))).decode('latin1')), setd0(d(R.D3))))
     lvo(DOSBASE, -198, lambda o, p: None)
-    lvo(DOSBASE, -30, lambda o, p: setd0(0))      # no prefs files
+    files = dev.get('files', {}); fhs = {}
+    def dopen(o, p):
+        name = mem.r_cstr(d(R.D1))
+        if name in files: h = 0x100 + len(fhs); fhs[h] = [name, 0]; setd0(h)
+        else: setd0(0)
+    lvo(DOSBASE, -30, dopen)
+    lvo(DOSBASE, -36, lambda o, p: fhs.pop(d(R.D1), None))
+    def dseek(o, p):
+        f = fhs[d(R.D1)]; old = f[1]; pos, mode = d(R.D2), d(R.D3)
+        f[1] = len(files[f[0]]) if mode == 1 else pos; setd0(old)
+    lvo(DOSBASE, -66, dseek)
+    def dread(o, p):
+        f = fhs[d(R.D1)]; data = files[f[0]][f[1]:f[1] + d(R.D3)]
+        mem.w_block(d(R.D2), data); f[1] += len(data); st['reads'] = st.get('reads', 0) + 1; setd0(len(data))
+    lvo(DOSBASE, -42, dread)
+    lvo(SYSBASE, -198, lambda o, p: setd0(alloc(d(R.D0))))
+    lvo(SYSBASE, -210, lambda o, p: None)
     def opendev(o, p):
         ok = mem.r_cstr(d(R.A0)) == 'alice68wifi.device' and dev.get('present', True)
         mem.w8(d(R.A1) + 31, 0 if ok else 0xff); setd0(0 if ok else 0xffffffff)
@@ -127,6 +143,12 @@ cases = [
      ['the driver did not answer'], ['stuck'], [CMD_DISCONNECT], True),
     ('JOIN starts it and shows the steps', 'JOIN "Net" "secret1234"', dict(states=steps[:3] + [(WS_JOINING, 'joining "Net"'), (WS_CONNECTED, '')], answer=answer_all),
      ['Starting the WiFi chip:', 'step 2: pins and power', 'joining: joining "Net"', 'State:     connected'], [], [CMD_RECONNECT], True),
+    ('READTEST reads without the driver', 'READTEST', dict(states=steps, files={'DEVS:Firmware/cyfmac43455-sdio.bin': bytes(100000),
+                                                                             'DEVS:Firmware/brcmfmac43455-sdio.txt': b'x' * 2000}),
+     ['32 KB reads', 'cyfmac43455-sdio.bin: opening... size... 100000 bytes', '.... ok, 100000 bytes',
+      'brcmfmac43455-sdio.txt: opening... size... 2000 bytes', 'clm_blob: opening... not there', 'done: the machine still runs'], [], [], False),
+    ('READTEST BIG: one read per file', 'READTEST BIG', dict(states=steps, files={'DEVS:Firmware/cyfmac43455-sdio.bin': bytes(100000)}),
+     ['one read per file, into fast memory', '100000 bytes, memory... at $', 'reading...  ok, 100000 bytes'], [], [], False),
     ('missing device', '', dict(states=steps, present=False), ['cannot open alice68wifi.device'], [], [], False),
 ]
 for name, args, dev, want, never, sent, closed in cases:

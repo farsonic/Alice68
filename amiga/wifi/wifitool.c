@@ -8,6 +8,7 @@
  *   Alice68-WiFi RECONNECT            read the prefs again and connect
  *   Alice68-WiFi DISCONNECT
  *   Alice68-WiFi LOG                  the driver's log
+ *   Alice68-WiFi READTEST [BIG|CHIP]  read the firmware files here, without the driver
  *   Alice68-WiFi OFF                  switch the chip off */
 #include "wifios.h"
 #include "wifi_api.h"
@@ -193,6 +194,60 @@ static int save_prefs(const char *ssid, const char *pass)
     return ok;
 }
 
+/* READTEST: the driver's file reads, done from the Shell's own process and
+   without the driver, each stage printed before it starts. BIG reads each
+   file in one go into fast memory (as the driver 1.9 does), CHIP the same
+   into chip memory, plain in 32 KB pieces. */
+static ULONG usecs(void)
+{
+    ULONG v = *(volatile ULONG *)0xF2003004u;
+    return v >> 24 | (v >> 8 & 0xff00) | (v << 8 & 0xff0000) | v << 24;
+}
+static int readtest(const char *mode)
+{
+    static const char *const files[] = {
+        "ENVARC:alice68wifi.prefs", "DEVS:Firmware/cyfmac43455-sdio.bin", "DEVS:Firmware/cyfmac43455-sdio-standard.bin",
+        "DEVS:Firmware/brcmfmac43455-sdio.raspberrypi,4-model-b.txt", "DEVS:Firmware/brcmfmac43455-sdio.txt",
+        "DEVS:Firmware/cyfmac43455-sdio.clm_blob", "DEVS:Firmware/cyfmac43455-sdio-standard.clm_blob", 0 };
+    int big = sieq(mode, "BIG") || sieq(mode, "CHIP");
+    ULONG memf = sieq(mode, "CHIP") ? 2u : 1u;        /* MEMF_CHIP : MEMF_PUBLIC */
+    put(big ? (memf == 2 ? "one read per file, into chip memory\n" : "one read per file, into fast memory\n")
+            : "32 KB reads, into fast memory\n");
+    int found = 0;
+    for (int i = 0; files[i]; i++) {
+        put(files[i]); put(": opening... ");
+        ULONG fh = DosOpen(dos, files[i], MODE_OLDFILE);
+        if (!fh) { put("not there\n"); continue; }
+        found++;
+        put("size... ");
+        DosSeek(dos, fh, 0, OFFSET_END);
+        LONG n = DosSeek(dos, fh, 0, OFFSET_BEGINNING);
+        dec(n); put(" bytes, memory... ");
+        if (n <= 0 || n > 4 * 1024 * 1024) { put("bad size\n"); DosClose(dos, fh); continue; }
+        ULONG sz = (ULONG)n + 32;
+        UBYTE *b = AllocMem(sz, memf | 0x10000u);
+        if (!b) { put("none free\n"); DosClose(dos, fh); continue; }
+        put("at $"); for (int k = 28; k >= 0; k -= 4) { char c[2] = { "0123456789abcdef"[((ULONG)b >> k) & 15], 0 }; put(c); }
+        put(", reading");
+        ULONG t0 = usecs();
+        LONG got = 0;
+        if (big) { put("... "); got = DosRead(dos, fh, b, n); }
+        else while (got < n) {
+            LONG part = n - got > 32768 ? 32768 : n - got;
+            put(".");
+            LONG r = DosRead(dos, fh, b + got, part);
+            if (r <= 0) break;
+            got += r;
+        }
+        ULONG ms = (usecs() - t0) / 1000;
+        put(got == n ? " ok, " : " SHORT, "); dec(got); put(" bytes in "); dec((LONG)ms); put(" ms\n");
+        FreeMem(b, sz);
+        DosClose(dos, fh);
+    }
+    put(found ? "done: the machine still runs\n" : "no files found\n");
+    return found ? 0 : 5;
+}
+
 LONG wifitool_main(const char *args, ULONG arglen)
 {
     (void)arglen;
@@ -204,9 +259,10 @@ LONG wifitool_main(const char *args, ULONG arglen)
     word(&p, cmd, sizeof cmd);
     word(&p, a1, sizeof a1);
     word(&p, a2, sizeof a2);
+    if (sieq(cmd, "READTEST")) { LONG r = readtest(a1); CloseLibrary(dos); return r; }
     if (cmd[0] == '?' || (cmd[0] && !sieq(cmd, "STATUS") && !sieq(cmd, "START") && !sieq(cmd, "SCAN") && !sieq(cmd, "JOIN") &&
         !sieq(cmd, "RECONNECT") && !sieq(cmd, "DISCONNECT") && !sieq(cmd, "LOG") && !sieq(cmd, "OFF"))) {
-        put("Alice68-WiFi [STATUS | START | SCAN | JOIN \"network\" \"password\" | RECONNECT | DISCONNECT | LOG | OFF]\n");
+        put("Alice68-WiFi [STATUS | START | SCAN | JOIN \"network\" \"password\" | RECONNECT | DISCONNECT | LOG | OFF | READTEST [BIG|CHIP]]\n");
         CloseLibrary(dos);
         return cmd[0] == '?' ? 0 : 10;
     }

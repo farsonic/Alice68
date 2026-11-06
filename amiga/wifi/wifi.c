@@ -18,8 +18,8 @@
 
 #define DEVNAME     "alice68wifi.device"
 #define VERSION     1
-#define REVISION    9
-#define IDSTRING    "alice68wifi 1.9 (07.11.2026)\r\n"
+#define REVISION    10
+#define IDSTRING    "alice68wifi 1.10 (07.11.2026)\r\n"
 
 #define BUFSZ       2048            /* one frame buffer */
 #define CTLMAX      1600            /* largest control payload */
@@ -638,7 +638,25 @@ static UBYTE *load(struct WifiBase *w, const char *name, ULONG *len, ULONG extra
     LONG n = DosSeek(w->dos, fh, 0, OFFSET_BEGINNING);
     UBYTE *b = 0;
     if (n > 0 && n < 4 * 1024 * 1024 && (b = AllocMem((ULONG)n + extra + 16, MEMF_PUBLIC | MEMF_CLEAR))) {
-        if (DosRead(w->dos, fh, b, n) != n) { FreeMem(b, (ULONG)n + extra + 16); b = 0; }
+        /* in 32 KB pieces, the progress in the status message: a hang shows where */
+        LONG got = 0;
+        while (got < n) {
+            LONG part = n - got > 32768 ? 32768 : n - got;
+            if (w->state == WS_STARTING) {
+                char m[96]; unsigned k = 0;
+                for (const char *p = "step 1: reading "; *p; ) m[k++] = *p++;
+                for (const char *p = name; *p && k < 80; ) m[k++] = *p++;
+                m[k++] = ' ';
+                char d[8]; int nd = 0; ULONG kb = (ULONG)got / 1024; do { d[nd++] = (char)('0' + kb % 10); kb /= 10; } while (kb);
+                while (nd) m[k++] = d[--nd];
+                m[k++] = 'K'; m[k] = 0;
+                scpy(w->msg, m, sizeof w->msg);
+            }
+            LONG r = DosRead(w->dos, fh, b + got, part);
+            if (r <= 0) break;
+            got += r;
+        }
+        if (got != n) { FreeMem(b, (ULONG)n + extra + 16); b = 0; }
         else *len = (ULONG)n;
     }
     DosClose(w->dos, fh);
