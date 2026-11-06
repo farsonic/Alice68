@@ -496,6 +496,53 @@ static LONG timers(void)
         if (tp) DeleteMsgPort(tp);
     }
     put("  INTREQR now $"); put_hex4(*(volatile UWORD *)0xDFF01E); put("\n");
+
+    /* Does the E-clock only go forwards? Programs measure time with it (Riptide's ping:
+       ReadEClock); one step back makes "until - now" huge and a 1 s wait endless. For 5 s,
+       read it as fast as possible, next to the Pi's timer. */
+    struct MsgPort *tp = CreateMsgPort();
+    struct timerequest *tr = tp ? CreateIORequest(tp, sizeof *tr) : 0;
+    if (tr && !OpenDevice("timer.device", 2, tr, 0)) {
+        APTR tb = tr->io.io_Device;
+        ULONG ev[2], f = lvo(tb, -60, 0, 0, (ULONG)ev, 0);      /* ReadEClock(a0): d0 = ticks/s */
+        ULONG phi = ev[0], plo = ev[1], slo = ev[1], reads = 0, back = 0, jumps = 0, maxback = 0, maxfwd = 0;
+        ULONG t0 = usecs(), pt = t0;
+        put("  E-clock at "); { char l[16]; struct sb b = { l, 0, sizeof l }; sdec(&b, f); put(l); } put(" ticks/s, read for 5 s: ");
+        while (usecs() - t0 < 5000000u) {
+            ULONG c[2];
+            lvo(tb, -60, 0, 0, (ULONG)c, 0);
+            ULONG now = usecs();
+            reads++;
+            /* ticks since the last read, as a signed 64-bit difference held in 32 bits */
+            ULONG dlo = c[1] - plo, dhi = c[0] - phi - (c[1] < plo);
+            if ((LONG)dhi < 0) {                                  /* went backwards */
+                ULONG nb = (ULONG)(-(LONG)dlo);
+                back++;
+                if (dhi != 0xffffffffu) nb = 0xffffffffu;
+                if (nb > maxback) maxback = nb;
+            } else {
+                ULONG ticks = dhi ? 0xffffffffu : dlo;
+                ULONG want = (now - pt) * (f / 1000u) / 1000u + f / 100u;   /* the Pi's view + 10 ms */
+                if (ticks > want) { jumps++; if (ticks - want > maxfwd) maxfwd = ticks - want; }
+            }
+            phi = c[0]; plo = c[1]; pt = now;
+        }
+        char l[160]; struct sb b = { l, 0, sizeof l };
+        sdec(&b, reads); ss(&b, " reads, "); sdec(&b, back); ss(&b, " went BACK (most ");
+        sdec(&b, maxback); ss(&b, " ticks), "); sdec(&b, jumps); ss(&b, " jumped ahead (most ");
+        sdec(&b, maxfwd); ss(&b, " ticks)\n");
+        put(l);
+        b.n = 0; l[0] = 0;
+        ULONG el = usecs() - t0;
+        ss(&b, "  it moved "); sdec(&b, plo - slo); ss(&b, " ticks in "); sdec(&b, el / 1000);
+        ss(&b, " ms by the Pi's timer: "); sdec(&b, (ULONG)((plo - slo) / (el / 1000u ? el / 1000u : 1u)) * 1000u);
+        ss(&b, " ticks/s\n");
+        put(l);
+        if (back || jumps) rc = 5;
+        CloseDevice(tr);
+    } else put("  E-clock: timer.device unit 2 would not open\n");
+    if (tr) DeleteIORequest(tr);
+    if (tp) DeleteMsgPort(tp);
     return rc;
 }
 
