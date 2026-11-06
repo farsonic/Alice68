@@ -101,6 +101,15 @@ static void an_irq(void)
 }
 
 static int bootarg_word(const char *w);
+/* the MAC address a unit uses: the one asked for (AN_CMD_SETMAC), its OUI on the hardware's own
+   last three bytes, or the hardware's own; 0: none asked for */
+static int mac_wanted(const uint8_t want[6], int oui_only, const uint8_t fact[6], uint8_t out[6])
+{
+    if (!(want[0] | want[1] | want[2] | want[3] | want[4] | want[5])) { memcpy(out, fact, 6); return 0; }
+    memcpy(out, want, oui_only ? 3 : 6);
+    if (oui_only) memcpy(out + 3, fact + 3, 3);
+    return 1;
+}
 static void an_board_map(struct ExpansionBoard *board)
 {
     if (!an_mem) {
@@ -436,6 +445,8 @@ static struct {
     uint32_t sdclock;
     char     caps[256], fwver[96];
     uint8_t  mac[6];
+    uint8_t  fmac[6], want_mac[6];          /* the chip's own; the one asked for (zeros: the chip's own) */
+    int      want_oui;                      /* want_mac: only its OUI */
     int      start_req, off_req;
     uint32_t host_c0, host_c1, host_hz;     /* the SD host's bus and clock settings after bring-up */
     uint32_t restart_at;                    /* the chip is lost: start it again then (0 = no) */
@@ -815,6 +826,15 @@ static int bringup(void)
     uint32_t ver = 0;
     if (cmd_get_int(WLC_GET_VERSION, &ver)) { W.chip_up = 0; wstate(AN_ST_FAILED, "the firmware does not answer"); return -6; }
     iov_get("cur_etheraddr", W.mac, 6);
+    memcpy(W.fmac, W.mac, 6);
+    for (int i = 0; i < 6; i++) u->factory_mac[i] = W.fmac[i];
+    {
+        uint8_t a[6];
+        if (mac_wanted(W.want_mac, W.want_oui, W.fmac, a)) {
+            if (iov_set("cur_etheraddr", a, 6)) wifi_log("the firmware kept its MAC address\n");
+            else memcpy(W.mac, a, 6);
+        }
+    }
     memset(W.fwver, 0, sizeof W.fwver);
     iov_get("ver", W.fwver, sizeof W.fwver - 1);
     for (char *p = W.fwver; *p; p++) if (*p == '\n' || *p == '\r') *p = ' ';
@@ -1143,6 +1163,31 @@ static void commands(void)
         u->rx_on = 0;
         cmd_finish(seq, 0);
         break;
+    case AN_CMD_SETMAC: {
+        uint8_t m[6]; int any = 0;
+        for (int i = 0; i < 6; i++) { m[i] = u->arg[i]; any |= m[i]; }
+        if (any && (m[0] & 1)) { cmd_finish(seq, -2); break; }
+        memcpy(W.want_mac, m, 6);
+        W.want_oui = u->arg[6] == 1;
+        int r = 0;
+        if (W.chip_up) {
+            /* the firmware takes a new address only while down; the link drops, and the
+               connection manager joins again */
+            uint8_t a[6];
+            mac_wanted(W.want_mac, W.want_oui, W.fmac, a);
+            cmd_int(WLC_DOWN, 0);
+            r = iov_set("cur_etheraddr", a, 6) ? -5 : 0;
+            cmd_int(WLC_UP, 0);
+            if (!r) {
+                memcpy(W.mac, a, 6);
+                for (int i = 0; i < 6; i++) u->mac[i] = W.mac[i];
+                wifi_log("MAC address now %02x:%02x:%02x:%02x:%02x:%02x%s\n", W.mac[0], W.mac[1], W.mac[2], W.mac[3], W.mac[4], W.mac[5], any ? "" : " (the chip's own)");
+            } else wifi_log("the firmware would not take the MAC address\n");
+            u->state_seq++;
+        }
+        cmd_finish(seq, r);
+        break;
+    }
     case AN_CMD_FILTER: {
         uint32_t f = (uint32_t)u->arg[0] << 24 | (uint32_t)u->arg[1] << 16 | (uint32_t)u->arg[2] << 8 | u->arg[3];
         if (W.chip_up) { cmd_int(10, (f & AN_FILT_PROMISC) ? 1 : 0); iov_int("allmulti", (f & AN_FILT_ALLMULTI) ? 1 : 0); }   /* 10: WLC_SET_PROMISC */
@@ -1291,7 +1336,8 @@ static struct {
     uint64_t rxp, txp;                   /* their physical addresses */
     uint32_t state, t0, next_link, cidx, tprod, cmd_base, rx_err, rx_waits;
     int      phy, up, speed, full, started, promisc, disabled;
-    uint8_t  mac[6];
+    uint8_t  mac[6], fmac[6], want_mac[6];   /* in use; the Pi's own; asked for (zeros: the Pi's own) */
+    int      want_oui;                       /* want_mac: only its OUI */
 } E;
 enum { E_OFF, E_PHYRESET, E_LINKWAIT, E_RUN, E_FAILED };
 
@@ -1381,7 +1427,7 @@ static int eth_find(void)
     if (!v) { eth_log("GENET's registers are not mapped\n"); return -1; }
     E.regs = (volatile uint8_t *)v;
     of_property_t *m = dt_find_property(g, "local-mac-address");
-    if (m && m->op_length >= 6) memcpy(E.mac, m->op_value, 6);
+    if (m && m->op_length >= 6) { memcpy(E.fmac, m->op_value, 6); mac_wanted(E.want_mac, E.want_oui, E.fmac, E.mac); }
     if (!(E.mac[0] | E.mac[1] | E.mac[2] | E.mac[3] | E.mac[4] | E.mac[5])) {
         eth_log("no local-mac-address in the device tree (start4.elf fills it in): no MAC address\n");
         return -1;
@@ -1418,6 +1464,7 @@ static void eth_start(void)
     uint32_t rev = grd(G_SYS_REV);
     if (((rev >> 24) & 15) != 6) { E.state = E_FAILED; estate(AN_ST_FAILED, "Ethernet: not a GENET v5"); eth_log("SYS_REV %x\n", rev); return; }
     for (int i = 0; i < 6; i++) u->mac[i] = E.mac[i];
+    if (!(u->factory_mac[0] | u->factory_mac[1] | u->factory_mac[2])) for (int i = 0; i < 6; i++) u->factory_mac[i] = E.fmac[i];
     gwr(G_PORT_CTRL, 3);                                /* external gigabit PHY (RGMII) */
     /* the MAC reset, as U-Boot */
     gwr(G_RBUF_FLUSH, grd(G_RBUF_FLUSH) | 2); gdelay(10);
@@ -1487,6 +1534,17 @@ static void eth_link(int bmsr)
         int c1000 = phy_rd(9), s1000 = phy_rd(10), adv = phy_rd(4), lpa = phy_rd(5);
         if (c1000 < 0 || s1000 < 0 || adv < 0 || lpa < 0) return;   /* an MDIO error: the next poll tries again */
         int com = adv & lpa;
+        /* what each side advertises, for people (Alice68-Network's Ethernet page) */
+        static const uint16_t bits[6] = { 0x020, 0x040, 0x080, 0x100, 0x400, 0x800 };
+        static const uint8_t  flag[6] = { AN_LM_10H, AN_LM_10F, AN_LM_100H, AN_LM_100F, AN_LM_PAUSE, AN_LM_ASYM };
+        unsigned la = 0, lp = 0;
+        for (int i = 0; i < 6; i++) {
+            if (adv & bits[i]) la |= flag[i];
+            if (lpa & bits[i]) lp |= flag[i];
+        }
+        la |= ((c1000 & 0x100) ? AN_LM_1000H : 0) | ((c1000 & 0x200) ? AN_LM_1000F : 0);
+        lp |= ((s1000 & 0x400) ? AN_LM_1000H : 0) | ((s1000 & 0x800) ? AN_LM_1000F : 0);
+        u->link_adv = la; u->link_lpa = lp;
         if ((c1000 & 0x200) && (s1000 & 0x800)) { E.speed = 1000; E.full = 1; }
         else if ((c1000 & 0x100) && (s1000 & 0x400)) { E.speed = 1000; E.full = 0; }
         else if (com & 0x100) { E.speed = 100; E.full = 1; }
@@ -1498,6 +1556,8 @@ static void eth_link(int bmsr)
                    | (1u << 8) | (1u << 28);           /* RX and TX pause ignored: pause is not advertised */
         gwr(G_CMD, E.cmd_base | (E.promisc ? CMD_PROMISC : 0) | CMD_TX_EN | CMD_RX_EN);
         E.up = 1;
+        u->link_flags = ((bmsr & 0x20) ? AN_LF_AUTONEG : 0) | (E.full ? AN_LF_FULL : 0);   /* pause: ignored (bits 8, 28 above) */
+        u->link_up_s = wifi_usecs() / 1000000u;
         u->link = 1; u->speed_mbps = (unsigned)E.speed;
         char m[64]; unsigned k = 0;
         for (const char *p = "link up, "; *p; ) m[k++] = *p++;
@@ -1509,6 +1569,7 @@ static void eth_link(int bmsr)
         E.up = 0;
         gwr(G_CMD, grd(G_CMD) & ~(CMD_TX_EN | CMD_RX_EN));
         u->link = 0; u->speed_mbps = 0;
+        u->link_downs++;
         u->state_seq++;
         estate(AN_ST_IDLE, "no link: is the cable in?");
     }
@@ -1607,6 +1668,24 @@ static void eth_commands(void)
     case AN_CMD_OFF:   eth_stop(); break;
     case AN_CMD_RXON:  u->rx_on = 1; break;
     case AN_CMD_RXOFF: u->rx_on = 0; break;
+    case AN_CMD_SETMAC: {
+        uint8_t m[6]; int any = 0;
+        for (int i = 0; i < 6; i++) { m[i] = u->arg[i]; any |= m[i]; }
+        if (any && (m[0] & 1)) { r = -2; break; }      /* a group address is no station's */
+        memcpy(E.want_mac, m, 6);
+        E.want_oui = u->arg[6] == 1;
+        if (E.fmac[0] | E.fmac[1] | E.fmac[2]) {       /* known: now, else when the Ethernet starts */
+            mac_wanted(E.want_mac, E.want_oui, E.fmac, E.mac);
+            for (int i = 0; i < 6; i++) u->mac[i] = E.mac[i];
+            if (E.regs) {
+                gwr(G_MAC0, (uint32_t)E.mac[0] << 24 | (uint32_t)E.mac[1] << 16 | (uint32_t)E.mac[2] << 8 | E.mac[3]);
+                gwr(G_MAC1, (uint32_t)E.mac[4] << 8 | E.mac[5]);
+            }
+            eth_log("MAC address now %02x:%02x:%02x:%02x:%02x:%02x%s\n", E.mac[0], E.mac[1], E.mac[2], E.mac[3], E.mac[4], E.mac[5], any ? "" : " (the Pi's own)");
+        }
+        u->state_seq++;
+        break;
+    }
     case AN_CMD_FILTER:
         E.promisc = u->arg[3] & (AN_FILT_PROMISC | AN_FILT_ALLMULTI);   /* no multicast filter yet: all of it */
         if (E.up) gwr(G_CMD, E.cmd_base | (E.promisc ? CMD_PROMISC : 0) | CMD_TX_EN | CMD_RX_EN);

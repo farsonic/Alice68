@@ -88,6 +88,24 @@ struct an_fw {
 #define AN_CMD_FILTER     8u        /* arg[0..3]: AN_FILT_* */
 #define AN_FILT_PROMISC   1u
 #define AN_FILT_ALLMULTI  2u
+#define AN_CMD_SETMAC     9u        /* arg[0..5]: the unit's MAC address; all zero: the factory one;
+                                       arg[6] = 1: only arg[0..2], the OUI, with the factory's last 3 bytes */
+#define AN_OUI_COMMODORE  0x008010u /* Commodore International's OUI */
+
+/* an_unit.link_adv / link_lpa: what this side and the other advertise (Ethernet) */
+#define AN_LM_10H     0x01u
+#define AN_LM_10F     0x02u
+#define AN_LM_100H    0x04u
+#define AN_LM_100F    0x08u
+#define AN_LM_1000H   0x10u
+#define AN_LM_1000F   0x20u
+#define AN_LM_PAUSE   0x40u
+#define AN_LM_ASYM    0x80u
+/* an_unit.link_flags */
+#define AN_LF_AUTONEG 0x01u         /* autonegotiation done */
+#define AN_LF_FULL    0x02u         /* full duplex */
+#define AN_LF_RXPAUSE 0x04u         /* flow control: pause frames honoured */
+#define AN_LF_TXPAUSE 0x08u
 
 struct an_join {
     char ssid[36];                  /* NUL-terminated, up to 32 bytes */
@@ -125,7 +143,12 @@ struct an_unit {
     unsigned int tx_head;           /* Amiga: frames put */
     unsigned int tx_tail;           /* kernel: frames sent */
     unsigned int rx_on;             /* kernel's view: the Amiga takes frames */
-    unsigned int pad[13];
+    unsigned char factory_mac[8];   /* 6 used: the hardware's own (AN_CMD_SETMAC with zeros goes back) */
+    unsigned int link_adv, link_lpa;    /* AN_LM_*: advertised here and by the other side (Ethernet) */
+    unsigned int link_flags;        /* AN_LF_* */
+    unsigned int link_downs;        /* times the link went down since the kernel started */
+    unsigned int link_up_s;         /* seconds since the Pi started, when the link last came up */
+    unsigned int pad[6];
 };
 
 struct an_slot {

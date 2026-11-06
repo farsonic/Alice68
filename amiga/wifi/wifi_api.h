@@ -13,6 +13,12 @@
 #define WIFI_CMD_OFF        0x8a45      /* switch the chip off */
 #define WIFI_CMD_START      0x8a46      /* start the chip (the kernel does at boot when it has the firmware) */
 #define WIFI_CMD_JOIN       0x8a47      /* io_Data -> struct WifiJoin */
+#define NET_CMD_SETMAC      0x8a48      /* both units. io_Data -> UBYTE[8]: the address (6), then NETMAC_*;
+                                           io_Length 8. Takes effect at once; a stack attached keeps the old
+                                           address until it attaches again */
+#define NETMAC_ADDRESS      0           /* the address given */
+#define NETMAC_OUI          1           /* its first 3 bytes, on the hardware's own last 3 */
+#define NETMAC_FACTORY      2           /* the hardware's own again */
 
 #define WIFI_API_VERSION    2
 

@@ -18,8 +18,8 @@
 
 #define DEVNAME     "alice68net.device"
 #define VERSION     2
-#define REVISION    5
-#define IDSTRING    "alice68net 2.5 (07.11.2026)\r\n"
+#define REVISION    6
+#define IDSTRING    "alice68net 2.6 (07.11.2026)\r\n"
 
 #define BUFSZ       2048            /* one receive buffer: HEADROOM, the frame, spare room after it */
 #define HEADROOM    64              /* bytes before the frame, as genet.device leaves (its status block):
@@ -498,7 +498,8 @@ static int command(struct NUnit *n, struct IOStdReq *io)
         if (n->attach_io) { err = NDERR_BUSY; break; }
         /* the Ethernet starts when a stack takes it (also after "Ethernet off", or a start that failed) */
         if (n->idx == 1 && (U(n)->state == AN_ST_OFF || U(n)->state == AN_ST_FAILED)) q_add(n, AN_CMD_START, 0, 0, 0);
-        if (!mac_known(n) || (n->idx == 1 && U(n)->state != AN_ST_IDLE && U(n)->state != AN_ST_CONNECTED)) {
+        if (!mac_known(n) || n->busy || n->qhead != n->qtail ||
+            (n->idx == 1 && U(n)->state != AN_ST_IDLE && U(n)->state != AN_ST_CONNECTED)) {
             n->attach_io = io; n->attach_t0 = n->nb->ticks; return 1;   /* still starting */
         }
         err = do_attach(n, io);
@@ -556,7 +557,22 @@ static int command(struct NUnit *n, struct IOStdReq *io)
         l->ndls_SpeedMbps = U(n)->link ? (U(n)->speed_mbps ? U(n)->speed_mbps : (n->idx ? 1000 : 54)) : 0;
         break;
     }
-    case NETDEV_CMD_SET_MAC: err = NDERR_BADPARAMS; break;
+    case NETDEV_CMD_SET_MAC: {                       /* UBYTE[6] */
+        const UBYTE *m = io->io_Data;
+        if (!m || io->io_Length < 6 || (m[0] & 1)) { err = NDERR_BADPARAMS; break; }
+        UBYTE a[7] = { m[0], m[1], m[2], m[3], m[4], m[5], 0 };
+        q_add(n, AN_CMD_SETMAC, a, 7, io);
+        return 1;
+    }
+    case NET_CMD_SETMAC: {                           /* UBYTE[8]: address, NETMAC_* */
+        const UBYTE *m = io->io_Data;
+        if (!m || io->io_Length < 8 || m[6] > NETMAC_FACTORY || (m[6] != NETMAC_FACTORY && (m[0] & 1))) { err = NDERR_BADPARAMS; break; }
+        UBYTE a[7] = { 0, 0, 0, 0, 0, 0, 0 };
+        if (m[6] != NETMAC_FACTORY) for (int i = 0; i < 6; i++) a[i] = m[i];
+        a[6] = m[6] == NETMAC_OUI;
+        q_add(n, AN_CMD_SETMAC, a, 7, io);
+        return 1;
+    }
     case WIFI_CMD_START: q_add(n, AN_CMD_START, 0, 0, io); return 1;
     case WIFI_CMD_JOIN:
         if (n->idx != 0) { err = IOERR_NOCMD; break; }
@@ -599,6 +615,46 @@ void dev_irq(struct NetBase *n)
     }
 }
 
+/* ---- the saved MAC addresses (Alice68-Network): ENV:alice68net.prefs ---------------------
+   MAC0= and MAC1= (unit 0 WiFi, unit 1 Ethernet): COMMODORE (Commodore's OUI 00:80:10 on the
+   hardware's own last three bytes), an address aa:bb:cc:dd:ee:ff, or nothing (the hardware's own).
+   Read once, when the process starts: before any stack can attach. */
+static int hexv(char c) { return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1; }
+static void mac_prefs(struct NetBase *n)
+{
+    APTR dos = OpenLibrary("dos.library", 37);
+    if (!dos) return;
+    static char buf[512];
+    ULONG fh = DosOpen(dos, "ENV:alice68net.prefs", MODE_OLDFILE);
+    if (!fh) fh = DosOpen(dos, "ENVARC:alice68net.prefs", MODE_OLDFILE);
+    LONG len = fh ? DosRead(dos, fh, buf, sizeof buf - 1) : 0;
+    if (fh) DosClose(dos, fh);
+    CloseLibrary(dos);
+    if (len <= 0) return;
+    buf[len] = 0;
+    for (char *l = buf; *l; ) {
+        char *e = l; while (*e && *e != '\n') e++;
+        if (l[0] == 'M' && l[1] == 'A' && l[2] == 'C' && (l[3] == '0' || l[3] == '1') && l[4] == '=') {
+            struct NUnit *nu = &n->u[l[3] - '0'];
+            char *v = l + 5;
+            UBYTE a[7] = { 0, 0, 0, 0, 0, 0, 0 };
+            int ok = 1;
+            if ((v[0] | 0x20) == 'c') {                  /* COMMODORE */
+                a[0] = (UBYTE)(AN_OUI_COMMODORE >> 16); a[1] = (UBYTE)(AN_OUI_COMMODORE >> 8); a[2] = (UBYTE)AN_OUI_COMMODORE; a[6] = 1;
+            } else if (v < e && hexv(*v) >= 0) {
+                for (int i = 0; i < 6 && ok; i++, v += 3) {
+                    int h = hexv(v[0]), lo = hexv(v[1]);
+                    if (h < 0 || lo < 0 || (i < 5 && v[2] != ':')) ok = 0;
+                    else a[i] = (UBYTE)(h << 4 | lo);
+                }
+                if (a[0] & 1) ok = 0;
+            } else ok = 0;                               /* nothing: the hardware's own, which it has */
+            if (ok) q_add(nu, AN_CMD_SETMAC, a, 7, 0);
+        }
+        l = *e ? e + 1 : e;
+    }
+}
+
 /* ---- the process -------------------------------------------------------------------- */
 static void net_proc(void)
 {
@@ -609,6 +665,7 @@ static void net_proc(void)
     struct MsgPort *tp = CreateMsgPort();
     struct timerequest *tr = tp ? CreateIORequest(tp, sizeof *tr) : 0;
     int timer_ok = tr && !OpenDevice("timer.device", 1, tr, 0);      /* UNIT_VBLANK */
+    mac_prefs(n);                                   /* queued before anyone can attach */
     Forbid();
     n->port.mp_SigBit = (UBYTE)sb_port;
     n->port.mp_SigTask = n->task;
@@ -646,7 +703,8 @@ static void net_proc(void)
         for (int i = 0; i < AN_UNITS; i++) {
             struct NUnit *nu = &n->u[i];
             if (nu->attach_io) {
-                int ready = mac_known(nu) && (nu->idx == 0 || U(nu)->state == AN_ST_IDLE || U(nu)->state == AN_ST_CONNECTED);
+                int ready = mac_known(nu) && !nu->busy && nu->qhead == nu->qtail     /* a MAC from the prefs first */
+                         && (nu->idx == 0 || U(nu)->state == AN_ST_IDLE || U(nu)->state == AN_ST_CONNECTED);
                 if (ready) { io = nu->attach_io; nu->attach_io = 0; io->io.io_Error = (BYTE)do_attach(nu, io); ReplyMsg(io); }
                 else if (n->ticks - nu->attach_t0 > 30u * 50) { io = nu->attach_io; nu->attach_io = 0; io->io.io_Error = IOERR_OPENFAIL; ReplyMsg(io); }
             }
@@ -749,7 +807,7 @@ void dev_beginio(struct NetBase *n, struct IOStdReq *io)
     UWORD c = io->io.io_Command;
     if (c == NSCMD_DEVICEQUERY || c == WIFI_CMD_STATUS || c == WIFI_CMD_LOG) {
         static const UWORD cmds[] = {
-            NSCMD_DEVICEQUERY, NETDEV_CMD_ATTACH, NETDEV_CMD_DETACH, NETDEV_CMD_START, NETDEV_CMD_STOP,
+            NSCMD_DEVICEQUERY, NETDEV_CMD_ATTACH, NETDEV_CMD_DETACH, NETDEV_CMD_START, NETDEV_CMD_STOP, NETDEV_CMD_SET_MAC, NET_CMD_SETMAC,
             NETDEV_CMD_SET_RXFILTER, NETDEV_CMD_SET_COALESCE, NETDEV_CMD_GET_STATS, NETDEV_CMD_GET_LINK,
             WIFI_CMD_STATUS, WIFI_CMD_SCAN, WIFI_CMD_LOG, WIFI_CMD_RECONNECT, WIFI_CMD_DISCONNECT, WIFI_CMD_OFF,
             WIFI_CMD_START, WIFI_CMD_JOIN, 0 };
