@@ -390,6 +390,10 @@ static struct {
     char     caps[256], fwver[96];
     uint8_t  mac[6];
     int      start_req, off_req;
+    uint32_t host_c0, host_c1, host_hz;     /* the SD host's bus and clock settings after bring-up */
+    uint32_t restart_at;                    /* the chip is lost: start it again then (0 = no) */
+    int      restarts;
+    const char *lost;                       /* why it was lost, for the log */
 } W;
 
 static const char *const state_word[] = { "off", "starting", "ready", "scanning", "joining", "connected", "retrying", "FAILED", "no firmware" };
@@ -642,7 +646,11 @@ static void poll_frames(void)
     uint32_t is, mb, wk = W.c.wakes;
     U(0)->polls++;
     if (chip_irq_ack(&W.c, &is, &mb)) {
-        if (++W.ack_fail == 50) wifi_log("the chip's status cannot be read (SDIO errors %u)\n", W.h.errors);
+        if (++W.ack_fail == 50) {
+            wifi_log("the chip's status cannot be read (SDIO errors %u)\n", W.h.errors);
+            W.lost = "the WiFi chip stopped answering";
+            W.chip_up = 0;                          /* the main loop starts it again */
+        }
         return;
     }
     W.ack_fail = 0;
@@ -786,6 +794,9 @@ static int bringup(void)
     cmd_int(WLC_UP, 0);
     cmd_int(WLC_SET_INFRA, 1);
     cmd_int(WLC_SET_AP, 0);
+    W.host_c0 = __builtin_bswap32(W.h.regs[0x28 / 4]) & 0x06u;          /* CONTROL0: 4-bit bus, high speed */
+    W.host_c1 = __builtin_bswap32(W.h.regs[0x2c / 4]) & 0xffe5u;        /* CONTROL1: divider, clock on, internal clock */
+    W.host_hz = W.h.sd_hz;
     wstate(AN_ST_IDLE, W.ssid[0] ? "ready" : "ready - no network yet (Alice68-WiFi JOIN, or wifi.ssid= in cmdline.txt)");
     return 0;
 }
@@ -866,7 +877,9 @@ static void join(const struct fm_bss *b)
         uint8_t ie[32];
         unsigned n = sae ? 0 : fm_build_wpaie(ie, b, 0);
         iov_set("wpaie", ie, n);
-        if (iov_int("sup_wpa", 1)) { retry("this firmware has no WPA supplicant"); return; }
+        int32_t se = iov_int("sup_wpa", 1);
+        if (se <= -100) { retry("the WiFi chip is not answering"); return; }
+        if (se) { retry("this firmware has no WPA supplicant"); return; }
         uint8_t k[140];
         unsigned pl = strlen(W.pass);
         if (sae) {
@@ -1014,7 +1027,7 @@ static void commands(void)
     uint32_t c = u->cmd;
     switch (c) {
     case AN_CMD_START:
-        W.start_req = 1; W.off_req = 0;
+        W.start_req = 1; W.off_req = 0; W.restarts = 0;
         cmd_finish(seq, 0);
         break;
     case AN_CMD_JOIN: {
@@ -1105,7 +1118,20 @@ static void wifi_thread(void)
             chip_off();
             continue;                               /* START (or new firmware) tries again */
         }
+        W.lost = 0;
         while (W.chip_up && !W.off_req) {
+            /* Another driver in AmigaOS (WiFiPi.device, say) resetting the same SD host
+               shows as changed bus or clock settings: say so, and take the chip back. */
+            uint32_t c0 = __builtin_bswap32(W.h.regs[0x28 / 4]) & 0x06u, c1 = __builtin_bswap32(W.h.regs[0x2c / 4]) & 0xffe5u;
+            if (W.h.sd_hz != W.host_hz) { W.host_hz = W.h.sd_hz; W.host_c1 = c1; }    /* our own slow-down after errors */
+            if (c0 != W.host_c0 || c1 != W.host_c1) {
+                wifi_log("the WiFi controller was reset by someone else (CONTROL0 %x, CONTROL1 %x)\n", c0, c1);
+                wifi_log("is another WiFi driver (WiFiPi.device?) started in AmigaOS? The kernel drives the WiFi now: remove it\n");
+                W.lost = "another driver took the WiFi controller (WiFiPi.device?) - remove it from AmigaOS";
+                W.chip_up = 0;
+                break;
+            }
+            if (u->state == AN_ST_CONNECTED) W.restarts = 0;
             commands();
             uint32_t now = now_ms();
             int busy = now - W.traffic_ms < 300 || u->state == AN_ST_JOINING || u->state == AN_ST_SCANNING || W.scan_busy || u->tx_tail != u->tx_head;
@@ -1117,7 +1143,40 @@ static void wifi_thread(void)
             conn_tick();
             an_yield();
         }
-        if (W.off_req) { chip_off(); wstate(AN_ST_OFF, "switched off"); }
+        if (W.off_req) { chip_off(); wstate(AN_ST_OFF, "switched off"); continue; }
+        /* the chip was lost: off, and on again in 5 s (5 times at most in a row) */
+        link_set(0);
+        W.chip_up = 0;
+        chip_off();
+        if (W.restarts < 5) {
+            W.restarts++;
+            char m[96]; unsigned i = 0;
+            for (const char *p = W.lost ? W.lost : "the WiFi chip was lost"; *p && i < 70; ) m[i++] = *p++;
+            for (const char *p = ": again in 5 s"; *p && i < 95; ) m[i++] = *p++;
+            m[i] = 0;
+            wstate(AN_ST_RETRY, m);
+            W.restart_at = now_ms() + 5000;
+            while ((int32_t)(now_ms() - W.restart_at) < 0 && !W.off_req) { commands(); an_yield(); }
+            if (!W.off_req) W.start_req = 1;
+        } else
+            wstate(AN_ST_FAILED, W.lost ? W.lost : "the WiFi chip was lost 5 times: Alice68-WiFi START tries again");
+    }
+}
+
+/* The kernel owns the WiFi's SD host: its device-tree node (reg 0x7e300000
+   under /soc) is marked disabled, as for hardware the OS does not own, so a
+   driver in AmigaOS that reads the device tree leaves it alone. */
+static void claim_host_in_dt(void)
+{
+    of_node_t *soc = dt_find_node("/soc");
+    for (of_node_t *n = soc ? soc->on_children : 0; n; n = n->on_next) {
+        of_property_t *reg = dt_find_property(n, "reg");
+        if (!reg || reg->op_length < 4 || *(uint32_t *)reg->op_value != 0x7e300000u) continue;
+        static char disabled[] = "disabled";
+        of_property_t *st = dt_find_property(n, "status");
+        if (st) { st->op_value = disabled; st->op_length = sizeof disabled; }
+        else dt_add_property(n, "status", disabled, sizeof disabled);
+        wifi_log("%s: marked disabled for AmigaOS - the kernel drives the WiFi (wifi=off gives it back)\n", n->on_name);
     }
 }
 
@@ -1157,6 +1216,7 @@ void alice_net_poll(void)
         ctx_wifi.x30 = (uint64_t)(uintptr_t)an_trampoline;
         ctx_wifi.sp = ((uint64_t)(uintptr_t)(stk + WIFI_STACK)) & ~15ull;
         kprintf("[WIFI] the WiFi runs on CPU1 (alice_net.c)\n");
+        claim_host_in_dt();
     }
     if (wifi_disabled) return;
     in_wifi = 1;

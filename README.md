@@ -290,6 +290,13 @@ supports it). The card has room for a second unit, the kernel's own Ethernet dri
    carries one interface at a time: WiFi or the Ethernet port, so give the other file
    `STATE=DOWN`.
 
+**Remove any other WiFi driver from AmigaOS's start-up** (WiFiPi.device and the like, in
+`DEVS:NetInterfaces/`, `S:User-Startup` or a stack's own settings): the kernel drives the
+chip now, and another driver resetting the same controller cuts it off. The kernel marks the
+controller disabled in the device tree for AmigaOS; if something resets it anyway, the
+splash and `Alice68-WiFi LOG` say "the WiFi controller was reset by someone else", and the
+kernel starts the chip again 5 seconds later.
+
 `Alice68-WiFi` on its own shows the state, the network, the signal and the counters;
 `SCAN` lists the networks in range; `LOG` shows the kernel's WiFi log (the same lines are
 on the splash and the serial log as `[WIFI] ...`) - send that if WiFi does not come up.

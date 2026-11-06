@@ -15,6 +15,9 @@
   chip bring-up, FullMAC protocol, joining with the firmware's WPA2/WPA3 supplicant) was
   written for Alice68 from Linux brcmfmac and OpenBSD bwfm (ISC). This replaces the
   68k `alice68wifi.device`, which hung AmigaOS while it read the firmware through DOS.
+  The kernel marks the WiFi's SD host disabled in the device tree for AmigaOS, notices when
+  another driver (WiFiPi.device on a first test) resets it anyway and says so, and starts a
+  lost chip again after 5 s (5 times in a row at most).
 - **The splash shows the hardfiles again, and the WiFi.** It keeps drawing after the 68k
   starts and stops at AmigaOS's first picture (or 30 s later at most); stopping at the
   68k's start had hidden `alice68hdf.device`'s HARDFILES summary. The status strip has a
