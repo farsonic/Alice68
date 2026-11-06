@@ -18,8 +18,8 @@
 
 #define DEVNAME     "alice68wifi.device"
 #define VERSION     1
-#define REVISION    7
-#define IDSTRING    "alice68wifi 1.7 (06.11.2026)\r\n"
+#define REVISION    8
+#define IDSTRING    "alice68wifi 1.8 (06.11.2026)\r\n"
 
 #define BUFSZ       2048            /* one frame buffer */
 #define CTLMAX      1600            /* largest control payload */
@@ -46,6 +46,8 @@ struct WifiBase {
     UBYTE   fcstate, flowctl;
     ULONG   ack_fail;
     struct timerequest *naptr;
+    UBYTE  *clm;
+    ULONG   clmlen;
     UBYTE   rx_more, cardint_off, rx_signalled;
     ULONG   junk;
     ULONG   rxskip_t0;
@@ -733,40 +735,66 @@ static int bringup(struct WifiBase *w)
     static const char *const nv43455[] = { "brcmfmac43455-sdio.raspberrypi,4-model-b", "brcmfmac43455-sdio", "cyfmac43455-sdio", 0 };
     static const char *const nv43456[] = { "brcmfmac43456-sdio.raspberrypi,4-compute-module", "brcmfmac43456-sdio", 0 };
 
-    sdh_pins();
-    MB_SetGPIOState(w->mbox, 1, 0);         /* WL_ON low: chip off */
-    wifi_udelay(20000);
-    MB_SetGPIOState(w->mbox, 1, 1);         /* and on */
-    wifi_udelay(150000);
-    MB_SetClockState(w->mbox, 1, 1);
-    ULONG base = MB_GetClockRate(w->mbox, 1);
-    if (!base || base == 0xffffffffu) {
-        ULONG caps = *(volatile ULONG *)(SDH_BASE + 0x40);
-        caps = caps >> 24 | (caps >> 8 & 0xff00) | (caps << 8 & 0xff0000) | caps << 24;
-        base = ((caps >> 8) & 0xff) * 1000000u;
-        if (!base) base = 250000000u;
-    }
-    if (sdh_init(&w->h, base)) { say(w, "the WiFi chip does not answer on SDIO"); return -2; }
-    if (sdh_bus4(&w->h, w->sdclock)) { say(w, "SDIO bus setup failed"); return -3; }
-    if (chip_attach(&w->c, &w->h)) { say(w, "WiFi chip not recognised"); return -4; }
-
-    const char *const *fw = w->c.id == 0x4345 && w->c.rev == 9 ? s43456 : s43455;
-    const char *const *nvn = fw == s43456 ? nv43456 : nv43455;
-    if (w->c.id != 0x4345) wifi_log("chip %x is not a 43455/43456: trying the 43455 files\n", w->c.id);
+    /* All files first, before any WiFi hardware is touched: the disk (the SD
+       card driver) and the WiFi controller share an interrupt line, so the
+       two phases are kept apart - and a hang can be told apart. */
     ULONG fwlen = 0, nvlen = 0, clmlen = 0;
-    UBYTE *fwb = load_any(w, fw, ".bin", &fwlen, 0, which);
-    if (!fwb) { say(w, fw == s43456 ? "firmware missing: copy brcmfmac43456-sdio.bin to DEVS:Firmware/" : "firmware missing: copy cyfmac43455-sdio-standard.bin to DEVS:Firmware/"); return -5; }
-    wifi_log("firmware %s\n", which);
-    UBYTE *nvb = load_any(w, nvn, ".txt", &nvlen, 16, which);
-    if (!nvb) { FreeMem(fwb, fwlen + 16); say(w, "NVRAM missing: copy brcmfmac43455-sdio.txt to DEVS:Firmware/"); return -6; }
-    wifi_log("NVRAM %s\n", which);
-    UBYTE *nvimg = AllocMem(nvlen + 32, MEMF_PUBLIC | MEMF_CLEAR);
-    ULONG nvimglen = nvimg ? fm_nvram(nvb, nvlen, nvimg) : 0;
-    FreeMem(nvb, nvlen + 16 + 16);
-    int e = nvimg ? chip_load(&w->c, fwb, fwlen, nvimg, nvimglen) : -7;
-    FreeMem(fwb, fwlen + 16);
-    if (nvimg) FreeMem(nvimg, nvlen + 32);
-    if (e) { say(w, "firmware did not start"); return -8; }
+    const char *const *fw = s43455, *const *nvn = nv43455;
+    UBYTE *fwb = 0, *nvb = 0;
+    w->clm = 0;
+    for (int pass = 0; pass < 2; pass++) {
+        wifi_log("step: reading the firmware files\n");
+        fwb = load_any(w, fw, ".bin", &fwlen, 0, which);
+        if (!fwb) { say(w, fw == s43456 ? "firmware missing: copy brcmfmac43456-sdio.bin to DEVS:Firmware/" : "firmware missing: copy cyfmac43455-sdio-standard.bin to DEVS:Firmware/"); return -5; }
+        wifi_log("firmware %s (%u bytes)\n", which, fwlen);
+        nvb = load_any(w, nvn, ".txt", &nvlen, 16, which);
+        if (!nvb) { FreeMem(fwb, fwlen + 16); say(w, "NVRAM missing: copy brcmfmac43455-sdio.txt to DEVS:Firmware/"); return -6; }
+        wifi_log("NVRAM %s\n", which);
+        w->clm = load_any(w, fw, ".clm_blob", &clmlen, 0, which);
+        w->clmlen = clmlen;
+        if (w->clm) wifi_log("CLM %s\n", which);
+        if (pass) break;
+        wifi_log("step: files read; now the WiFi hardware\n");
+
+        wifi_log("step: pins and power\n");
+        sdh_pins();
+        MB_SetGPIOState(w->mbox, 1, 0);         /* WL_ON low: chip off */
+        wifi_udelay(20000);
+        MB_SetGPIOState(w->mbox, 1, 1);         /* and on */
+        wifi_udelay(150000);
+        MB_SetClockState(w->mbox, 1, 1);
+        ULONG base = MB_GetClockRate(w->mbox, 1);
+        if (!base || base == 0xffffffffu) {
+            ULONG caps = *(volatile ULONG *)(SDH_BASE + 0x40);
+            caps = caps >> 24 | (caps >> 8 & 0xff00) | (caps << 8 & 0xff0000) | caps << 24;
+            base = ((caps >> 8) & 0xff) * 1000000u;
+            if (!base) base = 250000000u;
+        }
+        wifi_log("step: SD host\n");
+        if (sdh_init(&w->h, base) || sdh_bus4(&w->h, w->sdclock)) { say(w, "the WiFi chip does not answer on SDIO"); goto fail; }
+        wifi_log("step: chip\n");
+        if (chip_attach(&w->c, &w->h)) { say(w, "WiFi chip not recognised"); goto fail; }
+        if (w->c.id != 0x4345) wifi_log("chip %x is not a 43455/43456: trying the 43455 files\n", w->c.id);
+        if (!(w->c.id == 0x4345 && w->c.rev == 9)) break;
+        /* a CM4's 43456: its own files */
+        FreeMem(fwb, fwlen + 16); FreeMem(nvb, nvlen + 16 + 16);
+        if (w->clm) FreeMem(w->clm, w->clmlen + 16);
+        w->clm = 0;
+        fw = s43456; nvn = nv43456;
+    }
+    {
+        wifi_log("step: firmware download\n");
+        UBYTE *nvimg = AllocMem(nvlen + 32, MEMF_PUBLIC | MEMF_CLEAR);
+        ULONG nvimglen = nvimg ? fm_nvram(nvb, nvlen, nvimg) : 0;
+        FreeMem(nvb, nvlen + 16 + 16);
+        nvb = 0;
+        int e = nvimg ? chip_load(&w->c, fwb, fwlen, nvimg, nvimglen) : -7;
+        FreeMem(fwb, fwlen + 16);
+        fwb = 0;
+        if (nvimg) FreeMem(nvimg, nvlen + 32);
+        if (e) { say(w, "firmware did not start"); goto fail_clm; }
+    }
+    wifi_log("step: firmware setup\n");
     w->chip_up = 1;
     w->txseq = 0xff;
     w->maxseq = 0;
@@ -774,14 +802,13 @@ static int bringup(struct WifiBase *w)
     /* the firmware's setup */
     iov_int(w, "bus:txglom", 0);            /* one frame per transfer from the chip */
     ULONG ver = 0;
-    if (cmd_get_int(w, WLC_GET_VERSION, &ver)) { say(w, "firmware does not answer commands"); return -9; }
+    if (cmd_get_int(w, WLC_GET_VERSION, &ver)) { say(w, "firmware does not answer commands"); goto fail_clm; }
     iov_get(w, "cur_etheraddr", w->mac, 6);
     memset(w->fwver, 0, sizeof w->fwver);
     iov_get(w, "ver", w->fwver, sizeof w->fwver - 1);
     for (char *p = w->fwver; *p; p++) if (*p == '\n' || *p == '\r') *p = ' ';
     wifi_log("MAC %02x:%02x:%02x:%02x:%02x:%02x, %s\n", w->mac[0], w->mac[1], w->mac[2], w->mac[3], w->mac[4], w->mac[5], w->fwver);
-    UBYTE *clm = load_any(w, fw, ".clm_blob", &clmlen, 0, which);
-    if (clm) { if (!clm_upload(w, clm, clmlen)) wifi_log("CLM %s\n", which); FreeMem(clm, clmlen + 16); }
+    if (w->clm) { if (!clm_upload(w, w->clm, w->clmlen)) wifi_log("CLM uploaded\n"); FreeMem(w->clm, w->clmlen + 16); w->clm = 0; }
     else wifi_log("no .clm_blob: using the firmware's built-in regulatory data\n");
     memset(w->caps, 0, sizeof w->caps);
     iov_get(w, "cap", w->caps, sizeof w->caps - 1);
@@ -810,8 +837,16 @@ static int bringup(struct WifiBase *w)
     cmd_int(w, WLC_SET_INFRA, 1);
     cmd_int(w, WLC_SET_AP, 0);
     w->state = WS_IDLE;
+    wifi_log("step: done\n");
     say(w, w->ssid[0] ? "ready" : "ready - no network set: put SSID= in ENV:alice68wifi.prefs");
     return 0;
+fail:
+    if (fwb) FreeMem(fwb, fwlen + 16);
+    if (nvb) FreeMem(nvb, nvlen + 16 + 16);
+fail_clm:
+    if (w->clm) FreeMem(w->clm, w->clmlen + 16);
+    w->clm = 0;
+    return -2;
 }
 
 static void irq_setup(struct WifiBase *w)
