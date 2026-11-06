@@ -942,6 +942,7 @@ static void ready(void)
     __asm__ volatile("sev" ::: "memory");
 }
 
+extern void alice_net_poll(void);
 void __attribute__((noreturn)) frf_xhci_main(void)
 {
     pool = frf_dma_phys;
@@ -990,6 +991,7 @@ void __attribute__((noreturn)) frf_xhci_main(void)
                 if (devs[s].used && devs[s].is_hub) hub_poll(s);
         }
         pt_service();                              /* Neptune's devices (frf_xhci_pt.c) */
+        alice_net_poll();                          /* the WiFi's turn (src/alice/alice_net.c) */
         if (frf_native_usb_reboot_requested()) {
             xlog("[FRF-XHCI] Ctrl+LeftShift+F11: host reboot\n");
             aga_reboot(0);
@@ -1000,5 +1002,5 @@ dead:
     { extern volatile int frf_usb_failed; frf_usb_failed = 1; }
     xlog("[FRF-XHCI] FAIL: USB-A ports unavailable - use frf_usb=neptune and AmigaOS's xhci.device, or the USB-C port\n");
     ready();
-    for (;;) __asm__ volatile("wfe");
+    for (;;) { alice_net_poll(); __asm__ volatile("yield"); }     /* CPU1 still runs the network */
 }

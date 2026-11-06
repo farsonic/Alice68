@@ -21,11 +21,12 @@
  * last task table goes onto the board too, for DUMP after a reset. */
 #include "wifi/wifios.h"
 #include "../third_party/Emu68/src/frf_usb/xhci/alice68_usbpt.h"
+#include "../third_party/Emu68/src/alice/alice_net.h"
 
 void *memcpy(void *d, const void *s, unsigned long n) { UBYTE *a = d; const UBYTE *b = s; while (n--) *a++ = *b++; return d; }
 void *memset(void *d, int c, unsigned long n) { UBYTE *a = d; while (n--) *a++ = (UBYTE)c; return d; }
 
-#define MON_VERSION "Alice68-Monitor 1.0"
+#define MON_VERSION "Alice68-Monitor 1.1"
 
 /* ---- system calls not in wifios.h ------------------------------------------ */
 static inline APTR GetMsg_(APTR p)                     { return (APTR)lvo(SYSBASE, -372, 0, 0, (ULONG)p, 0); }
@@ -90,10 +91,13 @@ static int sieq(const char *a, const char *b)
 /* ---- the board ----------------------------------------------------------------- */
 static volatile struct pt_hdr *board;
 static volatile struct pt_wstat *wst;
+static volatile UBYTE *netb;                            /* the kernel's network board (alice_net.h) */
 static void find_board(void)
 {
     APTR eb = OpenLibrary("expansion.library", 36);
     if (!eb) return;
+    struct ConfigDev *nc = FindConfigDev(eb, 0, AN_MANUFACTURER, AN_PRODUCT);
+    if (nc && ((volatile struct an_hdr *)nc->cd_BoardAddr)->magic == AN_MAGIC) netb = nc->cd_BoardAddr;
     struct ConfigDev *cd = FindConfigDev(eb, 0, PT_MANUFACTURER, PT_PRODUCT);
     CloseLibrary(eb);
     if (!cd) return;
@@ -264,6 +268,18 @@ static void task_line(struct sb *b, struct tinfo *t)
 }
 static void wifi_line(struct sb *b)
 {
+    if (netb) {                                         /* the kernel's WiFi, on CPU1 */
+        static const char *const sw[] = { "off", "starting", "ready", "scanning", "joining", "connected", "retrying", "FAILED", "no firmware" };
+        volatile struct an_unit *u = (volatile struct an_unit *)(netb + AN_OFF_UNIT(0));
+        ULONG st = u->state;
+        ss(b, "WiFi (kernel): "); ss(b, st < 9 ? sw[st] : "?"); ss(b, " - ");
+        char t[97];
+        for (int i = 0; i < 96; i++) t[i] = u->msg[i];
+        t[96] = 0; ss(b, t); ss(b, "  [");
+        for (int i = 0; i < 96; i++) t[i] = u->where[i];
+        t[96] = 0; ss(b, t); ss(b, "] polls "); sdec(b, u->polls); ss(b, " rx "); sdec(b, u->rx_pkts); ss(b, " tx "); sdec(b, u->tx_pkts);
+        return;
+    }
     if (!board) { ss(b, "no pass-through board (USB kernel needed for logs and driver state)"); return; }
     if (!wst) { ss(b, "alice68wifi.device: has not run since the Pi started"); return; }
     ULONG v = wst->ver;
@@ -279,10 +295,11 @@ static void wifi_line(struct sb *b)
 static char lines[NLINES][LW];
 static UBYTE lsrc[NLINES];
 static unsigned lhead, lcount;
-static char part[3][LW];
-static unsigned partn[3];
-static ULONG seen[3];
-static const char srcch[3] = { 'K', 'W', 'U' };
+#define NSRC 4
+static char part[NSRC][LW];
+static unsigned partn[NSRC];
+static ULONG seen[NSRC];
+static const char srcch[NSRC] = { 'K', 'W', 'U', 'N' };
 static void add_line(int src, const char *s, unsigned n)
 {
     char *d = lines[lhead];
@@ -296,6 +313,11 @@ static void add_line(int src, const char *s, unsigned n)
 }
 static int ring_info(int src, volatile const char **r, ULONG *size, ULONG *wr)
 {
+    if (src == 3) {
+        if (!netb) return 0;
+        *r = (volatile const char *)netb + AN_OFF_LOG; *size = AN_LOG_BYTES; *wr = ((volatile struct an_hdr *)netb)->log_wr;
+        return 1;
+    }
     if (!board) return 0;
     if (src == 0) { *r = (volatile const char *)board + PT_OFF_KLOG; *size = PT_KLOG_BYTES; *wr = board->klog_wr; }
     else if (src == 1) { *r = (volatile const char *)board + PT_OFF_WLOG; *size = PT_WLOG_BYTES; *wr = board->wlog_wr; }
@@ -358,7 +380,7 @@ static void to_board(void)
 static LONG dump(void)
 {
     put(MON_VERSION " DUMP\n");
-    if (!board) { put("no USB pass-through board: this needs the Alice68 kernel with USB (kernel8.img)\n"); return 10; }
+    if (!board && !netb) { put("no Alice68 boards: not an Alice68 kernel\n"); return 10; }
     char l[200]; struct sb lb = { l, 0, sizeof l };
     wifi_line(&lb); put(l); put("\n");
     if (wst) { put("  where changed "); lb.n = 0; sdec(&lb, wst->where_seq); put(l); put(" times\n"); }
@@ -373,7 +395,8 @@ static LONG dump(void)
     scan_memory(); snapshot();
     static char t[PT_MSNAP_BYTES];
     put_snapshot_text(t, sizeof t); put(t);
-    dump_ring("alice68wifi.device log", 1);
+    dump_ring("kernel WiFi log (network board)", 3);
+    dump_ring("alice68wifi.device log (old driver)", 1);
     dump_ring("alice68-usb.device log", 2);
     dump_ring("kernel log", 0);
     put("\n");
@@ -400,7 +423,7 @@ static void row(int r, const char *s, int pen)
 static void draw(void)
 {
     char l[256]; struct sb b = { l, 0, sizeof l };
-    ss(&b, MON_VERSION "  space: pause  1 all  2 kernel  3 WiFi  4 USB  t: tasks  q: quit");
+    ss(&b, MON_VERSION "  space: pause  1 all  2 kernel  3 old WiFi  4 USB  5 network  t: tasks  q: quit");
     if (paused) ss(&b, "   PAUSED");
     row(0, l, 2);
     b.n = 0; l[0] = 0; wifi_line(&b); row(1, l, 1);
@@ -412,7 +435,7 @@ static void draw(void)
         for (int i = 0; i < ntasks && i < ntrows; i++) { b.n = 0; l[0] = 0; task_line(&b, &tasks[i]); row(r++, l, tasks[i].wifi ? 3 : 1); }
     }
     b.n = 0; l[0] = 0;
-    static const char *const fn[] = { "all logs (K kernel, W WiFi, U USB)", "kernel log", "WiFi driver log", "USB driver log" };
+    static const char *const fn[] = { "all logs (K kernel, N network, U USB)", "kernel log", "WiFi driver log", "USB driver log", "network log" };
     ss(&b, "-- "); ss(&b, fn[filter]); ss(&b, " --");
     row(r++, l, 2);
     int avail = rows - r;
@@ -422,11 +445,12 @@ static void draw(void)
     for (unsigned k = 0; k < lcount && np < avail && np < 200; k++) {
         unsigned i = (lhead + NLINES - 1 - k) % NLINES;
         if (filter && lsrc[i] != filter - 1) continue;
+        if (!filter && lsrc[i] == 3 && board) continue;    /* the kernel log has the network's lines already */
         pick[np++] = (int)i;
     }
     for (int k = 0; k < avail; k++) {
         int idx = np - avail + k;
-        row(r + k, idx >= 0 ? lines[pick[np - 1 - idx]] : "", lsrc[idx >= 0 ? pick[np - 1 - idx] : 0] == 1 ? 3 : 1);
+        row(r + k, idx >= 0 ? lines[pick[np - 1 - idx]] : "", (lsrc[idx >= 0 ? pick[np - 1 - idx] : 0] & 1) ? 3 : 1);
     }
 }
 
@@ -474,14 +498,14 @@ LONG monitor_main(const char *args, ULONG arglen)
     SetDrMd(rp, 1);                                     /* JAM2: each row paints its own background */
 
     SetTaskPri(FindTask(0), 21);
-    for (int s = 0; s < 3; s++) { volatile const char *r; ULONG size, wr; if (ring_info(s, &r, &size, &wr)) seen[s] = wr > size ? wr - size : 0; }
-    for (int s = 0; s < 3; s++) pull(s);
+    for (int s = 0; s < NSRC; s++) { volatile const char *r; ULONG size, wr; if (ring_info(s, &r, &size, &wr)) seen[s] = wr > size ? wr - size : 0; }
+    for (int s = 0; s < NSRC; s++) pull(s);
     scan_memory();
     ULONG port_mask = 1u << ((struct MsgPort *)*(APTR *)(win + 86))->mp_SigBit, tmask = 1u << tp->mp_SigBit;
     int quit = 0, tick = 0;
     while (!quit) {
         if (!paused) {
-            for (int s = 0; s < 3; s++) pull(s);
+            for (int s = 0; s < NSRC; s++) pull(s);
             if (tick % 20 == 0) scan_memory();          /* every 10 s: devices loaded meanwhile */
             snapshot();
             to_board();
@@ -501,7 +525,7 @@ LONG monitor_main(const char *args, ULONG arglen)
                 else if (cls == IDCMP_VANILLAKEY) {
                     if (code == 'q' || code == 'Q' || code == 27) quit = 1;
                     else if (code == ' ') paused = !paused;
-                    else if (code >= '1' && code <= '4') filter = code - '1';
+                    else if (code >= '1' && code <= '5') filter = code - '1';
                     else if (code == 't' || code == 'T') ntrows = ntrows == 14 ? 30 : ntrows == 30 ? 0 : 14;
                     draw();
                 }

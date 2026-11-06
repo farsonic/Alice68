@@ -173,6 +173,31 @@ int main(int argc, char **argv)
         printf("writes: %ld sectors changed on the card (want 416), read back OK\n", changed);
         free(buf); free(back);
     }
+    /* the WiFi firmware files (alice68hdf.device offers them to the kernel) */
+    {
+        struct fat wf;
+        struct hdf_file w[8];
+        CHECK(fat_open(&wf, &io) == 0, "FAT for the WiFi files");
+        int nw = fat_find_wifi(&wf, w, 8);
+        fat_close(&wf);
+        static const char *const wn[3] = { "cyfmac43455-sdio-standard.clm_blob", "cyfmac43455-sdio-standard.bin", "brcmfmac43455-sdio.txt" };
+        static const char *const wp[3] = { "clm.bin", "fw.bin", "nv.txt" };
+        CHECK(nw == 3, "%d WiFi files, want 3 (two in WIFI, one in the root)", nw);
+        for (int i = 0; i < nw && i < 3; i++) {
+            int k = 0; while (k < 3 && strcmp(w[i].name, wn[k])) k++;
+            CHECK(k < 3, "WiFi file '%s' not expected", w[i].name);
+            if (k == 3) continue;
+            char path[2048]; snprintf(path, sizeof path, "%s/%s", argv[2], wp[k]);
+            FILE *of = fopen(path, "rb");
+            static uint8_t want[700000], got[700000];
+            size_t wl = of ? fread(want, 1, sizeof want, of) : 0;
+            if (of) fclose(of);
+            CHECK(w[i].size == wl && w[i].blocks == (wl + 511) / 512, "%s: size %u, want %zu", w[i].name, w[i].size, wl);
+            CHECK(hdf_read(&io, &w[i], 0, w[i].blocks, got) == 0 && !memcmp(got, want, wl), "%s: contents differ", w[i].name);
+            hdf_file_free(&io, &w[i]);
+        }
+        printf("WiFi firmware files: %d found, read back OK\n", nw);
+    }
     /* the SD card's own Amiga partition and its volume */
     struct hdf_file sdp[4];
     int ns = card_amiga_parts(&io, sdp, 4);

@@ -21,8 +21,10 @@ Alice68's history starts with three commits that keep the inputs apart:
    - the xHCI driver, the Neptune pass-through and the virtual eject;
    - the splash;
    - the 68k driver and log tool;
-   - the WiFi driver (`amiga/wifi/`), written for Alice68 from Linux brcmfmac and
-     OpenBSD bwfm (ISC) as references; no code from other Amiga WiFi drivers was used.
+   - the WiFi (`third_party/Emu68/src/alice/`, run by the kernel on CPU1) and
+     `alice68net.device` (`amiga/net/`), written for Alice68 from Linux brcmfmac and
+     OpenBSD bwfm (ISC) as references; no code from other Amiga or RISC OS WiFi drivers
+     was used.
      `netdev.h` is lwip-amiga's (BSD-3-Clause), copied unchanged;
    - the licensing documents.
 

@@ -4,5 +4,5 @@
 set -e
 cd "$(dirname "$0")"
 out=${TMPDIR:-/tmp}/alice68-fmac-test
-cc -std=gnu11 -O1 -Wall -Wextra -Werror -fsanitize=address,undefined -I../../amiga/wifi -o "$out" fmac_test.c ../../amiga/wifi/fmac.c
+cc -std=gnu11 -O1 -Wall -Wextra -Werror -fsanitize=address,undefined -I../../third_party/Emu68/src/alice/wifi -o "$out" fmac_test.c ../../third_party/Emu68/src/alice/wifi/fmac.c
 "$out"

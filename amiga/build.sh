@@ -23,7 +23,7 @@ build Alice68-USBLog usblog_start.S usblog.c lvo.S
 build alice68hdf.device hdf/hdf_start.S hdf/alice68hdf.c hdf/hdf_core.c lvo.S
 build Alice68-HDF hdf/hdfinfo_start.S hdf/hdfinfo.c lvo.S
 build Alice68-NetCheck netcheck_start.S netcheck.c lvo.S
-build alice68wifi.device wifi/wifi_start.S wifi/wifi.c wifi/sdio.c wifi/chip.c wifi/fmac.c wifi/lvox.S lvo.S
+build alice68net.device device_start.S net/alice68net.c wifi/lvox.S lvo.S
 build Alice68-WiFi wifi/wifitool_start.S wifi/wifitool.c wifi/lvox.S lvo.S
 build Alice68-Monitor monitor_start.S monitor.c wifi/lvox.S lvo.S
 # alice68hdf.device runs from Emu68's ROM board, which is mapped read-only:

@@ -85,6 +85,8 @@ void fat_close(struct fat *f);
 /* every *.hdf in the root directory and in a root directory named HDF;
    returns how many were put in files[] (each with its extents) */
 int  fat_find_hdfs(struct fat *f, struct hdf_file *files, int max);
+/* the WiFi firmware files: everything in a WIFI folder, and cyfmac4345x* / brcmfmac4345x* in the root */
+int  fat_find_wifi(struct fat *f, struct hdf_file *files, int max);
 void hdf_file_free(struct hdf_io *io, struct hdf_file *h);
 
 /* the card sector of a hardfile block, and how many blocks follow it

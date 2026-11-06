@@ -161,6 +161,9 @@ aga.look=0 aga.scale=1
 | `hdf=off` | No hardfiles |
 | `frf_usb=neptune` | Leave the USB-A ports to AmigaOS (rondoval's `xhci.device` + Neptune) instead of the kernel; the USB-C port then takes keyboard, mouse and pads (untested on a Pi 4) |
 | `frf_usb.nomodeswitch` | Don't switch Realtek USB network dongles out of driver-CD mode |
+| `wifi.ssid="NAME"` `wifi.psk="PASSWORD"` | Join this WiFi network at boot (see [WiFi](#wifi-new-not-yet-tested-on-a-pi)) |
+| `wifi.country=GB` | Your country: the WiFi channels allowed |
+| `wifi=off` | Leave the WiFi chip off |
 
 Examples:
 
@@ -183,16 +186,18 @@ AGA-PiStorm's Chipset menu (`agaboot`) changes the picture at run time as well.
 The splash has five parts:
 
 - **Header:** the Alice68 emblem and versions.
-- **Status strip:** video, ROM, 68k, CPU1, USB, the input devices found, and the
-  hardfiles: how many boot, how many are mounted without booting, and how many were left
-  out (in amber, with the reason in the SYSTEM panel).
+- **Status strip:** video, ROM, 68k, CPU1, USB, the input devices found, the
+  hardfiles (how many boot, how many are mounted without booting, and how many were left
+  out, in amber, with the reason in the SYSTEM panel) and the WiFi (connected, joining,
+  no firmware, ...).
 - **SYSTEM panel:** the kernel log.
 - **USB panel:** the USB log.
 - **Credits line.**
 
 Failures show in red, so a photo of the screen is usually enough to diagnose a hang.
-The splash stops drawing as soon as the 68k starts, so nothing is drawn over AmigaOS's
-or the RTG screen. `aga.nobootlog` in
+The splash keeps updating after the 68k starts - the hardfiles and the WiFi come in
+then - and stops when AmigaOS puts its first picture up (or 30 s after the 68k started,
+for a Workbench that opens straight on RTG), so nothing is drawn over AmigaOS's screen. `aga.nobootlog` in
 `cmdline.txt` turns the log panels off. `tools/splash-preview/build.sh` renders the
 splash on a PC with the kernel's own drawing code.
 
@@ -240,72 +245,64 @@ Shell.
 
 ## WiFi (new, not yet tested on a Pi)
 
-`alice68wifi.device` drives the Pi 4's built-in WiFi (the Cypress CYW43455 chip) for
-rondoval's **lwip-amiga** TCP/IP stack, the one in the
-[driver stack](https://github.com/rondoval/emu68-driver-stack/releases)'s archives. It
-speaks lwip-amiga's fast `netdev` interface, not SANA-II, so Roadshow, AmiTCP, Miami and
-Riptide cannot use it. The chip's own firmware does the WPA2 handshake (and WPA3 where the
-firmware supports it): no separate supplicant program is needed.
+The **kernel** runs the Pi 4's built-in WiFi (the Cypress CYW43455 chip) on CPU1, beside
+USB, and AmigaOS sees it as a network card: `alice68net.device` hands frames between that
+card and rondoval's **lwip-amiga** TCP/IP stack (the one in the
+[driver stack](https://github.com/rondoval/emu68-driver-stack/releases)'s archives). It
+speaks lwip-amiga's `netdev` interface, which is faster than SANA-II (the stack and the
+driver call each other directly), so Roadshow, AmiTCP, Miami and Riptide cannot use it
+yet. The chip's own firmware does the WPA2 handshake (and WPA3 where the firmware
+supports it). The card has room for a second unit, the kernel's own Ethernet driver, to come.
 
-1. **Firmware.** Alice68 does not include it. Take these from Raspberry Pi's
+1. **Firmware**, on the SD card's FAT partition (where `kick31.rom` is), in a folder
+   named **`WIFI`**. Alice68 does not include it. Take these from Raspberry Pi's
    [firmware-nonfree](https://github.com/RPi-Distro/firmware-nonfree) repository
-   (`debian/added-firmware/`), or from `/lib/firmware/` on a Raspberry Pi OS card, and copy
-   them, names unchanged, into **`DEVS:Firmware/`**:
+   (`debian/added-firmware/`), or from `/lib/firmware/` on a Raspberry Pi OS card, names
+   unchanged:
    - `cypress/cyfmac43455-sdio-standard.bin`
    - `cypress/cyfmac43455-sdio.clm_blob`
    - `brcm/brcmfmac43455-sdio.txt`
 
    (Compute Module 4: `brcm/brcmfmac43456-sdio.bin`, `.clm_blob` and `.txt` instead.)
-2. Copy `amiga/DEVS/alice68wifi.device` to `DEVS:` and `amiga/C/Alice68-WiFi` to `C:`.
-3. Choose the network:
+   At boot `alice68hdf.device` reads them and hands them to the kernel, which starts the
+   chip straight away: the splash's status strip shows **WIFI** and what it is doing.
+2. **The network**, either in `cmdline.txt` (it then joins at boot, before AmigaOS):
    ```
-   Alice68-WiFi JOIN "MyNetwork" "my password"
+   aga.look=0 aga.scale=1 wifi.ssid="MyNetwork" wifi.psk="my password" wifi.country=GB
    ```
-   This saves `ENV:` and `ENVARC:alice68wifi.prefs` and connects. The file can also be
-   written by hand:
+   or from AmigaOS, after copying `amiga/C/Alice68-WiFi` to `C:`:
    ```
-   SSID="MyNetwork"
-   PASSWORD="my password"
-   COUNTRY=GB
+   Alice68-WiFi JOIN "MyNetwork" "my password" GB
    ```
-   `COUNTRY` is your two-letter country code (the channels allowed). Optional:
-   `POWERSAVE=1`, `SDCLOCK=25000000` (SDIO faster than the safe 10 MHz default), `POLL=1` (no
-   interrupt), `FIRMWARE=dir/` (another firmware folder), `STEP=n` (stop the start-up after
-   step n of 6, to find a step that hangs), `DEBUG=0..3` (how much it logs: 1, the default,
-   every file, power and step; 2 every command; 3 every SD transfer), `SERIAL=1` (the log
-   to the serial port too; it stalls the 68k for each line).
-4. Tell lwip-amiga about it: a file `DEVS:NetInterfaces/wifi` with
+   which also saves `ENV:` and `ENVARC:alice68wifi.prefs`; then `Alice68-WiFi RECONNECT`
+   in `S:User-Startup` joins it at every boot. `wifi.country` (or the third word of JOIN)
+   is your two-letter country code: the channels allowed. `wifi=off` in `cmdline.txt` keeps
+   the chip off; `wifi.sdclock=` sets the SDIO clock (25000000 by default).
+3. **The TCP/IP stack:** copy `amiga/DEVS/alice68net.device` to `DEVS:` and make a file
+   `DEVS:NetInterfaces/wifi` with
    ```
-   DEVICE=alice68wifi.device
+   DEVICE=alice68net.device
    UNIT=0
    TYPE=NETDEV
    ADDRESS=DHCP
    ```
    (`AddNetInterface` in `S:Network-Startup` adds the files in that folder). lwip-amiga
    carries one interface at a time: WiFi or the Ethernet port, so give the other file
-   `STATE=DOWN`. Keep the driver in `DEVS:` itself (not `DEVS:Networks/`): that is where
-   `Alice68-WiFi` looks for it.
+   `STATE=DOWN`.
 
-Opening the device does not switch the chip on: `Alice68-WiFi START`, `JOIN`, `RECONNECT`
-or the TCP/IP stack does, and `START` prints each step of the start-up (1 reading the files,
-2 pins and power, 3 SD host, 4 chip, 5 firmware download, 6 firmware setup).
 `Alice68-WiFi` on its own shows the state, the network, the signal and the counters;
-`Alice68-WiFi SCAN` lists the networks in range; `Alice68-WiFi LOG` shows the driver's log
-(the same lines go to the serial log as `[alice68wifi] ...`) - send that if WiFi does not
-come up. `DISCONNECT`, `RECONNECT` (after editing the prefs) and `OFF` (chip off) do what
-they say. The chip stays on when the last program closes the device, so a scan or JOIN
-before the TCP/IP stack starts does not drop the connection.
+`SCAN` lists the networks in range; `LOG` shows the kernel's WiFi log (the same lines are
+on the splash and the serial log as `[WIFI] ...`) - send that if WiFi does not come up.
+`DISCONNECT`, `OFF` (chip off) and `START` (on again) do what they say.
 
 **When something hangs: `Alice68-Monitor`.** Start it first (`run Alice68-Monitor`): a
-window at priority 21 that keeps updating while the mouse still moves. It shows what
-`alice68wifi.device` is doing now and for how long (for example `DosRead
-DEVS:Firmware/cyfmac43455-sdio.bin 32768 bytes at 65536 (for 14.2 s)`), every task with its
-state, the signals it waits for and a backtrace, and the logs of the kernel, the WiFi
-driver and the USB driver as they grow. Keys: space pauses, `1`-`4` choose the log, `t`
-the size of the task list, `q` quits. All of it lives on the kernel's USB pass-through board
-(the USB kernel, `kernel8.img`), which a 68k reset (Ctrl-Amiga-Amiga) does not clear: after
-a hang, reset and run `Alice68-Monitor DUMP >RAM:dump.txt` to get what led up to it,
-including the monitor's last task table.
+window at priority 21 that keeps updating while the mouse still moves. It shows what the
+WiFi is doing now, every task with its state, the signals it waits for and a backtrace,
+and the logs of the kernel, the network and the USB driver as they grow. Keys: space
+pauses, `1`-`5` choose the log, `t` the size of the task list, `q` quits. The logs live on
+the kernel's boards, which a 68k reset (Ctrl-Amiga-Amiga) does not clear: after a hang,
+reset and run `Alice68-Monitor DUMP >RAM:dump.txt` to get what led up to it, including the
+monitor's last task table.
 
 Not supported: WEP, WPA-Enterprise, hidden networks only by name (they are tried when
 not seen in a scan), access-point mode.

@@ -375,6 +375,13 @@ endif()
 # kernel, high virtual addresses, interrupt routing and TLSF allocator.
 if(FRF_VIRTUAL_AGA)
     target_sources(Emu68.elf PRIVATE ${CMAKE_SOURCE_DIR}/src/boards/frf_z3ram.c)
+    # Alice68: the network board and the Pi 4's WiFi on CPU1 (src/alice)
+    target_sources(Emu68.elf PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/alice/alice_net.c
+        ${CMAKE_SOURCE_DIR}/src/alice/wifi/sdio.c
+        ${CMAKE_SOURCE_DIR}/src/alice/wifi/chip.c
+        ${CMAKE_SOURCE_DIR}/src/alice/wifi/fmac.c)
+    target_include_directories(Emu68.elf PRIVATE ${CMAKE_SOURCE_DIR}/src/alice)
 endif()
 
 if(FRF_WIFI_GUEST_COMPAT)

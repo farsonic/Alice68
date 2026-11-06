@@ -179,8 +179,9 @@ void al_status_draw(const struct al_status *s)
         char b[40];
         unsigned k = 0;
         int kb = s->keyboards < 0 ? 0 : s->keyboards, ms = s->mice < 0 ? 0 : s->mice;
-        b[k++] = (char)('0' + (kb % 10)); for (const char *t = " keyboard"; *t; ) b[k++] = *t++;
-        if (kb != 1) b[k++] = 's';
+        int narrow = fw < 1600;                          /* room for the WiFi too */
+        b[k++] = (char)('0' + (kb % 10)); for (const char *t = narrow ? " kbd" : " keyboard"; *t; ) b[k++] = *t++;
+        if (kb != 1 && !narrow) b[k++] = 's';
         b[k++] = ' '; b[k++] = ' ';
         b[k++] = (char)('0' + (ms % 10)); for (const char *t = " mouse"; *t; ) b[k++] = *t++;
         if (ms != 1) { k -= 3; for (const char *t = "ice"; *t; ) b[k++] = *t++; }
@@ -194,12 +195,20 @@ void al_status_draw(const struct al_status *s)
         if (!nb && !no && !nl) {
             for (const char *t = "none"; *t; ) b[k++] = *t++;
         } else {
-            k = num(b, k, nb); for (const char *t = " bootable  "; *t; ) b[k++] = *t++;
-            k = num(b, k, no); for (const char *t = " non-bootable"; *t; ) b[k++] = *t++;
+            int narrow = fw < 1600;
+            k = num(b, k, nb); for (const char *t = narrow ? " boot  " : " bootable  "; *t; ) b[k++] = *t++;
+            k = num(b, k, no); for (const char *t = narrow ? " other" : " non-bootable"; *t; ) b[k++] = *t++;
             if (nl) { b[k++] = ' '; b[k++] = ' '; k = num(b, k, nl); for (const char *t = " left out"; *t; ) b[k++] = *t++; }
         }
         b[k] = 0;
-        chip(x, "HARDFILES", b, nl ? C_WAIT : (nb || no) ? C_OK : C_DIM);
+        x = chip(x, "HARDFILES", b, nl ? C_WAIT : (nb || no) ? C_OK : C_DIM);
+    }
+    if (s->wifi && s->wifi[0] && x + 16 * 8 < fw) {      /* the kernel's WiFi (alice_net.c), cut to the room left */
+        char w[48];
+        uint32_t room = (fw - x - 16 - 5 * 8 - 16) / 8, k = 0;
+        for (; s->wifi[k] && k < room && k < sizeof w - 1; k++) w[k] = s->wifi[k];
+        w[k] = 0;
+        chip(x, "WIFI", w, s->wifi_col == 1 ? C_OK : s->wifi_col == 2 ? C_FAIL : C_WAIT);
     }
     rect(0, strip_y + 31, fw, 1, C_RULE);
 }

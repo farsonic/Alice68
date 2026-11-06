@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only
- * alice68wifi.device: the Broadcom/Cypress FullMAC protocol, host-independent.
+ * Alice68 kernel WiFi: the Broadcom/Cypress FullMAC protocol, host-independent.
  *
  * Everything here builds and runs on the PC as well as on the 68k: no AmigaOS
  * calls, no structs laid over wire data (the 68k gcc aligns 32-bit fields to

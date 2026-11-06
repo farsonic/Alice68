@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only
- * alice68wifi.device: the FullMAC protocol (see fmac.h). Host-independent.
+ * Alice68 kernel WiFi: the FullMAC protocol (see fmac.h). Host-independent.
  * Layouts follow Linux brcmfmac's fwil_types.h/fweh.h and OpenBSD's
  * bwfmreg.h (ISC); offsets are the firmware's natural 4-byte alignment. */
 #include "fmac.h"

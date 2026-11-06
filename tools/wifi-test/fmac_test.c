@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only
- * PC test of amiga/wifi/fmac.c, the FullMAC protocol layer of alice68wifi.device:
+ * PC test of third_party/Emu68/src/alice/wifi/fmac.c, the FullMAC protocol layer of the kernel's WiFi:
  * SDPCM framing and credits, BCDC ioctls and data headers, firmware events,
  * escan results and their security elements, the join/PMK/country messages
  * and the NVRAM conversion, against byte layouts written out by hand from

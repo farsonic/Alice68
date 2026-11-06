@@ -713,6 +713,62 @@ static int mount_unit(struct HdfBase *db, struct card *c, APTR eb, APTR cd, stru
     return res;
 }
 
+/* The WiFi firmware for the kernel (src/alice/alice_net.c): the files found
+   on the FAT partition are read and offered on the network board; the kernel
+   copies them, and the buffers are freed again. */
+#include "../../third_party/Emu68/src/alice/alice_net.h"
+static ULONG pi_usecs(void)
+{
+    ULONG v = *(volatile ULONG *)0xF2003004u;
+    return v >> 24 | (v >> 8 & 0xff00) | (v << 8 & 0xff0000) | v << 24;
+}
+static void offer_wifi(struct fat *f, struct hdf_io *io)
+{
+    APTR eb = OpenLibrary("expansion.library", 36);
+    struct ConfigDev *cd = eb ? FindConfigDev(eb, 0, AN_MANUFACTURER, AN_PRODUCT) : 0;
+    if (eb) CloseLibrary(eb);
+    if (!cd) return;
+    volatile UBYTE *b = cd->cd_BoardAddr;
+    volatile struct an_hdr *h = (volatile struct an_hdr *)b;
+    if (h->magic != AN_MAGIC || h->fw_state == AN_FW_TAKEN) return;
+    struct hdf_file *w = AllocMem(sizeof(struct hdf_file) * AN_FW_MAX, MEMF_PUBLIC | MEMF_CLEAR);
+    if (!w) return;
+    int n = fat_find_wifi(f, w, AN_FW_MAX);
+    if (!n) { hdf_log(io, "WiFi: no firmware files (WIFI folder) on the FAT partition"); FreeMem(w, sizeof(struct hdf_file) * AN_FW_MAX); return; }
+    UBYTE *buf[AN_FW_MAX];
+    ULONG len[AN_FW_MAX];
+    volatile struct an_fw *t = (volatile struct an_fw *)(b + AN_OFF_FW);
+    int k = 0;
+    for (int i = 0; i < n; i++) {
+        len[k] = w[i].blocks * HDF_BLOCK;
+        buf[k] = AllocMem(len[k], MEMF_PUBLIC);
+        if (!buf[k] || hdf_read(io, &w[i], 0, w[i].blocks, buf[k])) {
+            hdf_log(io, "WiFi: %s could not be read", w[i].name);
+            if (buf[k]) FreeMem(buf[k], len[k]);
+            hdf_file_free(io, &w[i]);
+            continue;
+        }
+        for (int c = 0; c < 48; c++) t[k].name[c] = c < 47 ? w[i].name[c] : 0;
+        t[k].addr = (ULONG)buf[k];
+        t[k].len = w[i].size;
+        hdf_log(io, "WiFi: %s, %lu bytes, for the kernel", w[i].name, w[i].size);
+        hdf_file_free(io, &w[i]);
+        k++;
+    }
+    FreeMem(w, sizeof(struct hdf_file) * AN_FW_MAX);
+    if (!k) return;
+    h->fw_count = (ULONG)k;
+    h->fw_state = AN_FW_OFFERED;
+    /* the kernel copies them on CPU1, as soon as its USB start-up lets it */
+    ULONG t0 = pi_usecs();
+    while (h->fw_state == AN_FW_OFFERED && pi_usecs() - t0 < 4000000u) ;
+    if (h->fw_state == AN_FW_OFFERED) {
+        hdf_log(io, "WiFi: the kernel has not taken the firmware yet - left in memory for it");
+        return;                                         /* the buffers stay: the kernel takes them later */
+    }
+    for (int i = 0; i < k; i++) FreeMem(buf[i], len[i]);
+}
+
 static int matches_boot(const struct hdf_opts *o, const char *file)
 {
     if (!o->boot[0]) return 0;
@@ -761,6 +817,7 @@ APTR dev_init(struct HdfBase *db, APTR seglist)
     if (files && cmdline && fat_open(&f, &io) == 0) {
         n = fat_find_hdfs(&f, files, HDF_MAX_FILES);
         if (fat_read_cmdline(&f, cmdline, 1024) < 0) cmdline[0] = 0;
+        offer_wifi(&f, &io);
         fat_close(&f);
     }
     hdf_parse_opts(cmdline ? cmdline : "", &db->opts);

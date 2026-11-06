@@ -17,11 +17,18 @@ User-facing docs: README.md. History of where code came from: docs/PROVENANCE.md
   SYSTEM/USB log panels). Wired in from `start_rpi64.c` under `ALICE_SPLASH`.
 - `amiga/` — 68k side: `alice68-usb.device`, `Alice68-USBLog`, `amiga/hdf/` (`alice68hdf.device`,
   `hdf_core.[ch]`, `Alice68-HDF`), `amiga.h` (minimal NDK types with offset asserts), `lvo.S`.
-- `amiga/wifi/` — `alice68wifi.device` (Pi 4 WiFi as a lwip-amiga netdev device) and
-  `Alice68-WiFi`: `sdio.c` Arasan host, `chip.c` bring-up, `fmac.c` protocol (host-independent,
-  tested by `tools/wifi-test`), `wifi.c` device/process/netdev/connecting. Written from Linux
-  brcmfmac and OpenBSD bwfm only: **never copy from WiFiPi.device** (no licence on most files).
-  Firmware messages are built byte by byte: the 68k gcc aligns 32-bit fields to 2, the chip to 4.
+- `third_party/Emu68/src/alice/` — the kernel's network: `alice_net.h` (the 128 KB Zorro II network
+  board, shared with the 68k: 32-bit fields only), `alice_net.c` (board, CPU1 coroutine, commands,
+  frame slots, WiFi connection manager, firmware taken from the board, `wifi.*` cmdline options),
+  `wifi/sdio.c` Arasan host, `wifi/chip.c` bring-up, `wifi/fmac.c` protocol (host-independent,
+  tested by `tools/wifi-test`). CPU1 runs it from the xHCI main loop (`alice_net_poll()`) or alone
+  (`alice_net_cpu1_main()`, no-USB kernel). The coroutine must yield at every wait; the kernel
+  reserves x12-x29 (`-ffixed`), so the switch saves only x19, x30, sp, d8-d15. Written from Linux
+  brcmfmac and OpenBSD bwfm only: **never copy from WiFiPi.device** (no licence on most files), nor
+  from RISC OS's binary-only WLanBWFM. Firmware messages are built byte by byte.
+- `amiga/net/alice68net.c` — `alice68net.device`: netdev client of the network board (unit 0 WiFi,
+  unit 1 reserved for the kernel's Ethernet). `amiga/wifi/` — `Alice68-WiFi`, `wifi_api.h`, `netdev.h`.
+  `alice68hdf.device` hands the `WIFI` folder's files to the kernel at boot (`offer_wifi`).
 - `amiga/monitor.c` — `Alice68-Monitor`: debugging window (tasks, backtraces, the board's log rings,
   the WiFi driver's `pt_wstat` "where"). The board layout is in `alice68_usbpt.h`; it survives a 68k reset.
 - `tools/hdf-test/`, `amiga/test/` — tests. `tools/splash-preview/` — render the splash on a PC.
@@ -115,7 +122,7 @@ tools/splash-preview/build.sh > out.ppm  # the splash, drawn by the kernel's own
   build from a fresh clone of that commit, then zip `README.md`, `RELEASE-NOTES.md`,
   `SHA256SUMS`, `boot/` (kernel8.img, kernel8-nousb.img, config.txt, cmdline.txt,
   floppy.txt, overlays/), `amiga/` (DEVS/USBHardware/alice68-usb.device,
-  DEVS/alice68wifi.device, C/Alice68-USBLog, C/Alice68-HDF, C/Alice68-NetCheck, C/Alice68-WiFi, C/Alice68-Monitor,
+  DEVS/alice68net.device, C/Alice68-USBLog, C/Alice68-HDF, C/Alice68-NetCheck, C/Alice68-WiFi, C/Alice68-Monitor,
   ReadMe-USB.txt), `Licenses/` (with amiga/wifi/LICENSE-netdev.txt) and `source/` (git archive
   of the commit plus the three submodules, and SOURCE.txt). The kernels report
   `git:<commit>`; the release must be that commit.

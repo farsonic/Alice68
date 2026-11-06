@@ -260,6 +260,8 @@ static volatile uint32_t post_flags;
 static volatile uint32_t post_lock, post_stop;
 static volatile uint32_t post_kb=~0u, post_ms=~0u, post_gp=~0u, post_storage=~0u;
 static volatile int post_hdf_boot = -1, post_hdf_other = -1, post_hdf_left = -1;   /* Alice68 hardfiles */
+static char post_wifi[48];                               /* Alice68 WiFi (alice_net.c), "" none yet */
+static volatile int post_wifi_col;
 static volatile uint32_t post_rx, post_bad, post_err, post_id, post_len;
 static volatile uint32_t post_raw0, post_raw1, post_joy, post_fire, post_events;
 static volatile uint32_t post_decoded;
@@ -881,6 +883,20 @@ void frf_post_hardfiles(int bootable, int other, int left)
 #endif
 }
 
+/* the kernel's WiFi, in a few words (alice_net.c, CPU1); col 0 waiting, 1 good, 2 failed */
+void frf_post_wifi(const char *text, int col)
+{
+#ifdef ALICE_SPLASH
+    unsigned i = 0;
+    for (; text && text[i] && i < sizeof post_wifi - 1; i++) post_wifi[i] = text[i];
+    post_wifi[i] = 0;
+    post_wifi_col = col;
+    alice_status();
+#else
+    (void)text; (void)col;
+#endif
+}
+
 void frf_post_usb_devices(unsigned kb,unsigned ms,unsigned gp,unsigned msc)
 {
     post_kb=kb;post_ms=ms;post_gp=gp;post_storage=msc;
@@ -926,9 +942,12 @@ static char     ulog[ULOG_LINES][ULOG_COLS + 1];
 static unsigned ulog_cur;
 static char     line_now[BLOG_COLS + 1];
 static unsigned line_len;
-/* both panels stop when the 68k starts (stage 5): from then on the
-   framebuffer may be someone else's (RTG) */
-static uint64_t blog_stop_at;
+/* both panels keep drawing after the 68k starts - alice68hdf.device's
+   hardfiles and the WiFi come in then - and stop when AmigaOS first puts a
+   picture up (the first AGA frame, aga_hvs.c show) or 30 s after the 68k
+   started, whichever is first: by then the framebuffer may be RTG's */
+static volatile uint64_t blog_stop_at;
+#define SPLASH_CAP_SECS 30u
 
 static int __attribute__((unused)) blog_has(const char *l, const char *w)
 {
@@ -941,8 +960,7 @@ static int __attribute__((unused)) blog_has(const char *l, const char *w)
 }
 
 #ifdef ALICE_SPLASH
-/* the splash may be drawn until the 68k starts; after that the
-   framebuffer may be someone else's (RTG) */
+/* the splash may be drawn until the first AGA frame (or 30 s after the 68k started) */
 static int alice_live(void)
 {
     if (!framebuffer || !pitch) return 0;
@@ -971,6 +989,7 @@ static void alice_status(void)
     st.mice = post_ms == ~0u ? -1 : (int)post_ms;
     st.usb_fail = frf_usb_failed;
     st.hdf_boot = post_hdf_boot; st.hdf_other = post_hdf_other; st.hdf_left = post_hdf_left;
+    st.wifi = post_wifi; st.wifi_col = post_wifi_col;
     al_status_draw(&st);
     __asm__ volatile("dsb ishst" ::: "memory");
     __atomic_store_n(&alice_lock, 0u, __ATOMIC_RELEASE);
@@ -1061,8 +1080,15 @@ void frf_bootlog_start_timer(void)   /* stage 5: the 68k starts */
     uint64_t f, t;
     __asm__ volatile("mrs %0, CNTFRQ_EL0" : "=r"(f));
     __asm__ volatile("mrs %0, CNTVCT_EL0" : "=r"(t));
-    (void)f;
-    blog_stop_at = t ? t : 1;                /* the splash stops drawing now (0 means "not started") */
+    uint64_t cap = t + (uint64_t)SPLASH_CAP_SECS * f;
+    if (!blog_stop_at || cap < blog_stop_at) blog_stop_at = cap;    /* 0 means "not started" */
+}
+/* aga_hvs.c, CPU2: AmigaOS's first picture is on the screen - the splash stops now */
+void frf_splash_first_frame(void)
+{
+    uint64_t t; __asm__ volatile("mrs %0, CNTVCT_EL0" : "=r"(t));
+    blog_stop_at = t ? t : 1;
+    __asm__ volatile("dmb ish" ::: "memory");
 }
 
 /* called with print_lock held (support_rpi.c putByte) */

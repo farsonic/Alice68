@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only
- * alice68wifi.device: the Broadcom/Cypress chip over SDIO - backplane access,
+ * Alice68 kernel WiFi: the Broadcom/Cypress chip over SDIO - backplane access,
  * core enumeration (EROM), the ARM CR4 core halt/release, firmware and NVRAM
  * download, clocks and function 2. The sequence follows OpenBSD's
  * if_bwfm_sdio.c/bwfm.c and Linux's brcmfmac sdio.c/chip.c (ISC); the 43455's

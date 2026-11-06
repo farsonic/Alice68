@@ -494,6 +494,14 @@ void secondary_boot(void)
 #endif
 #endif
 
+#if defined(FRF_VIRTUAL_AGA) && !defined(FRF_USB_HOST)
+    /* Alice68 without USB: CPU1 runs the network board and the WiFi (src/alice/alice_net.c) */
+    if (cpu_id == 1 && aga_chip_base) {
+        extern void alice_net_cpu1_main(void) __attribute__((noreturn));
+        alice_net_cpu1_main();
+    }
+#endif
+
 #ifdef AGA_PISTORM
     if (cpu_id == 3 && aga_chip_base) {
         aga_chipset_main();     /* never returns; parked until enabled */

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only
- * alice68wifi.device: SDIO on the Pi 4's Arasan SD host controller ("mmcnr",
+ * Alice68 kernel WiFi: SDIO on the Pi 4's Arasan SD host controller ("mmcnr",
  * bus 0x7e300000), by programmed I/O. Written from the SD Host Controller
  * Simplified Specification (register map, as in the BCM2835 peripherals
  * manual's "EMMC" chapter) and the SDIO Simplified Specification

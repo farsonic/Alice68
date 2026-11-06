@@ -1,20 +1,19 @@
 /* SPDX-License-Identifier: GPL-2.0-only
- * Alice68-WiFi: the Shell side of alice68wifi.device.
+ * Alice68-WiFi: the Shell side of the kernel's WiFi (alice68net.device unit 0).
  *
  *   Alice68-WiFi                      status (never starts the chip)
  *   Alice68-WiFi START                start the chip (STEP=n in the prefs stops after step n)
  *   Alice68-WiFi SCAN                 networks in range
- *   Alice68-WiFi JOIN "name" "pass"   save ENV(ARC):alice68wifi.prefs and connect
- *   Alice68-WiFi RECONNECT            read the prefs again and connect
+ *   Alice68-WiFi JOIN "name" "pass" [CC]  connect, and save ENV(ARC):alice68wifi.prefs
+ *   Alice68-WiFi RECONNECT            connect to the network in the prefs (for S:User-Startup)
  *   Alice68-WiFi DISCONNECT
  *   Alice68-WiFi LOG                  the driver's log
- *   Alice68-WiFi READTEST [BIG|CHIP]  read the firmware files here, without the driver
  *   Alice68-WiFi OFF                  switch the chip off */
 #include "wifios.h"
 #include "wifi_api.h"
-#include "fmac.h"
+#include "../../third_party/Emu68/src/alice/wifi/fmac.h"
 
-#define DEVNAME "alice68wifi.device"
+#define DEVNAME "alice68net.device"
 
 void *memcpy(void *d, const void *s, unsigned long n) { UBYTE *a = d; const UBYTE *b = s; while (n--) *a++ = *b++; return d; }
 void *memset(void *d, int c, unsigned long n) { UBYTE *a = d; while (n--) *a++ = (UBYTE)c; return d; }
@@ -64,8 +63,8 @@ static int word(const char **p, char *w, int max)
 
 static const char *state_name(UWORD s)
 {
-    static const char *const n[] = { "off", "starting", "idle", "scanning", "joining", "connected", "waiting to retry", "failed" };
-    return s < 8 ? n[s] : "?";
+    static const char *const n[] = { "off", "starting", "idle", "scanning", "joining", "connected", "waiting to retry", "failed", "no firmware" };
+    return s < 9 ? n[s] : "?";
 }
 
 static void security(UWORD s)
@@ -194,58 +193,42 @@ static int save_prefs(const char *ssid, const char *pass)
     return ok;
 }
 
-/* READTEST: the driver's file reads, done from the Shell's own process and
-   without the driver, each stage printed before it starts. BIG reads each
-   file in one go into fast memory (as the driver 1.9 does), CHIP the same
-   into chip memory, plain in 32 KB pieces. */
-static ULONG usecs(void)
+/* the network in ENV(ARC):alice68wifi.prefs: SSID=, PASSWORD= (PSK=, PASSPHRASE=), COUNTRY= */
+static int read_prefs(struct WifiJoin *j)
 {
-    ULONG v = *(volatile ULONG *)0xF2003004u;
-    return v >> 24 | (v >> 8 & 0xff00) | (v << 8 & 0xff0000) | v << 24;
-}
-static int readtest(const char *mode)
-{
-    static const char *const files[] = {
-        "ENVARC:alice68wifi.prefs", "DEVS:Firmware/cyfmac43455-sdio.bin", "DEVS:Firmware/cyfmac43455-sdio-standard.bin",
-        "DEVS:Firmware/brcmfmac43455-sdio.raspberrypi,4-model-b.txt", "DEVS:Firmware/brcmfmac43455-sdio.txt",
-        "DEVS:Firmware/cyfmac43455-sdio.clm_blob", "DEVS:Firmware/cyfmac43455-sdio-standard.clm_blob", 0 };
-    int big = sieq(mode, "BIG") || sieq(mode, "CHIP");
-    ULONG memf = sieq(mode, "CHIP") ? 2u : 1u;        /* MEMF_CHIP : MEMF_PUBLIC */
-    put(big ? (memf == 2 ? "one read per file, into chip memory\n" : "one read per file, into fast memory\n")
-            : "32 KB reads, into fast memory\n");
-    int found = 0;
-    for (int i = 0; files[i]; i++) {
-        put(files[i]); put(": opening... ");
-        ULONG fh = DosOpen(dos, files[i], MODE_OLDFILE);
-        if (!fh) { put("not there\n"); continue; }
-        found++;
-        put("size... ");
-        DosSeek(dos, fh, 0, OFFSET_END);
-        LONG n = DosSeek(dos, fh, 0, OFFSET_BEGINNING);
-        dec(n); put(" bytes, memory... ");
-        if (n <= 0 || n > 4 * 1024 * 1024) { put("bad size\n"); DosClose(dos, fh); continue; }
-        ULONG sz = (ULONG)n + 32;
-        UBYTE *b = AllocMem(sz, memf | 0x10000u);
-        if (!b) { put("none free\n"); DosClose(dos, fh); continue; }
-        put("at $"); for (int k = 28; k >= 0; k -= 4) { char c[2] = { "0123456789abcdef"[((ULONG)b >> k) & 15], 0 }; put(c); }
-        put(", reading");
-        ULONG t0 = usecs();
-        LONG got = 0;
-        if (big) { put("... "); got = DosRead(dos, fh, b, n); }
-        else while (got < n) {
-            LONG part = n - got > 32768 ? 32768 : n - got;
-            put(".");
-            LONG r = DosRead(dos, fh, b + got, part);
-            if (r <= 0) break;
-            got += r;
+    static char buf[2048];
+    LONG n = 0;
+    ULONG fh = DosOpen(dos, "ENV:alice68wifi.prefs", MODE_OLDFILE);
+    if (!fh) fh = DosOpen(dos, "ENVARC:alice68wifi.prefs", MODE_OLDFILE);
+    if (!fh) return 0;
+    n = DosRead(dos, fh, buf, sizeof buf - 1);
+    DosClose(dos, fh);
+    if (n <= 0) return 0;
+    buf[n] = 0;
+    for (char *l = buf; *l; ) {
+        char *e = l; while (*e && *e != '\n') e++;
+        char save = *e; *e = 0;
+        while (*l == ' ' || *l == '\t') l++;
+        char key[16]; int k = 0;
+        while (k < 15 && *l && *l != '=' && *l != ' ') key[k++] = *l++;
+        key[k] = 0;
+        while (*l == ' ' || *l == '=') l++;
+        char *v = l, *d;
+        int max = 0;
+        if (sieq(key, "SSID")) { d = j->wj_Ssid; max = 33; }
+        else if (sieq(key, "PASSWORD") || sieq(key, "PSK") || sieq(key, "PASSPHRASE")) { d = j->wj_Pass; max = 65; }
+        else if (sieq(key, "COUNTRY")) { d = j->wj_Country; max = 3; }
+        else d = 0;
+        if (d) {
+            int q = *v == '"', i = 0;
+            if (q) v++;
+            while (*v && i < max - 1 && (q ? *v != '"' : (*v != ' ' && *v != '\r'))) d[i++] = *v++;
+            d[i] = 0;
         }
-        ULONG ms = (usecs() - t0) / 1000;
-        put(got == n ? " ok, " : " SHORT, "); dec(got); put(" bytes in "); dec((LONG)ms); put(" ms\n");
-        FreeMem(b, sz);
-        DosClose(dos, fh);
+        *e = save;
+        l = *e ? e + 1 : e;
     }
-    put(found ? "done: the machine still runs\n" : "no files found\n");
-    return found ? 0 : 5;
+    return j->wj_Ssid[0] != 0;
 }
 
 LONG wifitool_main(const char *args, ULONG arglen)
@@ -254,15 +237,15 @@ LONG wifitool_main(const char *args, ULONG arglen)
     dos = OpenLibrary("dos.library", 37);
     if (!dos) return 20;
     out = Output(dos);
-    char cmd[32] = "", a1[64] = "", a2[80] = "";
+    char cmd[32] = "", a1[64] = "", a2[80] = "", a3[8] = "";
     const char *p = args;
     word(&p, cmd, sizeof cmd);
     word(&p, a1, sizeof a1);
     word(&p, a2, sizeof a2);
-    if (sieq(cmd, "READTEST")) { LONG r = readtest(a1); CloseLibrary(dos); return r; }
+    word(&p, a3, sizeof a3);
     if (cmd[0] == '?' || (cmd[0] && !sieq(cmd, "STATUS") && !sieq(cmd, "START") && !sieq(cmd, "SCAN") && !sieq(cmd, "JOIN") &&
         !sieq(cmd, "RECONNECT") && !sieq(cmd, "DISCONNECT") && !sieq(cmd, "LOG") && !sieq(cmd, "OFF"))) {
-        put("Alice68-WiFi [STATUS | START | SCAN | JOIN \"network\" \"password\" | RECONNECT | DISCONNECT | LOG | OFF | READTEST [BIG|CHIP]]\n");
+        put("Alice68-WiFi [STATUS | START | SCAN | JOIN \"network\" \"password\" | RECONNECT | DISCONNECT | LOG | OFF]\n");
         CloseLibrary(dos);
         return cmd[0] == '?' ? 0 : 10;
     }
@@ -294,7 +277,7 @@ LONG wifitool_main(const char *args, ULONG arglen)
         else if (!stuck) put("not switched off (Alice68-WiFi says why)\n");
     } else if (sieq(cmd, "START")) {
         if (status(io, &st)) { put("no status\n"); rc = 10; }
-        else if (st.ws_State != WS_OFF) { put("already started (Alice68-WiFi OFF and START to start again)\n"); show(&st); }
+        else if (st.ws_State != WS_OFF && st.ws_State != WS_FAILED && st.ws_State != WS_NOFW) { put("already running\n"); show(&st); }
         else {
             io->io.io_Command = WIFI_CMD_START;
             if (ask(io, 10)) rc = 10;
@@ -337,12 +320,19 @@ LONG wifitool_main(const char *args, ULONG arglen)
                 if (!io->io_Actual) put("no networks found\n");
             }
         } else if (sieq(cmd, "JOIN") || sieq(cmd, "RECONNECT")) {
+            static struct WifiJoin j;
+            memset(&j, 0, sizeof j);
             if (sieq(cmd, "JOIN")) {
+                for (int i = 0; a1[i] && i < 32; i++) j.wj_Ssid[i] = a1[i];
+                for (int i = 0; a2[i] && i < 64; i++) j.wj_Pass[i] = a2[i];
+                if (a3[0] && a3[1]) { j.wj_Country[0] = a3[0]; j.wj_Country[1] = a3[1]; }
                 if (!save_prefs(a1, a2)) put("could not write ENV:alice68wifi.prefs\n");
                 else put("Saved in ENV: and ENVARC:alice68wifi.prefs\n");
-            }
-            io->io.io_Command = WIFI_CMD_RECONNECT;
-            if (ask(io, 20)) { rc = 10; goto done; }
+            } else if (!read_prefs(&j)) put("no SSID in ENV:alice68wifi.prefs: the last network again\n");
+            io->io.io_Command = j.wj_Ssid[0] ? WIFI_CMD_JOIN : WIFI_CMD_RECONNECT;
+            io->io_Data = &j;
+            io->io_Length = sizeof j;
+            if (ask(io, 20)) { if (!stuck) put("the WiFi did not take it (Alice68-WiFi LOG says why)\n"); rc = 10; goto done; }
             if (!status(io, &st) && (st.ws_State == WS_OFF || st.ws_State == WS_STARTING)) put("Starting the WiFi chip:\n");
             int r = wait_state(io, &st, 1, 60);
             if (r) { put(r > 0 ? "not connected yet - Alice68-WiFi shows how it goes\n" : "not connected\n"); rc = 5; }

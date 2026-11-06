@@ -183,7 +183,7 @@ static uint8_t lfn_sum(const uint8_t *e)
 }
 
 /* walk one directory; dir_clus 0 = the FAT16 root. found(): 1 = stop */
-struct scan { struct hdf_file *files; int max, n; uint32_t hdf_dir; };
+struct scan { struct hdf_file *files; int max, n; uint32_t hdf_dir; int wifi; };
 
 static void take(struct fat *f, struct scan *sc, const uint8_t *e, const char *lname)
 {
@@ -211,6 +211,41 @@ static void take(struct fat *f, struct scan *sc, const uint8_t *e, const char *l
         return;
     }
     hdf_log(f->io, "%s: %lu MB, %lu piece%s on the card", h->name, h->size >> 20, h->next, h->next == 1 ? "" : "s");
+    sc->n++;
+}
+
+/* the WiFi firmware's files: anything in the WIFI folder; in the root, the
+   names the kernel looks for (cyfmac4345x..., brcmfmac4345x...) */
+static int fw_name(const char *n)
+{
+    static const char *const pre[] = { "cyfmac4345", "brcmfmac4345", 0 };
+    for (int i = 0; pre[i]; i++) {
+        int k = 0;
+        while (pre[i][k] && (n[k] == pre[i][k] || (n[k] >= 'A' && n[k] <= 'Z' && n[k] + 32 == pre[i][k]))) k++;
+        if (!pre[i][k]) return 1;
+    }
+    return 0;
+}
+static void take_any(struct fat *f, struct scan *sc, const uint8_t *e, const char *lname, int top)
+{
+    if (sc->n >= sc->max) return;
+    struct hdf_file *h = &sc->files[sc->n];
+    zero(h, sizeof *h);
+    unsigned k = 0;
+    if (lname[0]) {
+        for (; lname[k] && k < HDF_NAME - 1; k++) h->name[k] = lname[k];
+    } else {
+        for (int i = 0; i < 8 && e[i] != ' '; i++) h->name[k++] = (char)((e[12] & 0x08) && e[i] >= 'A' && e[i] <= 'Z' ? e[i] + 32 : e[i]);
+        if (e[8] != ' ') h->name[k++] = '.';
+        for (int i = 8; i < 11 && e[i] != ' '; i++) h->name[k++] = (char)((e[12] & 0x10) && e[i] >= 'A' && e[i] <= 'Z' ? e[i] + 32 : e[i]);
+    }
+    h->name[k] = 0;
+    if (h->name[0] == '.' || (top && !fw_name(h->name))) return;   /* "._x" (macOS), other root files */
+    h->size = le32(e + 28);
+    if (!h->size || h->size > 4u * 1024 * 1024) return;
+    h->blocks = (h->size + HDF_BLOCK - 1) / HDF_BLOCK;
+    uint32_t first = le16(e + 26) | (f->fat32 ? le16(e + 20) << 16 : 0);
+    if (fat_extents(f, first, h)) { hdf_log(f->io, "%s: cluster chain shorter than the file - ignored", h->name); hdf_file_free(f->io, h); return; }
     sc->n++;
 }
 
@@ -250,7 +285,12 @@ static void scan_dir(struct fat *f, struct scan *sc, uint32_t dir_clus, int top)
                 continue;
             }
             const char *ln = (lname[0] && lfn_sum(e) == lsum) ? lname : "";
-            if (!(e[11] & 0x08)) {                            /* not a volume label */
+            if (sc->wifi && !(e[11] & 0x08)) {
+                if (e[11] & 0x10) {
+                    if (top && !sc->hdf_dir && e[0] == 'W' && e[1] == 'I' && e[2] == 'F' && e[3] == 'I' && e[4] == ' ' && e[8] == ' ')
+                        sc->hdf_dir = le16(e + 26) | (f->fat32 ? le16(e + 20) << 16 : 0);
+                } else take_any(f, sc, e, ln, top);
+            } else if (!(e[11] & 0x08)) {                     /* not a volume label */
                 if (e[11] & 0x10) {
                     if (top && !sc->hdf_dir && e[0] == 'H' && e[1] == 'D' && e[2] == 'F' && e[3] == ' ' && e[8] == ' ')
                         sc->hdf_dir = le16(e + 26) | (f->fat32 ? le16(e + 20) << 16 : 0);
@@ -274,9 +314,17 @@ static void scan_dir(struct fat *f, struct scan *sc, uint32_t dir_clus, int top)
     }
 }
 
+int fat_find_wifi(struct fat *f, struct hdf_file *files, int max)
+{
+    struct scan sc = { files, max, 0, 0, 1 };
+    scan_dir(f, &sc, f->fat32 ? f->root_clus : 0, 1);
+    if (sc.hdf_dir) scan_dir(f, &sc, sc.hdf_dir, 0);
+    return sc.n;
+}
+
 int fat_find_hdfs(struct fat *f, struct hdf_file *files, int max)
 {
-    struct scan sc = { files, max, 0, 0 };
+    struct scan sc = { files, max, 0, 0, 0 };
     scan_dir(f, &sc, f->fat32 ? f->root_clus : 0, 1);
     if (sc.hdf_dir) scan_dir(f, &sc, sc.hdf_dir, 0);
     return sc.n;

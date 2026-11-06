@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Run Alice68-WiFi on a 68k emulator (machine68k / Musashi) against a fake
-alice68wifi.device and check what it does and says: plain status never starts
-the chip, START shows each bring-up step, a stuck driver is reported instead
-of hanging the Shell.
+alice68net.device (the kernel's WiFi) and check what it does and says: status
+and LOG, START, JOIN sending the network to the kernel, RECONNECT taking it
+from the prefs, and a stuck driver reported instead of hanging the Shell.
 
     harness_wifitool.py amiga/out/Alice68-WiFi
 SPDX-License-Identifier: GPL-2.0-only"""
@@ -11,8 +11,8 @@ import machine68k as M
 
 R = M.Register
 fails = []
-CMD_STATUS, CMD_SCAN, CMD_LOG, CMD_RECONNECT, CMD_DISCONNECT, CMD_OFF, CMD_START = range(0x8a40, 0x8a47)
-WS_OFF, WS_STARTING, WS_IDLE, WS_SCANNING, WS_JOINING, WS_CONNECTED, WS_RETRY, WS_FAILED = range(8)
+CMD_STATUS, CMD_SCAN, CMD_LOG, CMD_RECONNECT, CMD_DISCONNECT, CMD_OFF, CMD_START, CMD_JOIN = range(0x8a40, 0x8a48)
+WS_OFF, WS_STARTING, WS_IDLE, WS_SCANNING, WS_JOINING, WS_CONNECTED, WS_RETRY, WS_FAILED, WS_NOFW = range(9)
 
 def run(hunk, args, dev):
     """dev: dict(states = [(state, msg), ...] advanced on each STATUS after START,
@@ -21,7 +21,7 @@ def run(hunk, args, dev):
     cpu, mem, traps = mach.cpu, mach.mem, mach.traps
     SYSBASE, DOSBASE, LOAD, HEAP, ARGS, STACK = 0x8000, 0xA000, 0x20000, 0x100000, 0x3F000, 0x80000
     st = {'done': False, 'exc': None, 'heap': HEAP, 'out': [], 'sent': [], 'pending': None, 'closed': False,
-          'idx': 0, 'started': False, 'freed': False}
+          'idx': 0, 'started': dev.get('running', False), 'freed': False, 'join': None}
     def d(r): return cpu.r_reg(r)
     def setd0(v): cpu.w_reg(R.D0, v & 0xffffffff)
     def lvo(base, off, fn): mem.w16(base + off, 0xA000 | traps.setup(fn, auto_rts=True))
@@ -42,11 +42,17 @@ def run(hunk, args, dev):
     lvo(SYSBASE, -660, lambda o, p: st.__setitem__('freed', True))
     lvo(SYSBASE, -306, lambda o, p: setd0(0))
     lvo(DOSBASE, -60, lambda o, p: setd0(1))
-    lvo(DOSBASE, -48, lambda o, p: (st['out'].append(bytes(mem.r_block(d(R.D2), d(R.D3))).decode('latin1')), setd0(d(R.D3))))
+    def dwrite(o, p):
+        data = bytes(mem.r_block(d(R.D2), d(R.D3)))
+        if d(R.D1) in fhs: files[fhs[d(R.D1)][0]] += data
+        else: st['out'].append(data.decode('latin1'))
+        setd0(d(R.D3))
+    lvo(DOSBASE, -48, dwrite)
     lvo(DOSBASE, -198, lambda o, p: None)
     files = dev.get('files', {}); fhs = {}
     def dopen(o, p):
         name = mem.r_cstr(d(R.D1))
+        if d(R.D2) == 1006: files[name] = b''; st['saved'] = name           # MODE_NEWFILE
         if name in files: h = 0x100 + len(fhs); fhs[h] = [name, 0]; setd0(h)
         else: setd0(0)
     lvo(DOSBASE, -30, dopen)
@@ -62,12 +68,12 @@ def run(hunk, args, dev):
     lvo(SYSBASE, -198, lambda o, p: setd0(alloc(d(R.D0))))
     lvo(SYSBASE, -210, lambda o, p: None)
     def opendev(o, p):
-        ok = mem.r_cstr(d(R.A0)) == 'alice68wifi.device' and dev.get('present', True)
+        ok = mem.r_cstr(d(R.A0)) == 'alice68net.device' and dev.get('present', True)
         mem.w8(d(R.A1) + 31, 0 if ok else 0xff); setd0(0 if ok else 0xffffffff)
     lvo(SYSBASE, -444, opendev)
     lvo(SYSBASE, -450, lambda o, p: st.__setitem__('closed', True))
     def cur():
-        if not st['started']: return (WS_OFF, 'off - Alice68-WiFi START (or JOIN, or the TCP/IP stack) starts it')
+        if not st['started']: return dev.get('initial', (WS_OFF, 'switched off'))
         s = dev['states']; v = s[min(st['idx'], len(s) - 1)]; st['idx'] += 1; return v
     def status(io):
         a = mem.r32(io + 40)
@@ -78,14 +84,17 @@ def run(hunk, args, dev):
         mem.w32(io + 32, 292); return 0
     def finish(io, cmd):
         if cmd == CMD_START: st['started'] = True
-        if cmd == CMD_RECONNECT: st['started'] = True
+        if cmd in (CMD_RECONNECT, CMD_JOIN):
+            st['started'] = True
+            a = mem.r32(io + 40)
+            st['join'] = (mem.r_cstr(a), mem.r_cstr(a + 36), mem.r_cstr(a + 104)) if a else None
         if cmd == CMD_SCAN: mem.w32(io + 32, 0)
         return 0
     def doio(o, p):
         io = d(R.A1); cmd = mem.r16(io + 28)
         if cmd == CMD_STATUS: err = status(io)
         elif cmd == CMD_LOG:
-            t = b'alice68wifi 1.9\nstep 1: reading the firmware files\n'; mem.w_block(mem.r32(io + 40), t); mem.w32(io + 32, len(t)); err = 0
+            t = b'starting the WiFi chip\nchip 4345 rev 6: cyfmac43455-sdio-standard.bin\n'; mem.w_block(mem.r32(io + 40), t); mem.w32(io + 32, len(t)); err = 0
         else:
             fails.append('DoIO of command %x (the process may be stuck: SendIO with a timeout)' % cmd); err = 0
         mem.w8(io + 31, err); setd0(err)
@@ -120,36 +129,33 @@ def run(hunk, args, dev):
     return ''.join(st['out']), st
 
 hunk = sys.argv[1]
-steps = [(WS_STARTING, 'step 1: reading the firmware files'), (WS_STARTING, 'step 2: pins and power'),
-         (WS_STARTING, 'step 3: SD host'), (WS_STARTING, 'step 4: chip'), (WS_STARTING, 'step 5: firmware download'),
-         (WS_STARTING, 'step 6: firmware setup'), (WS_IDLE, 'ready')]
-answer_all = (CMD_START, CMD_SCAN, CMD_RECONNECT, CMD_DISCONNECT, CMD_OFF)
+steps = [(WS_STARTING, 'starting the WiFi chip'), (WS_IDLE, 'ready')]
+joining = [(WS_SCANNING, 'ready'), (WS_JOINING, 'joining Net'), (WS_CONNECTED, 'connected to Net')]
+answer_all = (CMD_START, CMD_SCAN, CMD_RECONNECT, CMD_DISCONNECT, CMD_OFF, CMD_JOIN)
+prefs = {'ENV:alice68wifi.prefs': b'SSID="Home Net"\nPASSWORD="secret12345"\nCOUNTRY=GB\n'}
 cases = [
     # name, args, dev, wanted text, text that must not appear, commands sent, closed
-    ('status never starts the chip', '', dict(states=steps, answer=answer_all),
-     ['State:     off', 'Alice68-WiFi START'], ['Starting'], [], True),
-    ('LOG never starts the chip', 'LOG', dict(states=steps, answer=answer_all),
-     ['step 1: reading the firmware files'], [], [], True),
-    ('START shows every step', 'START', dict(states=steps, answer=answer_all),
-     ['Starting the WiFi chip:', 'step 1: reading', 'step 2: pins and power', 'step 3: SD host', 'step 4: chip',
-      'step 5: firmware download', 'step 6: firmware setup', 'idle: ready'], ['stuck'], [CMD_START], True),
-    ('START stopped by STEP=', 'START', dict(states=steps[:2] + [(WS_FAILED, 'stopped before step 3 (STEP= in the prefs)')], answer=answer_all),
-     ['step 2: pins and power', 'failed: stopped before step 3', 'did not start'], [], [CMD_START], True),
+    ('status: what the kernel says', '', dict(states=steps, answer=answer_all, initial=(WS_NOFW, 'waiting for the firmware files (WIFI folder on the SD card)')),
+     ['State:     no firmware', 'WIFI folder on the SD card'], ['Starting'], [], True),
+    ('LOG: the kernel network log', 'LOG', dict(states=steps, answer=answer_all),
+     ['chip 4345 rev 6'], [], [], True),
+    ('START after OFF shows it starting', 'START', dict(states=steps, answer=answer_all),
+     ['Starting the WiFi chip:', 'starting: starting the WiFi chip', 'idle: ready'], ['stuck'], [CMD_START], True),
+    ('START while running does nothing', 'START', dict(states=steps, answer=answer_all, running=True),
+     ['already running'], [], [], True),
     ('SCAN while off does not start it', 'SCAN', dict(states=steps, answer=answer_all),
      ['the WiFi chip is off: Alice68-WiFi START first'], [], [], True),
-    ('stuck driver: reported, the Shell gets its prompt back', 'START', dict(states=steps, answer=()),
-     ['the driver is stuck', 'Alice68-WiFi LOG in another Shell'], [], [CMD_START], False),
+    ('JOIN sends the network to the kernel', 'JOIN "Net" "secret1234" GB', dict(states=joining, answer=answer_all),
+     ['Saved in ENV:', 'joining: joining Net', 'State:     connected'], [], [CMD_JOIN], True),
+    ('RECONNECT takes the network from the prefs', 'RECONNECT', dict(states=joining, answer=answer_all, files=prefs),
+     ['State:     connected'], ['no SSID'], [CMD_JOIN], True),
+    ('RECONNECT without prefs: the last network', 'RECONNECT', dict(states=joining, answer=answer_all),
+     ['no SSID in ENV:alice68wifi.prefs', 'State:     connected'], [], [CMD_RECONNECT], True),
+    ('stuck driver: reported, the Shell gets its prompt back', 'JOIN "Net" "secret1234"', dict(states=steps, answer=()),
+     ['the driver is stuck', 'Alice68-WiFi LOG in another Shell'], [], [CMD_JOIN], False),
     ('queued request taken back', 'DISCONNECT', dict(states=steps, answer=(), abort_ok=True),
      ['the driver did not answer'], ['stuck'], [CMD_DISCONNECT], True),
-    ('JOIN starts it and shows the steps', 'JOIN "Net" "secret1234"', dict(states=steps[:3] + [(WS_JOINING, 'joining "Net"'), (WS_CONNECTED, '')], answer=answer_all),
-     ['Starting the WiFi chip:', 'step 2: pins and power', 'joining: joining "Net"', 'State:     connected'], [], [CMD_RECONNECT], True),
-    ('READTEST reads without the driver', 'READTEST', dict(states=steps, files={'DEVS:Firmware/cyfmac43455-sdio.bin': bytes(100000),
-                                                                             'DEVS:Firmware/brcmfmac43455-sdio.txt': b'x' * 2000}),
-     ['32 KB reads', 'cyfmac43455-sdio.bin: opening... size... 100000 bytes', '.... ok, 100000 bytes',
-      'brcmfmac43455-sdio.txt: opening... size... 2000 bytes', 'clm_blob: opening... not there', 'done: the machine still runs'], [], [], False),
-    ('READTEST BIG: one read per file', 'READTEST BIG', dict(states=steps, files={'DEVS:Firmware/cyfmac43455-sdio.bin': bytes(100000)}),
-     ['one read per file, into fast memory', '100000 bytes, memory... at $', 'reading...  ok, 100000 bytes'], [], [], False),
-    ('missing device', '', dict(states=steps, present=False), ['cannot open alice68wifi.device'], [], [], False),
+    ('missing device', '', dict(states=steps, present=False), ['cannot open alice68net.device'], [], [], False),
 ]
 for name, args, dev, want, never, sent, closed in cases:
     out, st = run(hunk, args, dev)
@@ -158,6 +164,8 @@ for name, args, dev, want, never, sent, closed in cases:
     elif st['sent'] != sent: fails.append('%s: sent %s, want %s' % (name, [hex(c) for c in st['sent']], [hex(c) for c in sent]))
     elif st['closed'] != closed: fails.append('%s: device %sclosed' % (name, '' if st['closed'] else 'not '))
     elif not closed and dev.get('present', True) and st['freed']: fails.append('%s: freed a request the driver still holds' % name)
+    elif name.startswith('JOIN sends') and st['join'] != ('Net', 'secret1234', 'GB'): fails.append('%s: kernel got %s' % (name, st['join']))
+    elif name.startswith('RECONNECT takes') and st['join'] != ('Home Net', 'secret12345', 'GB'): fails.append('%s: kernel got %s' % (name, st['join']))
     else: print('ok  %s' % name)
 if fails:
     print('\n'.join('FAIL: ' + f for f in fails)); sys.exit(1)

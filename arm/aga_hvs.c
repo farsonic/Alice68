@@ -1567,10 +1567,14 @@ static int cur_black;       /* the live list of mine is the empty one (RGB port 
 static void show(uintptr_t frame_phys)
 {
 #ifdef FRF_VIRTUAL_AGA
-    {   /* note the first AGA frame on the boot log (it keeps running until
-           the 68k starts, start_rpi64.c) */
+    {   /* the first AGA frame: on the boot log, and the splash stops drawing (start_rpi64.c) */
         static int said;
-        if (!said) { said = 1; kprintf("[AGA] first AGA frame on HDMI\n"); }
+        if (!said) {
+            said = 1;
+            kprintf("[AGA] first AGA frame on HDMI\n");
+            extern void frf_splash_first_frame(void);
+            frf_splash_first_frame();
+        }
     }
 #endif
     uint32_t live = reg_rd(REG_DISPLIST1);

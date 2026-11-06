@@ -180,6 +180,11 @@ def card(img, fat, out):
     run("mcopy", *m, out + "/appledouble.bin", "::._games.hdf")      # macOS metadata: must be ignored
     run("mmd", *m, "::HDF")
     run("mcopy", *m, out + "/extra.hdf", "::HDF/extra.hdf")
+    # the WiFi firmware: two files in WIFI, one in the root, and a root file that is not one
+    run("mmd", *m, "::WIFI")
+    run("mcopy", *m, out + "/fw.bin", "::WIFI/cyfmac43455-sdio-standard.bin")
+    run("mcopy", *m, out + "/nv.txt", "::WIFI/brcmfmac43455-sdio.txt")
+    run("mcopy", *m, out + "/clm.bin", "::cyfmac43455-sdio-standard.clm_blob")
     with open(img, "r+b") as f, open(fs, "rb") as s:
         f.seek(off)
         f.write(s.read())
@@ -195,6 +200,9 @@ def main():
     open(out + "/filler1.bin", "wb").write(b"\xaa" * 700 * 1024)
     open(out + "/filler2.bin", "wb").write(b"\x55" * 100 * 1024)
     open(out + "/small.bin", "wb").write(b"\x11" * 8 * 1024)
+    open(out + "/fw.bin", "wb").write(bytes((i * 7 + 3) & 255 for i in range(600001)))     # not a multiple of 512
+    open(out + "/nv.txt", "wb").write(b"boardflags=0x00480201\nmacaddr=00:90:4c:c5:12:38\n")
+    open(out + "/clm.bin", "wb").write(b"CLM DATA" + bytes(7155))
     open(out + "/appledouble.bin", "wb").write(b"\x00\x05\x16\x07" + b"\x00" * 4092)   # an AppleDouble header
     ffs = 0x444f5303                                          # DOS\3
     rdb_hdf(out + "/Workbench 3.1.hdf", b"WBEN", 160, 2, 32, [("DH0", 2, 159, True, 5, ffs)], vols=["Workbench"])

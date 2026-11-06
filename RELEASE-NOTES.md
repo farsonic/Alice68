@@ -2,25 +2,29 @@
 
 ## Unreleased
 
-- **WiFi (new, not yet tested on a Pi): `DEVS:alice68wifi.device` and `C:Alice68-WiFi`.**
-  The Pi 4's built-in WiFi as a `netdev` device for rondoval's lwip-amiga stack. Written
-  from scratch for Alice68 with Linux's brcmfmac and OpenBSD's bwfm (ISC) as references:
-  the SD host and SDIO, the chip's bring-up and firmware download, its FullMAC protocol,
-  scanning, and joining with the firmware's own WPA2/WPA3 supplicant. The card interrupt
-  (through `gic400.library`) wakes it; without one it polls. `Alice68-WiFi JOIN "name"
-  "password"` sets the network up; `Alice68-WiFi`, `SCAN` and `LOG` show what it does.
-  Opening the device leaves the chip off until `START`, `JOIN` or the TCP/IP stack asks
-  for it; `START` shows each step, and `STEP=n` in the prefs stops after step n. The tool
-  reports a driver that does not answer instead of waiting for ever. The
-  chip firmware comes from Raspberry Pi OS (see the README). The protocol layer is tested
-  on the PC (`tools/wifi-test`); the hardware side needs a Pi to confirm.
+- **WiFi in the kernel (new, not yet tested on a Pi): a network card for AmigaOS.** The
+  kernel runs the Pi 4's built-in WiFi on CPU1, beside USB (a coroutine that hands CPU1
+  back at every wait, so keyboards and mice are never held up; without USB it has CPU1 to
+  itself), and AmigaOS sees a 128 KB Zorro II network board. `DEVS:alice68net.device`
+  (unit 0) passes frames between the board and rondoval's lwip-amiga stack through its
+  `netdev` interface, the faster one (direct calls, no IORequest per frame); unit 1 is
+  kept for the kernel's own Ethernet driver. The firmware goes in a `WIFI` folder on the
+  SD card's FAT partition: `alice68hdf.device` hands it to the kernel at boot, and the
+  chip starts then. `wifi.ssid=`/`wifi.psk=`/`wifi.country=` in `cmdline.txt` join at
+  boot; `Alice68-WiFi JOIN "name" "password"` from AmigaOS. The WiFi code (SD host,
+  chip bring-up, FullMAC protocol, joining with the firmware's WPA2/WPA3 supplicant) was
+  written for Alice68 from Linux brcmfmac and OpenBSD bwfm (ISC). This replaces the
+  68k `alice68wifi.device`, which hung AmigaOS while it read the firmware through DOS.
+- **The splash shows the hardfiles again, and the WiFi.** It keeps drawing after the 68k
+  starts and stops at AmigaOS's first picture (or 30 s later at most); stopping at the
+  68k's start had hidden `alice68hdf.device`'s HARDFILES summary. The status strip has a
+  WIFI field (connected, joining, no firmware, ...), shorter texts on screens narrower
+  than 1600 pixels.
 - **`C:Alice68-Monitor` (new): a window that keeps working while something hangs.** It
-  shows what `alice68wifi.device` is doing and for how long, every task with its state,
-  signals and a backtrace, and the kernel, WiFi and USB logs live. `Alice68-Monitor DUMP`
-  prints the same, also after a 68k reset. The kernel now puts every log line (not only
-  USB's) in the pass-through board's log ring, and the WiFi driver writes its log there
-  instead of the serial port, so logging no longer stalls the 68k. `DEBUG=` and `SERIAL=`
-  in `alice68wifi.prefs` choose how much is logged and where.
+  shows what the WiFi is doing, every task with its state, signals and a backtrace, and
+  the kernel, network and USB logs live. `Alice68-Monitor DUMP` prints the same, also
+  after a 68k reset. The kernel now puts every log line (not only USB's) in the
+  pass-through board's log ring.
 - **Emu68's data-cache range opcodes** (Emu68 `582253e` by Lukasz Winczura, from Emu68's
   development branch `1_1_wip`; not in an Emu68 release yet). The kernel advertises
   `dcache-range-ops`, so the faster **`-rangeops`** archives of rondoval's driver stack

@@ -18,6 +18,8 @@ struct al_status {
     int keyboards, mice;        /* -1: not known yet */
     int usb_fail;               /* the USB-A host gave up */
     int hdf_boot, hdf_other, hdf_left;  /* hardfiles: bootable, mounted not bootable, left out; -1 not known yet */
+    const char *wifi;           /* the WiFi's state in a few words; 0 = no WiFi chip/driver (yet) */
+    int wifi_col;               /* 0 waiting, 1 good, 2 failed */
 };
 
 void al_setup(uint16_t *fb, uint32_t pitch_bytes, uint32_t w, uint32_t h);

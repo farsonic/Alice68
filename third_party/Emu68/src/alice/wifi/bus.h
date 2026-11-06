@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only
- * alice68wifi.device: the SDIO host (Arasan SDHCI on the Pi 4, the "mmcnr"
+ * Alice68 kernel WiFi (src/alice/alice_net.c): the SDIO host (Arasan SDHCI on the Pi 4, the "mmcnr"
  * controller at bus 0x7e300000 = $F2300000 for the 68k) and the Broadcom
  * chip behind it (backplane, cores, firmware download, clocks).
  *
@@ -9,7 +9,7 @@
 #define ALICE68_WIFI_BUS_H
 #include <stdint.h>
 
-/* provided by the device (device.c) */
+/* provided by the host: alice_net.c in the kernel, the test on the PC */
 void wifi_udelay(uint32_t us);
 uint32_t wifi_usecs(void);                     /* free-running microsecond counter */
 void wifi_log(const char *fmt, ...);
