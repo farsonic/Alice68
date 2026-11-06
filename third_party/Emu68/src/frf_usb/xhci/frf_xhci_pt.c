@@ -156,8 +156,8 @@ static void pt_board_map(struct ExpansionBoard *board)
     __asm__ volatile("dmb ish" ::: "memory");
     if (!pt) {
         __atomic_store_n(&pt, h, __ATOMIC_RELEASE);
+        klog_flush_early();                 /* the boot's lines first, then this one */
         kprintf("[FRF-XHCI] pass-through board at $%08x (alice68-usb.device finds it there)\n", board->map_base);
-        klog_flush_early();
     }
     __atomic_store_n(&pt_session_req, 1, __ATOMIC_RELEASE);
     __asm__ volatile("sev" ::: "memory");
@@ -166,7 +166,7 @@ static struct ExpansionBoard pt_board = { pt_rom, PT_BOARD_BYTES, 0, 0, 1, pt_bo
 static void * __attribute__((used, section(".boards.z2"))) pt_board_ref = &pt_board;
 
 /* ---- the kernel log ring, for Alice68-USBLog in a Shell ------------------ */
-static char klog_early[8192];
+static char klog_early[16384];          /* every kernel line until Kickstart configures the board */
 static unsigned klog_early_n;
 static volatile char klog_lock_v;          /* in cached kernel memory: exclusives are fine here */
 static void klog_put(const char *s, unsigned n)
@@ -182,6 +182,19 @@ static void klog_put(const char *s, unsigned n)
         for (unsigned i = 0; i < n && klog_early_n < sizeof klog_early; i++) klog_early[klog_early_n++] = s[i];
     }
     __atomic_clear(&klog_lock_v, __ATOMIC_RELEASE);
+}
+/* every kernel log line (kprintf, support_rpi.c putByte, under print_lock) */
+static char klog_line[240];
+static unsigned klog_line_n;
+void alice_klog_putc(char c)
+{
+    if (c == '\r') return;
+    if (klog_line_n < sizeof klog_line - 1) klog_line[klog_line_n++] = c;
+    if (c == '\n' || klog_line_n == sizeof klog_line - 1) {
+        if (c != '\n') klog_line[klog_line_n++] = '\n';
+        klog_put(klog_line, klog_line_n);
+        klog_line_n = 0;
+    }
 }
 static void klog_flush_early(void)
 {

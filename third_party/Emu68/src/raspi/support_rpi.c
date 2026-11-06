@@ -61,12 +61,15 @@ int fast_serial = 0;
 
 #ifdef FRF_VIRTUAL_AGA
 extern void frf_bootlog_putc(char c);
+/* Alice68: the pass-through board's kernel log ring (frf_xhci_pt.c; absent without USB) */
+extern void alice_klog_putc(char c) __attribute__((weak));
 #endif
 void putByte(void *io_base, char chr)
 {
     (void)io_base;
 #ifdef FRF_VIRTUAL_AGA
     frf_bootlog_putc(chr);
+    if (alice_klog_putc) alice_klog_putc(chr);
 #endif
 
     if (redirect)

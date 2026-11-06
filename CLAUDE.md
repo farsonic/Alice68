@@ -22,6 +22,8 @@ User-facing docs: README.md. History of where code came from: docs/PROVENANCE.md
   tested by `tools/wifi-test`), `wifi.c` device/process/netdev/connecting. Written from Linux
   brcmfmac and OpenBSD bwfm only: **never copy from WiFiPi.device** (no licence on most files).
   Firmware messages are built byte by byte: the 68k gcc aligns 32-bit fields to 2, the chip to 4.
+- `amiga/monitor.c` — `Alice68-Monitor`: debugging window (tasks, backtraces, the board's log rings,
+  the WiFi driver's `pt_wstat` "where"). The board layout is in `alice68_usbpt.h`; it survives a 68k reset.
 - `tools/hdf-test/`, `amiga/test/` — tests. `tools/splash-preview/` — render the splash on a PC.
 
 ## Setting up a fresh machine (Ubuntu 24.04)
@@ -50,6 +52,7 @@ python3 amiga/test/harness.py amiga/out/alice68-usb.device   # USB pass-through 
 python3 amiga/test/harness_netcheck.py amiga/out/Alice68-NetCheck   # the network check tool against a fake SANA-II driver
 tools/wifi-test/run.sh                   # WiFi protocol layer on the PC (expect "ALL OK")
 python3 amiga/test/harness_wifitool.py amiga/out/Alice68-WiFi   # the WiFi tool against a fake driver
+python3 amiga/test/harness_monitor.py amiga/out/Alice68-Monitor  # Alice68-Monitor DUMP against a fake board
 tools/splash-preview/build.sh > out.ppm  # the splash, drawn by the kernel's own code
 ```
 
@@ -112,7 +115,7 @@ tools/splash-preview/build.sh > out.ppm  # the splash, drawn by the kernel's own
   build from a fresh clone of that commit, then zip `README.md`, `RELEASE-NOTES.md`,
   `SHA256SUMS`, `boot/` (kernel8.img, kernel8-nousb.img, config.txt, cmdline.txt,
   floppy.txt, overlays/), `amiga/` (DEVS/USBHardware/alice68-usb.device,
-  DEVS/alice68wifi.device, C/Alice68-USBLog, C/Alice68-HDF, C/Alice68-NetCheck, C/Alice68-WiFi,
+  DEVS/alice68wifi.device, C/Alice68-USBLog, C/Alice68-HDF, C/Alice68-NetCheck, C/Alice68-WiFi, C/Alice68-Monitor,
   ReadMe-USB.txt), `Licenses/` (with amiga/wifi/LICENSE-netdev.txt) and `source/` (git archive
   of the commit plus the three submodules, and SOURCE.txt). The kernels report
   `git:<commit>`; the release must be that commit.

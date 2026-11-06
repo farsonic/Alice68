@@ -27,8 +27,29 @@
 #define PT_OFF_REQS       0x0200u          /* PT_REQS * 64 bytes */
 #define PT_OFF_ALOG       0x1000u          /* the Amiga driver's log ring */
 #define PT_ALOG_BYTES     0x3000u
-#define PT_OFF_KLOG       0x8000u          /* the kernel's [FRF-XHCI] log ring */
+#define PT_OFF_KLOG       0x8000u          /* the kernel's log ring: every kernel log line */
 #define PT_KLOG_BYTES     0x8000u
+
+/* Debugging (Alice68-Monitor). The board is cleared only when the kernel first
+   makes it, so all of this survives a 68k reset: after a hang and a reset,
+   Alice68-Monitor DUMP still shows what led up to it. */
+#define PT_OFF_WSTAT      0x0C00u          /* struct pt_wstat: what alice68wifi.device is doing now */
+#define PT_OFF_WLOG       0x4000u          /* alice68wifi.device's log ring */
+#define PT_WLOG_BYTES     0x3000u
+#define PT_OFF_MSNAP      0x7000u          /* Alice68-Monitor's last task table, as text */
+#define PT_MSNAP_BYTES    0x1000u
+#define PT_WSTAT_MAGIC    0x57535441u      /* 'WSTA' */
+
+struct pt_wstat {
+    unsigned int  magic;
+    unsigned int  beat;         /* +1 on every turn of the driver's main loop and in its waits */
+    unsigned int  where_us;     /* Pi system timer (1 MHz) when 'where' was set */
+    unsigned int  where_seq;    /* +1 on every change of 'where' */
+    unsigned int  task;         /* the driver's process (68k address) */
+    unsigned int  ver;          /* driver version << 16 | revision */
+    unsigned int  pad[2];
+    char          where[96];    /* "DosRead DEVS:Firmware/... 32768 at 65536", "Wait (idle)", ... */
+};
 
 /* request states (pt_req.state) */
 #define PTS_FREE    0u      /* the Amiga may take it */
@@ -78,7 +99,9 @@ struct pt_hdr {
     unsigned int klog_wr;       /* bytes written to the kernel log ring, ever */
     unsigned int alog_wr;       /* ...and to the Amiga driver's */
     unsigned int amiga_ver;     /* the driver's version once it has opened */
-    unsigned int pad[7];
+    unsigned int wlog_wr;       /* bytes written to alice68wifi.device's log ring, ever */
+    unsigned int msnap_seq;     /* Alice68-Monitor: +1 per task table it wrote */
+    unsigned int pad[5];
     struct pt_port port[PT_PORTS];
 };                              /* 64 + 128 bytes */
 

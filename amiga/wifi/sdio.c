@@ -110,10 +110,12 @@ static int cmd(struct sdhost *h, unsigned idx, uint32_t arg, uint32_t flags, uin
     int e = wait_int(h, INT_CMD_DONE, 20000);
     if (e) {
         h->errors++;
+        if (wifi_debug >= 2) wifi_log("sd: CMD%u %x: error %x\n", idx, arg, (uint32_t)-e);
         reset_lines(h);
         return e;
     }
     if (resp) *resp = rd(h, R_RESP0);
+    if (wifi_debug >= 3 || (wifi_debug >= 2 && idx != 52 && idx != 53)) wifi_log("sd: CMD%u %x -> %x\n", idx, arg, rd(h, R_RESP0));
     return 0;
 }
 
@@ -326,6 +328,7 @@ int sdh_cmd53(struct sdhost *h, int write, unsigned fn, uint32_t addr, void *buf
 {
     for (int attempt = 0; ; attempt++) {
         int e = cmd53_once(h, write, fn, addr, buf, len, incr);
+        if (wifi_debug >= 3) wifi_log("sd: CMD53 %s F%u %x %u -> %x\n", write ? "write" : "read", fn, addr, len, (uint32_t)-e);
         if (!e) return 0;
         if (e == -0x30000) return e;            /* alignment: the caller's bug, not the line */
         if (e <= -0x20000 && ((-e - 0x20000) & 0x40)) return e;   /* illegal command: the chip is asleep (chip.c wakes it) */

@@ -34,9 +34,8 @@
 #include <stdarg.h>
 #include "boards.h"
 
-/* every [FRF-XHCI] line: the boot log (screen, serial) and the pass-through
-   board's log ring, which Alice68-USBLog prints in a Shell */
-static void klog_put(const char *s, unsigned n);
+/* every [FRF-XHCI] line: the boot log (screen, serial); kprintf also puts
+   every line in the pass-through board's log ring (Alice68-USBLog, Alice68-Monitor) */
 typedef void (*xlog_putc_t)(void *data, char c);
 extern void vkprintf_pc(xlog_putc_t putc_f, void *putc_data, const char *format, va_list args);
 struct xlog_buf { char s[240]; unsigned n; };
@@ -46,8 +45,7 @@ static void xlog(const char *fmt, ...)
     struct xlog_buf b; b.n = 0;
     va_list ap; va_start(ap, fmt); vkprintf_pc(xlog_c, &b, fmt, ap); va_end(ap);
     b.s[b.n] = 0;
-    kprintf("%s", b.s);
-    klog_put(b.s, b.n);
+    kprintf("%s", b.s);                     /* kprintf puts it in the ring too (alice_klog_putc) */
 }
 
 #define LE32(x) __builtin_bswap32((uint32_t)(x))

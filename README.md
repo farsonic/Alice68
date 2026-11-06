@@ -271,7 +271,9 @@ firmware supports it): no separate supplicant program is needed.
    `COUNTRY` is your two-letter country code (the channels allowed). Optional:
    `POWERSAVE=1`, `SDCLOCK=25000000` (SDIO faster than the safe 10 MHz default), `POLL=1` (no
    interrupt), `FIRMWARE=dir/` (another firmware folder), `STEP=n` (stop the start-up after
-   step n of 6, to find a step that hangs).
+   step n of 6, to find a step that hangs), `DEBUG=0..3` (how much it logs: 1, the default,
+   every file, power and step; 2 every command; 3 every SD transfer), `SERIAL=1` (the log
+   to the serial port too; it stalls the 68k for each line).
 4. Tell lwip-amiga about it: a file `DEVS:NetInterfaces/wifi` with
    ```
    DEVICE=alice68wifi.device
@@ -293,6 +295,17 @@ or the TCP/IP stack does, and `START` prints each step of the start-up (1 readin
 come up. `DISCONNECT`, `RECONNECT` (after editing the prefs) and `OFF` (chip off) do what
 they say. The chip stays on when the last program closes the device, so a scan or JOIN
 before the TCP/IP stack starts does not drop the connection.
+
+**When something hangs: `Alice68-Monitor`.** Start it first (`run Alice68-Monitor`): a
+window at priority 21 that keeps updating while the mouse still moves. It shows what
+`alice68wifi.device` is doing now and for how long (for example `DosRead
+DEVS:Firmware/cyfmac43455-sdio.bin 32768 bytes at 65536 (for 14.2 s)`), every task with its
+state, the signals it waits for and a backtrace, and the logs of the kernel, the WiFi
+driver and the USB driver as they grow. Keys: space pauses, `1`-`4` choose the log, `t`
+the size of the task list, `q` quits. All of it lives on the kernel's USB pass-through board
+(the USB kernel, `kernel8.img`), which a 68k reset (Ctrl-Amiga-Amiga) does not clear: after
+a hang, reset and run `Alice68-Monitor DUMP >RAM:dump.txt` to get what led up to it,
+including the monitor's last task table.
 
 Not supported: WEP, WPA-Enterprise, hidden networks only by name (they are tried when
 not seen in a scan), access-point mode.

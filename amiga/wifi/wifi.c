@@ -11,6 +11,7 @@
  * Written for Alice68 from Linux brcmfmac and OpenBSD bwfm (ISC) as
  * references; the netdev interface is lwip-amiga's (netdev.h, BSD-3-Clause). */
 #include "wifios.h"
+#include "../../third_party/Emu68/src/frf_usb/xhci/alice68_usbpt.h"
 #include "netdev.h"
 #include "wifi_api.h"
 #include "bus.h"
@@ -18,8 +19,8 @@
 
 #define DEVNAME     "alice68wifi.device"
 #define VERSION     1
-#define REVISION    10
-#define IDSTRING    "alice68wifi 1.10 (07.11.2026)\r\n"
+#define REVISION    11
+#define IDSTRING    "alice68wifi 1.11 (07.11.2026)\r\n"
 
 #define BUFSZ       2048            /* one frame buffer */
 #define CTLMAX      1600            /* largest control payload */
@@ -112,9 +113,19 @@ struct WifiBase {
     char    line[160], last[160];
     UWORD   linelen, lastlen;
     ULONG   repeats, ser_t0, ser_n, ser_dropped;
+
+    /* debugging: the USB pass-through board's rings (Alice68-Monitor) */
+    volatile struct pt_hdr *pt;
+    volatile struct pt_wstat *ws;
+    ULONG   t0_us;
+    UBYTE   serial;                 /* SERIAL=1: the log to the serial port too (stalls the 68k per line) */
+    char    where[96];
+    UWORD   wherelen;
+    UBYTE   in_where, pad2;
 };
 
 static struct WifiBase *g_w;        /* for the process entry and wifi_log (single unit) */
+int wifi_debug = 1;                 /* DEBUG= in the prefs */
 
 /* ---- helpers --------------------------------------------------------------- */
 void *memcpy(void *d, const void *s, unsigned long n)
@@ -149,7 +160,8 @@ uint32_t wifi_usecs(void)
     ULONG v = *(volatile ULONG *)0xF2003004u;          /* system timer CLO, 1 MHz, little-endian */
     return v >> 24 | (v >> 8 & 0xff00) | (v << 8 & 0xff0000) | v << 24;
 }
-void wifi_udelay(uint32_t us) { uint32_t t0 = wifi_usecs(); while (wifi_usecs() - t0 < us) ; }
+static void beat(void) { struct WifiBase *w = g_w; if (w && w->ws) w->ws->beat++; }
+void wifi_udelay(uint32_t us) { beat(); uint32_t t0 = wifi_usecs(); while (wifi_usecs() - t0 < us) ; }
 
 static ULONG now_ms(struct WifiBase *w)
 {
@@ -181,8 +193,34 @@ static void serial_line(struct WifiBase *w, const char *s, unsigned n)
     while (n--) RawPutChar(*s++);
 }
 
+/* a line into the board's ring, "[   12.345] " first */
+static void board_line(struct WifiBase *w, const char *s, unsigned n)
+{
+    volatile struct pt_hdr *b = w->pt;
+    volatile char *r = (volatile char *)b + PT_OFF_WLOG;
+    char ts[16]; unsigned k = 0;
+    ULONG ms = (wifi_usecs() - w->t0_us) / 1000, sec = ms / 1000;
+    char d[10]; int nd = 0; do { d[nd++] = (char)('0' + sec % 10); sec /= 10; } while (sec);
+    ts[k++] = '[';
+    for (int i = nd; i < 5; i++) ts[k++] = ' ';
+    while (nd) ts[k++] = d[--nd];
+    ts[k++] = '.'; ts[k++] = (char)('0' + ms / 100 % 10); ts[k++] = (char)('0' + ms / 10 % 10); ts[k++] = (char)('0' + ms % 10);
+    ts[k++] = ']'; ts[k++] = ' ';
+    ULONG wr = b->wlog_wr;
+    for (unsigned i = 0; i < k; i++) r[(wr + i) % PT_WLOG_BYTES] = ts[i];
+    wr += k;
+    for (unsigned i = 0; i < n; i++) r[(wr + i) % PT_WLOG_BYTES] = s[i];
+    b->wlog_wr = wr + n;
+}
+static void out_line(struct WifiBase *w, const char *s, unsigned n)
+{
+    if (w->pt) board_line(w, s, n);
+    if (!w->pt || w->serial) serial_line(w, s, n);
+}
+
 static void log_char(struct WifiBase *w, char c)
 {
+    if (w->in_where) { if (c != '\n' && w->wherelen < sizeof w->where - 1) w->where[w->wherelen++] = c; return; }
     if (w->linelen < sizeof w->line - 1) w->line[w->linelen++] = c;
     if (c != '\n') return;
     /* the same line again: counted, written once when another line comes */
@@ -196,11 +234,11 @@ static void log_char(struct WifiBase *w, char c)
         static const char b[] = " times)\n";
         for (const char *p = b; *p; p++) m[k++] = *p;
         ring_put(w, m, k);
-        serial_line(w, m, k);
+        out_line(w, m, k);
         w->repeats = 0;
     }
     ring_put(w, w->line, w->linelen);
-    serial_line(w, w->line, w->linelen);
+    out_line(w, w->line, w->linelen);
     memcpy(w->last, w->line, w->linelen);
     w->lastlen = w->linelen;
     w->linelen = 0;
@@ -215,12 +253,8 @@ static void fmt_num(struct WifiBase *w, ULONG v, int base, int width, char pad, 
     while (n) log_char(w, t[--n]);
 }
 
-void wifi_log(const char *f, ...)
+static void vlog(struct WifiBase *w, const char *f, __builtin_va_list ap)
 {
-    struct WifiBase *w = g_w;
-    if (!w) return;
-    __builtin_va_list ap;
-    __builtin_va_start(ap, f);
     for (; *f; f++) {
         if (*f != '%') { log_char(w, *f); continue; }
         f++;
@@ -236,7 +270,56 @@ void wifi_log(const char *f, ...)
         default: log_char(w, *f); break;
         }
     }
+}
+
+void wifi_log(const char *f, ...)
+{
+    struct WifiBase *w = g_w;
+    if (!w) return;
+    __builtin_va_list ap;
+    __builtin_va_start(ap, f);
+    vlog(w, f, ap);
     __builtin_va_end(ap);
+}
+
+/* what the driver is doing now: on the board for Alice68-Monitor (with the
+   time it started), and in the log at DEBUG=2 */
+void wifi_where(const char *f, ...)
+{
+    struct WifiBase *w = g_w;
+    if (!w) return;
+    __builtin_va_list ap;
+    __builtin_va_start(ap, f);
+    w->in_where = 1; w->wherelen = 0;
+    vlog(w, f, ap);
+    w->in_where = 0;
+    w->where[w->wherelen] = 0;
+    __builtin_va_end(ap);
+    volatile struct pt_wstat *ws = w->ws;
+    if (ws) {
+        ws->where_us = wifi_usecs();
+        for (unsigned i = 0; i <= w->wherelen; i++) ws->where[i] = w->where[i];
+        ws->where_seq++;
+        ws->beat++;
+    }
+    if (wifi_debug >= 2) wifi_log("> %s\n", w->where);
+}
+
+/* the board (the Alice68 kernel's USB pass-through board), if there is one */
+static void board_find(struct WifiBase *w)
+{
+    APTR eb = OpenLibrary("expansion.library", 36);
+    if (!eb) return;
+    struct ConfigDev *cd = FindConfigDev(eb, 0, PT_MANUFACTURER, PT_PRODUCT);
+    CloseLibrary(eb);
+    if (!cd) return;
+    volatile struct pt_hdr *b = cd->cd_BoardAddr;
+    if (b->magic != PT_MAGIC) return;
+    w->pt = b;
+    w->ws = (volatile struct pt_wstat *)((volatile char *)b + PT_OFF_WSTAT);
+    w->ws->magic = PT_WSTAT_MAGIC;
+    w->ws->task = (ULONG)FindTask(0);
+    w->ws->ver = VERSION << 16 | REVISION;
 }
 
 static void say(struct WifiBase *w, const char *m)
@@ -287,6 +370,8 @@ static LONG ctl(struct WifiBase *w, ULONG cmd, int set, void *buf, unsigned len,
     if (wait_credit(w)) { wifi_log("no credit for command %u\n", cmd); return -102; }
     unsigned n = sdpcm_frame(f, SDPCM_CHAN_CONTROL, w->txseq, BCDC_DCMD_HDR + plen);
     w->ctl_wait = id; w->ctl_got = 0; w->ctl_out = buf; w->ctl_outmax = outmax; w->ctl_status = 0;
+    if (cmd == WLC_GET_VAR || cmd == WLC_SET_VAR) wifi_where("firmware command %u %s, waiting for the answer", cmd, (const char *)buf);
+    else wifi_where("firmware command %u, waiting for the answer", cmd);
     if (chip_frame(&w->c, f, n, 1)) { tx_fail(w); wifi_log("command %u not sent\n", cmd); return -103; }
     w->txseq++;
     ULONG t0 = wifi_usecs();
@@ -632,12 +717,20 @@ static const struct NetDevDrvOps drv_ops = { ndo_TxSubmit, ndo_TxKick, ndo_RxRel
 /* ---- files -------------------------------------------------------------------- */
 static UBYTE *load(struct WifiBase *w, const char *name, ULONG *len, ULONG extra)
 {
+    ULONG t0 = wifi_usecs();
+    wifi_where("DosOpen %s", name);
     ULONG fh = DosOpen(w->dos, name, MODE_OLDFILE);
+    if (wifi_debug) wifi_log("file %s: %s\n", name, fh ? "opened" : "not there");
     if (!fh) return 0;
+    wifi_where("DosSeek %s to the end", name);
     DosSeek(w->dos, fh, 0, OFFSET_END);
+    wifi_where("DosSeek %s to the start", name);
     LONG n = DosSeek(w->dos, fh, 0, OFFSET_BEGINNING);
+    if (wifi_debug) wifi_log("file %s: %d bytes\n", name, n);
     UBYTE *b = 0;
+    wifi_where("AllocMem %u for %s", (ULONG)n + extra + 16, name);
     if (n > 0 && n < 4 * 1024 * 1024 && (b = AllocMem((ULONG)n + extra + 16, MEMF_PUBLIC | MEMF_CLEAR))) {
+        if (wifi_debug) wifi_log("file %s: buffer at %x\n", name, (ULONG)b);
         /* in 32 KB pieces, the progress in the status message: a hang shows where */
         LONG got = 0;
         while (got < n) {
@@ -652,14 +745,19 @@ static UBYTE *load(struct WifiBase *w, const char *name, ULONG *len, ULONG extra
                 m[k++] = 'K'; m[k] = 0;
                 scpy(w->msg, m, sizeof w->msg);
             }
+            wifi_where("DosRead %s %d bytes at %d into %x", name, part, got, (ULONG)(b + got));
             LONG r = DosRead(w->dos, fh, b + got, part);
+            if (wifi_debug >= 2 || r != part) wifi_log("file %s: read %d at %d -> %d\n", name, part, got, r);
             if (r <= 0) break;
             got += r;
         }
         if (got != n) { FreeMem(b, (ULONG)n + extra + 16); b = 0; }
         else *len = (ULONG)n;
     }
+    wifi_where("DosClose %s", name);
     DosClose(w->dos, fh);
+    if (wifi_debug) wifi_log("file %s: %s in %u ms\n", name, b ? "read" : "NOT read", (wifi_usecs() - t0) / 1000);
+    wifi_where("after reading %s", name);
     return b;
 }
 
@@ -687,6 +785,8 @@ static void prefs(struct WifiBase *w)
     w->pm = 0;
     w->force_poll = 0;
     w->stepmax = 0;
+    wifi_debug = 1;
+    w->serial = 0;
     ULONG len = 0;
     UBYTE *b = load(w, "ENV:alice68wifi.prefs", &len, 1);
     if (!b) b = load(w, "ENVARC:alice68wifi.prefs", &len, 1);
@@ -715,6 +815,8 @@ static void prefs(struct WifiBase *w)
         else if (sieq(k, "SDCLOCK")) { ULONG n = 0; while (*v >= '0' && *v <= '9') n = n * 10 + (ULONG)(*v++ - '0'); if (n >= 400000 && n <= 50000000) w->sdclock = n; }
         else if (sieq(k, "POWERSAVE")) w->pm = (UBYTE)(*v == '1' ? 1 : *v == '2' ? 2 : 0);
         else if (sieq(k, "POLL")) w->force_poll = (UBYTE)(*v == '1' || sieq(v, "on") || sieq(v, "yes"));
+        else if (sieq(k, "DEBUG")) wifi_debug = *v >= '0' && *v <= '9' ? *v - '0' : 1;
+        else if (sieq(k, "SERIAL")) w->serial = (UBYTE)(*v == '1' || sieq(v, "on") || sieq(v, "yes"));
         else if (sieq(k, "STEP")) w->stepmax = (UBYTE)(*v >= '1' && *v <= '9' ? *v - '0' : 0);
         else wifi_log("prefs: unknown setting %s\n", k);
     }
@@ -769,6 +871,7 @@ static int step(struct WifiBase *w, int n, const char *what)
     for (const char *p = what; *p && i < 90; ) m[i++] = *p++;
     m[i] = 0;
     say(w, m);
+    wifi_where("%s", m);
     if (w->stepmax && n > w->stepmax) {
         char s[64]; unsigned k = 0;
         for (const char *p = "stopped before step "; *p; ) s[k++] = *p++;
@@ -786,6 +889,7 @@ static int bringup(struct WifiBase *w)
     char which[160];
     w->state = WS_STARTING;
     prefs(w);
+    wifi_where("OpenResource mailbox.resource");
     w->mbox = OpenResource("mailbox.resource");
     if (!w->mbox) { say(w, "mailbox.resource missing: needs Emu68 1.1"); return -1; }
 
@@ -817,12 +921,17 @@ static int bringup(struct WifiBase *w)
         if (step(w, 2, "pins and power")) goto fail;
         sdh_pins();
         w->hw_powered = 1;
+        wifi_where("mailbox: WL_ON off");
         MB_SetGPIOState(w->mbox, 1, 0);         /* WL_ON low: chip off */
         wifi_udelay(20000);
+        wifi_where("mailbox: WL_ON on");
         MB_SetGPIOState(w->mbox, 1, 1);         /* and on */
         wifi_udelay(150000);
+        wifi_where("mailbox: SD host clock on");
         MB_SetClockState(w->mbox, 1, 1);
+        wifi_where("mailbox: SD host clock rate");
         ULONG base = MB_GetClockRate(w->mbox, 1);
+        if (wifi_debug) wifi_log("SD host clock %u Hz (mailbox)\n", base);
         if (!base || base == 0xffffffffu) {
             ULONG caps = *(volatile ULONG *)(SDH_BASE + 0x40);
             caps = caps >> 24 | (caps >> 8 & 0xff00) | (caps << 8 & 0xff0000) | caps << 24;
@@ -830,8 +939,10 @@ static int bringup(struct WifiBase *w)
             if (!base) base = 250000000u;
         }
         if (step(w, 3, "SD host")) goto fail;
+        wifi_where("sdh_init, base clock %u", base);
         if (sdh_init(&w->h, base) || sdh_bus4(&w->h, w->sdclock)) { say(w, "the WiFi chip does not answer on SDIO"); goto fail; }
         if (step(w, 4, "chip")) goto fail;
+        wifi_where("chip_attach");
         if (chip_attach(&w->c, &w->h)) { say(w, "WiFi chip not recognised"); goto fail; }
         if (w->c.id != 0x4345) wifi_log("chip %x is not a 43455/43456: trying the 43455 files\n", w->c.id);
         if (!(w->c.id == 0x4345 && w->c.rev == 9)) break;
@@ -847,6 +958,7 @@ static int bringup(struct WifiBase *w)
         ULONG nvimglen = nvimg ? fm_nvram(nvb, nvlen, nvimg) : 0;
         FreeMem(nvb, nvlen + 16 + 16);
         nvb = 0;
+        wifi_where("chip_load: firmware %u bytes, NVRAM %u", fwlen, nvimglen);
         int e = nvimg ? chip_load(&w->c, fwb, fwlen, nvimg, nvimglen) : -7;
         FreeMem(fwb, fwlen + 16);
         fwb = 0;
@@ -1442,7 +1554,12 @@ static void wifi_proc(void)
         w->txbuf = w->rxbuf + BUFSZ; w->ctlbuf = w->txbuf + BUFSZ; w->iobuf = w->ctlbuf + BUFSZ;
         w->c.bounce = AllocMem(CHIP_BOUNCE, MEMF_PUBLIC);
         w->last_us = wifi_usecs();
+        w->t0_us = w->last_us;
+        board_find(w);
         wifi_log("%s", IDSTRING);
+        if (w->pt) wifi_log("log on the USB pass-through board at %x (Alice68-Monitor shows it)\n", (ULONG)w->pt);
+        else wifi_log("no pass-through board: log to the serial port\n");
+        wifi_where("started, chip off");
         w->state = WS_OFF;
         w->hw_tried = w->start_req = w->hw_powered = 0;     /* a new run after OFF starts afresh */
         scpy(w->msg, "off - Alice68-WiFi START (or JOIN, or the TCP/IP stack) starts it", sizeof w->msg);
@@ -1460,12 +1577,18 @@ static void wifi_proc(void)
             SendIO(tr);
             timer_out = 1;
         }
+        if (!w->chip_up) wifi_where("Wait (idle, chip %s)", w->hw_tried ? "not running" : "off");
+        else if (w->ws) w->ws->beat++;
         ULONG s = Wait(w->sig_port | w->sig_irq | w->sig_kick | tick_mask | SIGBREAKF_CTRL_C);
         if (timer_out && CheckIO(tr)) { WaitIO(tr); timer_out = 0; }
         struct IOStdReq *io;
-        while ((io = GetMsg(&w->unit.unit_MsgPort)))
+        while ((io = GetMsg(&w->unit.unit_MsgPort))) {
+            struct Node *rp = io->io.io_Message.mn_ReplyPort ? ((struct MsgPort *)io->io.io_Message.mn_ReplyPort)->mp_SigTask : 0;
+            wifi_where("command %x from %s", io->io.io_Command, rp && rp->ln_Name ? rp->ln_Name : "?");
+            if (wifi_debug >= 2) wifi_log("command %x from %s\n", io->io.io_Command, rp && rp->ln_Name ? rp->ln_Name : "?");
             if (!command(w, io)) ReplyMsg(io);
-        if (w->start_req && !w->hw_tried) start_chip(w);
+        }
+        if (w->start_req && !w->hw_tried) { wifi_where("starting the chip"); start_chip(w); }
         if (w->chip_up) {
             if (w->poll && w->irq_on && !w->cardint_off) { chip_card_int(&w->c, 0); w->cardint_off = 1; }
             service(w);

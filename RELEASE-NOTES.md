@@ -14,6 +14,13 @@
   reports a driver that does not answer instead of waiting for ever. The
   chip firmware comes from Raspberry Pi OS (see the README). The protocol layer is tested
   on the PC (`tools/wifi-test`); the hardware side needs a Pi to confirm.
+- **`C:Alice68-Monitor` (new): a window that keeps working while something hangs.** It
+  shows what `alice68wifi.device` is doing and for how long, every task with its state,
+  signals and a backtrace, and the kernel, WiFi and USB logs live. `Alice68-Monitor DUMP`
+  prints the same, also after a 68k reset. The kernel now puts every log line (not only
+  USB's) in the pass-through board's log ring, and the WiFi driver writes its log there
+  instead of the serial port, so logging no longer stalls the 68k. `DEBUG=` and `SERIAL=`
+  in `alice68wifi.prefs` choose how much is logged and where.
 - **Emu68's data-cache range opcodes** (Emu68 `582253e` by Lukasz Winczura, from Emu68's
   development branch `1_1_wip`; not in an Emu68 release yet). The kernel advertises
   `dcache-range-ops`, so the faster **`-rangeops`** archives of rondoval's driver stack
