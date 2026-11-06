@@ -107,7 +107,7 @@ static int cmd(struct sdhost *h, unsigned idx, uint32_t arg, uint32_t flags, uin
     wr(h, R_INTERRUPT, 0xffffffffu & ~INT_CARD);
     wr(h, R_ARG1, arg);
     wr(h, R_CMDTM, CMD_IDX(idx) | flags);
-    int e = wait_int(h, INT_CMD_DONE, 100000);
+    int e = wait_int(h, INT_CMD_DONE, 20000);
     if (e) {
         h->errors++;
         reset_lines(h);
@@ -259,7 +259,7 @@ static int xfer(struct sdhost *h, int write, unsigned fn, uint32_t addr, uint32_
         return -0x20000 - (int)((r >> 8) & 0xff);
     }
     for (uint32_t b = 0; b < nblk; b++) {
-        if ((e = wait_int(h, write ? INT_WRITE_RDY : INT_READ_RDY, 500000))) goto fail;
+        if ((e = wait_int(h, write ? INT_WRITE_RDY : INT_READ_RDY, 50000))) goto fail;
         volatile uint32_t *fifo = &h->regs[R_DATA / 4];
         uint32_t n = bs / 4;
         if (write) {
@@ -270,7 +270,7 @@ static int xfer(struct sdhost *h, int write, unsigned fn, uint32_t addr, uint32_
             else while (n--) *buf++ = *fifo;
         }
     }
-    if ((e = wait_int(h, INT_DATA_DONE, 500000))) goto fail;
+    if ((e = wait_int(h, INT_DATA_DONE, 50000))) goto fail;
     return 0;
 fail:
     h->errors++;

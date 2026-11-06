@@ -18,8 +18,8 @@
 
 #define DEVNAME     "alice68wifi.device"
 #define VERSION     1
-#define REVISION    5
-#define IDSTRING    "alice68wifi 1.5 (06.11.2026)\r\n"
+#define REVISION    6
+#define IDSTRING    "alice68wifi 1.6 (06.11.2026)\r\n"
 
 #define BUFSZ       2048            /* one frame buffer */
 #define CTLMAX      1600            /* largest control payload */
@@ -106,8 +106,9 @@ struct WifiBase {
     /* log */
     char    log[LOGSZ];
     ULONG   logpos;
-    char    line[160];
-    UWORD   linelen;
+    char    line[160], last[160];
+    UWORD   linelen, lastlen;
+    ULONG   repeats, ser_t0, ser_n, ser_dropped;
 };
 
 static struct WifiBase *g_w;        /* for the process entry and wifi_log (single unit) */
@@ -155,18 +156,51 @@ static ULONG now_ms(struct WifiBase *w)
 }
 
 /* ---- log: a ring the tool reads, and serial lines "[alice68wifi] ..." -------- */
+static void ring_put(struct WifiBase *w, const char *s, unsigned n) { while (n--) w->log[w->logpos++ % LOGSZ] = *s++; }
+
+static void serial_line(struct WifiBase *w, const char *s, unsigned n)
+{
+    /* At most 5 lines a second to the serial port: on Alice68 the 68k stands
+       still while the kernel writes a line out (about 9 ms), so a flood of
+       lines would stop the machine. The ring keeps everything. */
+    uint32_t now = wifi_usecs();
+    if (now - w->ser_t0 > 1000000) {
+        if (w->ser_dropped) {
+            static const char m[] = "[alice68wifi] (more lines in Alice68-WiFi LOG)\n";
+            for (const char *p = m; *p; p++) RawPutChar(*p);
+        }
+        w->ser_t0 = now; w->ser_n = 0; w->ser_dropped = 0;
+    }
+    if (w->ser_n >= 5) { w->ser_dropped++; return; }
+    w->ser_n++;
+    static const char pre[] = "[alice68wifi] ";
+    for (const char *p = pre; *p; p++) RawPutChar(*p);
+    while (n--) RawPutChar(*s++);
+}
+
 static void log_char(struct WifiBase *w, char c)
 {
-    w->log[w->logpos++ % LOGSZ] = c;
     if (w->linelen < sizeof w->line - 1) w->line[w->linelen++] = c;
-    if (c == '\n') {
-        /* no Disable() here: on Alice68 a line can take long enough for the
-           keyboard handshake to be missed */
-        static const char pre[] = "[alice68wifi] ";
-        for (const char *p = pre; *p; p++) RawPutChar(*p);
-        for (unsigned i = 0; i < w->linelen; i++) RawPutChar(w->line[i]);
-        w->linelen = 0;
+    if (c != '\n') return;
+    /* the same line again: counted, written once when another line comes */
+    if (w->linelen == w->lastlen && !mcmp(w->line, w->last, w->linelen)) { w->repeats++; w->linelen = 0; return; }
+    if (w->repeats) {
+        char m[40]; unsigned k = 0; ULONG r = w->repeats;
+        static const char a[] = "  (repeated ";
+        for (const char *p = a; *p; p++) m[k++] = *p;
+        char d[12]; int nd = 0; do { d[nd++] = (char)('0' + r % 10); r /= 10; } while (r);
+        while (nd) m[k++] = d[--nd];
+        static const char b[] = " times)\n";
+        for (const char *p = b; *p; p++) m[k++] = *p;
+        ring_put(w, m, k);
+        serial_line(w, m, k);
+        w->repeats = 0;
     }
+    ring_put(w, w->line, w->linelen);
+    serial_line(w, w->line, w->linelen);
+    memcpy(w->last, w->line, w->linelen);
+    w->lastlen = w->linelen;
+    w->linelen = 0;
 }
 
 static void fmt_num(struct WifiBase *w, ULONG v, int base, int width, char pad, int neg)
@@ -453,26 +487,26 @@ static void rx_all(struct WifiBase *w)
         if (now_ms(w) - w->rxskip_t0 < 200) return;
         w->rxskip = 0;
     }
-    w->rx_more = 1;                                 /* cleared when the chip has nothing more */
-    for (int guard = 0; guard < 64; guard++) {
+    w->rx_more = 0;
+    int guard;
+    for (guard = 0; guard < 64; guard++) {
         UBYTE *b = (w->attached && w->started) ? pool_get(w) : 0;
         UBYTE *buf = b ? b : w->rxbuf;
         unsigned first = nextlen && nextlen <= BUFSZ ? nextlen : 16;
         if (chip_frame(&w->c, buf, first, 0)) { if (b) pool_put(w, b); break; }
         struct sdpcm_rx r;
         int k = sdpcm_parse(buf, &r);
-        if (k == 1) { if (b) pool_put(w, b); w->rx_more = 0; break; }
+        if (k == 1) { if (b) pool_put(w, b); break; }
         if (k < 0 || (nextlen && r.len > first)) {
             wifi_log("bad frame header (%d)\n", k);
             if (b) pool_put(w, b);
-            rx_fail(w);
-            w->rx_more = 0;                         /* NAKHANDLED brings it back */
+            rx_fail(w);                             /* NAKHANDLED brings it back */
             break;
         }
         /* the window, sanity-checked as Linux does */
         w->maxseq = (UBYTE)(r.maxseq - w->txseq) > 0x40 ? (UBYTE)(w->txseq + 2) : r.maxseq;
         w->flowctl = r.flowctl;
-        if (r.len > BUFSZ) { if (b) pool_put(w, b); rx_fail(w); w->rx_more = 0; break; }
+        if (r.len > BUFSZ) { if (b) pool_put(w, b); rx_fail(w); break; }
         unsigned total = (r.len + 3) & ~3u;
         if (total > first && chip_frame(&w->c, buf + first, total - first, 0)) { if (b) pool_put(w, b); break; }
         nextlen = r.nextlen;
@@ -501,6 +535,7 @@ static void rx_all(struct WifiBase *w)
             break;
         }
     }
+    if (guard == 64) w->rx_more = 1;            /* stopped early: read again on the next poll */
     rx_flush(w);
 }
 
@@ -621,7 +656,7 @@ static void prefs(struct WifiBase *w)
 {
     w->ssid[0] = w->pass[0] = w->country[0] = 0;
     scpy(w->fwdir, "DEVS:Firmware/", sizeof w->fwdir);
-    w->sdclock = 25000000;
+    w->sdclock = 10000000;                 /* safe; SDCLOCK= raises it */
     w->pm = 0;
     w->force_poll = 0;
     ULONG len = 0;

@@ -272,7 +272,7 @@ firmware supports it): no separate supplicant program is needed.
    COUNTRY=GB
    ```
    `COUNTRY` is your two-letter country code (the channels allowed). Optional:
-   `POWERSAVE=1`, `SDCLOCK=50000000` (SDIO at 50 MHz instead of 25), `POLL=1` (no
+   `POWERSAVE=1`, `SDCLOCK=25000000` (SDIO faster than the safe 10 MHz default), `POLL=1` (no
    interrupt), `FIRMWARE=dir/` (another firmware folder).
 4. Tell lwip-amiga about it: a file `DEVS:NetInterfaces/wifi` with
    ```
