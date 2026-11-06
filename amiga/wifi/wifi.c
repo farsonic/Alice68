@@ -18,8 +18,8 @@
 
 #define DEVNAME     "alice68wifi.device"
 #define VERSION     1
-#define REVISION    6
-#define IDSTRING    "alice68wifi 1.6 (06.11.2026)\r\n"
+#define REVISION    7
+#define IDSTRING    "alice68wifi 1.7 (06.11.2026)\r\n"
 
 #define BUFSZ       2048            /* one frame buffer */
 #define CTLMAX      1600            /* largest control payload */
@@ -46,7 +46,8 @@ struct WifiBase {
     UBYTE   fcstate, flowctl;
     ULONG   ack_fail;
     struct timerequest *naptr;
-    UBYTE   rx_more, cardint_off;
+    UBYTE   rx_more, cardint_off, rx_signalled;
+    ULONG   junk;
     ULONG   rxskip_t0;
     UBYTE   poll, irq_on, chip_up, pad1;
     struct Interrupt irq;
@@ -497,6 +498,11 @@ static void rx_all(struct WifiBase *w)
         struct sdpcm_rx r;
         int k = sdpcm_parse(buf, &r);
         if (k == 1) { if (b) pool_put(w, b); break; }
+        if (k < 0 && !nextlen && !w->rx_signalled) {    /* nothing was waiting: junk, not an error */
+            w->junk++;
+            if (b) pool_put(w, b);
+            break;
+        }
         if (k < 0 || (nextlen && r.len > first)) {
             wifi_log("bad frame header (%d)\n", k);
             if (b) pool_put(w, b);
@@ -1265,7 +1271,11 @@ static void poll_frames(struct WifiBase *w)
         link_set(w, 0);
         return;
     }
-    if ((is & I_HMB_FRAME_IND) || w->rx_more) rx_all(w);
+    /* Read even without FRAME_IND: OpenBSD's bwfm found that waiting for it
+       stalls ("Might stall if we don't when not set"). A read with nothing
+       waiting comes back empty, or as junk that rx_all drops quietly. */
+    w->rx_signalled = (is & I_HMB_FRAME_IND) != 0;
+    rx_all(w);
 }
 
 /* wait about a frame without holding the CPU */
@@ -1497,6 +1507,26 @@ void dev_beginio(struct WifiBase *w, struct IOStdReq *io)
     }
     if (!w->running) {                      /* the process has ended (OFF): nobody to answer */
         io->io.io_Error = IOERR_OPENFAIL;
+        if (!(io->io.io_Flags & IOF_QUICK)) ReplyMsg(io);
+        return;
+    }
+    /* status and log straight away, even while the process is busy */
+    if (io->io.io_Command == WIFI_CMD_STATUS || io->io.io_Command == WIFI_CMD_LOG) {
+        Forbid();
+        if (io->io.io_Command == WIFI_CMD_STATUS) {
+            if (!io->io_Data || io->io_Length < sizeof(struct WifiStatus)) io->io.io_Error = NDERR_BADPARAMS;
+            else { fill_status(w, io->io_Data); io->io_Actual = sizeof(struct WifiStatus); }
+        } else {
+            char *d = io->io_Data;
+            ULONG max = io->io_Length, have = w->logpos < LOGSZ ? w->logpos : LOGSZ;
+            if (!d) io->io.io_Error = NDERR_BADPARAMS;
+            else {
+                if (have > max) have = max;
+                for (ULONG i = 0; i < have; i++) d[i] = w->log[(w->logpos - have + i) % LOGSZ];
+                io->io_Actual = have;
+            }
+        }
+        Permit();
         if (!(io->io.io_Flags & IOF_QUICK)) ReplyMsg(io);
         return;
     }
