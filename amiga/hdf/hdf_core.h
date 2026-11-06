@@ -54,6 +54,9 @@ struct fat {
     uint32_t buf_first;             /* first FAT sector in buf, ~0 = none */
     uint8_t *sec;                   /* one sector, for directories and the BPB */
     uint32_t cmd_clus, cmd_size;    /* cmdline.txt in the root directory, if any */
+    uint32_t fat_secs, nfats;       /* one FAT's sectors; how many FATs (fatfs.c writes them all) */
+    uint32_t fsinfo;                /* FAT32: card sector of FSInfo, 0 = none */
+    uint32_t cfg_clus, cfg_size;    /* config.txt in the root directory, if any */
 };
 
 struct hdf_part {

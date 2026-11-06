@@ -104,7 +104,12 @@ int fat_open(struct fat *f, struct hdf_io *io)
     f->clusters = (total - data_off) / f->spc;
     if (f->clusters < 4085) { hdf_log(io, "FAT12: not supported"); fat_close(f); return -1; }
     f->fat32 = f->clusters >= 65525;
-    if (f->fat32) f->root_clus = le32(s + 44);
+    f->fat_secs = fatsz;
+    f->nfats = nfats;
+    if (f->fat32) {
+        f->root_clus = le32(s + 44);
+        if (le16(s + 48) && le16(s + 48) != 0xffff && le16(s + 48) < rsvd) f->fsinfo = f->part_start + le16(s + 48);
+    }
     else f->root_start = f->part_start + rsvd + nfats * fatsz;
     hdf_log(io, "FAT%d partition at sector %lu, %lu clusters of %lu bytes",
             f->fat32 ? 32 : 16, f->part_start, f->clusters, f->spc * 512);

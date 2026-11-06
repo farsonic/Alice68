@@ -18,3 +18,5 @@ for c in card32 card16; do run $c; run $c nofsres; run $c no64; run $c cardro; d
 for c in card32_boot card32_raw card32_off card32_ro card32_noboot card32_bootnb card32_extra; do run $c; done
 run card32_extra nofsres
 run card32_boot nofsres
+# the folders' FAT engine, checked with fsck.fat and mtools
+sh "$P/tools/hdf-test/fatfs.sh"
