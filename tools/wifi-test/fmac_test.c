@@ -188,6 +188,29 @@ static void t_join(void)
     n = fm_pmk(k, "0011223344556677889900112233445566778899001122334455667788990g1z", 64, 0);
     CHECK(fm_le16(k) == 64 && fm_le16(k + 2) == 1, "64 characters that are not hex: a passphrase");
     CHECK(fm_sae_password(k, "pw", 2) == 130 && fm_le16(k) == 2 && k[2] == 'p', "SAE password");
+    {   /* SHA-1 (FIPS 180), HMAC-SHA1 (RFC 2202) and the WPA PMK (IEEE 802.11i-2004 H.4.2) */
+        uint8_t h[20], pmk[32];
+        static const uint8_t abc[20] = { 0xa9,0x99,0x3e,0x36,0x47,0x06,0x81,0x6a,0xba,0x3e,0x25,0x71,0x78,0x50,0xc2,0x6c,0x9c,0xd0,0xd8,0x9d };
+        fm_sha1((const uint8_t *)"abc", 3, h);
+        CHECK(!memcmp(h, abc, 20), "SHA-1 of abc");
+        static const uint8_t long1[20] = { 0x84,0x98,0x3e,0x44,0x1c,0x3b,0xd2,0x6e,0xba,0xae,0x4a,0xa1,0xf9,0x51,0x29,0xe5,0xe5,0x46,0x70,0xf1 };
+        fm_sha1((const uint8_t *)"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq", 56, h);
+        CHECK(!memcmp(h, long1, 20), "SHA-1 of the 56-byte vector");
+        static const uint8_t hm[20] = { 0xef,0xfc,0xdf,0x6a,0xe5,0xeb,0x2f,0xa2,0xd2,0x74,0x16,0xd5,0xf1,0x84,0xdf,0x9c,0x25,0x9a,0x7c,0x79 };
+        fm_hmac_sha1((const uint8_t *)"Jefe", 4, (const uint8_t *)"what do ya want for nothing?", 28, h);
+        CHECK(!memcmp(h, hm, 20), "HMAC-SHA1 (RFC 2202 case 2)");
+        static const uint8_t p1[32] = { 0xf4,0x2c,0x6f,0xc5,0x2d,0xf0,0xeb,0xef,0x9e,0xbb,0x4b,0x90,0xb3,0x8a,0x5f,0x90,
+                                        0x2e,0x83,0xfe,0x1b,0x13,0x5a,0x70,0xe2,0x3a,0xed,0x76,0x2e,0x97,0x10,0xa1,0x2e };
+        fm_wpa_pmk("password", 8, "IEEE", 4, pmk, 0);
+        CHECK(!memcmp(pmk, p1, 32), "PMK of password/IEEE");
+        static const uint8_t p2[32] = { 0x0d,0xc0,0xd6,0xeb,0x90,0x55,0x5e,0xd6,0x41,0x97,0x56,0xb9,0xa1,0x5e,0xc3,0xe3,
+                                        0x20,0x9b,0x63,0xdf,0x70,0x7d,0xd5,0x08,0xd1,0x45,0x81,0xf8,0x98,0x27,0x21,0xaf };
+        fm_wpa_pmk("ThisIsAPassword", 15, "ThisIsASSID", 11, pmk, 0);
+        CHECK(!memcmp(pmk, p2, 32), "PMK of ThisIsAPassword/ThisIsASSID");
+        CHECK(fm_pmk_hex(k, p1) == 69 && fm_le16(k) == 64 && fm_le16(k + 2) == 1 && !memcmp(k + 4, "f42c6fc5", 8) && k[68] == 0, "PMK as 64 hex digits");
+        uint8_t back[32];
+        CHECK(!fm_hex_pmk((const char *)k + 4, back) && !memcmp(back, p1, 32) && fm_hex_pmk("zz", back) < 0, "64 hex digits back to a key");
+    }
     CHECK(fm_country(k, "GB") == 12 && !memcmp(k, "GB\0\0\0\0\0\0GB\0\0", 12), "country");
 }
 

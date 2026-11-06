@@ -355,3 +355,107 @@ const char *fm_fw_stem(uint16_t chip, uint8_t rev, int alt)
     if (chip == 43430 || chip == 0xa9a6) return alt ? "cyfmac43430-sdio" : "brcmfmac43430-sdio";
     return 0;
 }
+
+/* ---- the WPA key from a passphrase -------------------------------------------
+   PMK = PBKDF2-HMAC-SHA1(passphrase, SSID, 4096 rounds, 32 bytes) (IEEE 802.11i
+   H.4). Computed here and handed to the firmware as 64 hex digits, as Linux's
+   brcmfmac does: the firmware's own supplicant expects the key, not the phrase.
+   SHA-1 from FIPS 180-4. */
+struct sha1 { uint32_t h[5]; uint8_t b[64]; uint32_t n; uint64_t len; };
+static uint32_t rol(uint32_t v, int s) { return v << s | v >> (32 - s); }
+static void sha1_block(struct sha1 *c, const uint8_t *p)
+{
+    uint32_t w[80];
+    for (int i = 0; i < 16; i++) w[i] = (uint32_t)p[4 * i] << 24 | (uint32_t)p[4 * i + 1] << 16 | (uint32_t)p[4 * i + 2] << 8 | p[4 * i + 3];
+    for (int i = 16; i < 80; i++) w[i] = rol(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
+    uint32_t a = c->h[0], b = c->h[1], cc = c->h[2], d = c->h[3], e = c->h[4];
+    for (int i = 0; i < 80; i++) {
+        uint32_t f, k;
+        if (i < 20) { f = (b & cc) | (~b & d); k = 0x5a827999u; }
+        else if (i < 40) { f = b ^ cc ^ d; k = 0x6ed9eba1u; }
+        else if (i < 60) { f = (b & cc) | (b & d) | (cc & d); k = 0x8f1bbcdcu; }
+        else { f = b ^ cc ^ d; k = 0xca62c1d6u; }
+        uint32_t t = rol(a, 5) + f + e + k + w[i];
+        e = d; d = cc; cc = rol(b, 30); b = a; a = t;
+    }
+    c->h[0] += a; c->h[1] += b; c->h[2] += cc; c->h[3] += d; c->h[4] += e;
+}
+static void sha1_init(struct sha1 *c)
+{
+    c->h[0] = 0x67452301u; c->h[1] = 0xefcdab89u; c->h[2] = 0x98badcfeu; c->h[3] = 0x10325476u; c->h[4] = 0xc3d2e1f0u;
+    c->n = 0; c->len = 0;
+}
+static void sha1_add(struct sha1 *c, const uint8_t *p, unsigned n)
+{
+    c->len += n;
+    while (n--) { c->b[c->n++] = *p++; if (c->n == 64) { sha1_block(c, c->b); c->n = 0; } }
+}
+static void sha1_end(struct sha1 *c, uint8_t out[20])
+{
+    uint64_t bits = c->len * 8;
+    uint8_t one = 0x80, zero = 0;
+    sha1_add(c, &one, 1);
+    while (c->n != 56) sha1_add(c, &zero, 1);
+    uint8_t l[8];
+    for (int i = 0; i < 8; i++) l[i] = (uint8_t)(bits >> (56 - 8 * i));
+    sha1_add(c, l, 8);
+    for (int i = 0; i < 5; i++) { out[4 * i] = (uint8_t)(c->h[i] >> 24); out[4 * i + 1] = (uint8_t)(c->h[i] >> 16); out[4 * i + 2] = (uint8_t)(c->h[i] >> 8); out[4 * i + 3] = (uint8_t)c->h[i]; }
+}
+void fm_sha1(const uint8_t *p, unsigned n, uint8_t out[20]) { struct sha1 c; sha1_init(&c); sha1_add(&c, p, n); sha1_end(&c, out); }
+/* HMAC-SHA1 with the key's inner and outer states precomputed (PBKDF2 calls it 8192 times) */
+struct hmac { struct sha1 in, out; };
+static void hmac_key(struct hmac *m, const uint8_t *key, unsigned kn)
+{
+    uint8_t k[64], t[20];
+    memset(k, 0, 64);
+    if (kn > 64) { fm_sha1(key, kn, t); cpy(k, t, 20); } else cpy(k, key, kn);
+    uint8_t ip[64], op[64];
+    for (int i = 0; i < 64; i++) { ip[i] = k[i] ^ 0x36; op[i] = k[i] ^ 0x5c; }
+    sha1_init(&m->in); sha1_add(&m->in, ip, 64);
+    sha1_init(&m->out); sha1_add(&m->out, op, 64);
+}
+static void hmac_run(const struct hmac *m, const uint8_t *p, unsigned n, uint8_t out[20])
+{
+    struct sha1 c = m->in;
+    uint8_t t[20];
+    sha1_add(&c, p, n); sha1_end(&c, t);
+    c = m->out;
+    sha1_add(&c, t, 20); sha1_end(&c, out);
+}
+void fm_hmac_sha1(const uint8_t *key, unsigned kn, const uint8_t *p, unsigned n, uint8_t out[20])
+{
+    struct hmac m; hmac_key(&m, key, kn); hmac_run(&m, p, n, out);
+}
+void fm_wpa_pmk(const char *pass, unsigned pn, const char *ssid, unsigned sn, uint8_t pmk[32], void (*relax)(void))
+{
+    struct hmac m;
+    hmac_key(&m, (const uint8_t *)pass, pn);
+    if (sn > 32) sn = 32;
+    for (uint32_t blk = 1; blk <= 2; blk++) {
+        uint8_t s[36], u[20], t[20];
+        cpy(s, ssid, sn);
+        s[sn] = (uint8_t)(blk >> 24); s[sn + 1] = (uint8_t)(blk >> 16); s[sn + 2] = (uint8_t)(blk >> 8); s[sn + 3] = (uint8_t)blk;
+        hmac_run(&m, s, sn + 4, u);
+        cpy(t, u, 20);
+        for (int r = 1; r < 4096; r++) {
+            hmac_run(&m, u, 20, u);
+            for (int i = 0; i < 20; i++) t[i] ^= u[i];
+            if (relax && !(r & 255)) relax();
+        }
+        cpy(pmk + (blk - 1) * 20, t, blk == 1 ? 20 : 12);
+    }
+}
+unsigned fm_pmk_hex(uint8_t *b, const uint8_t pmk[32])
+{
+    memset(b, 0, 69);
+    fm_put16(b, 64);
+    fm_put16(b + 2, 1);                     /* WSEC_PASSPHRASE: 64 hex digits are the key itself */
+    for (int i = 0; i < 32; i++) { b[4 + 2 * i] = (uint8_t)"0123456789abcdef"[pmk[i] >> 4]; b[5 + 2 * i] = (uint8_t)"0123456789abcdef"[pmk[i] & 15]; }
+    return 69;                              /* Linux's brcmf_wsec_pmk_le: 2 + 2 + 65 */
+}
+int fm_hex_pmk(const char *s, uint8_t pmk[32])
+{
+    for (int i = 0; i < 64; i++) if (hexval(s[i]) < 0) return -1;
+    for (int i = 0; i < 32; i++) pmk[i] = (uint8_t)(hexval(s[2 * i]) << 4 | hexval(s[2 * i + 1]));
+    return 0;
+}

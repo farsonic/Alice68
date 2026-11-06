@@ -169,6 +169,13 @@ unsigned fm_ssid_params(uint8_t *buf, const char *ssid, unsigned ssid_len, const
 unsigned fm_pmk(uint8_t *buf, const char *pass, unsigned len, int short_form);
 /* "sae_password" value. Returns its length. */
 unsigned fm_sae_password(uint8_t *buf, const char *pass, unsigned len);
+/* SHA-1, HMAC-SHA1, and the WPA PMK from a passphrase (PBKDF2, 4096 rounds; relax() is called now and then) */
+void fm_sha1(const uint8_t *p, unsigned n, uint8_t out[20]);
+void fm_hmac_sha1(const uint8_t *key, unsigned kn, const uint8_t *p, unsigned n, uint8_t out[20]);
+void fm_wpa_pmk(const char *pass, unsigned pn, const char *ssid, unsigned sn, uint8_t pmk[32], void (*relax)(void));
+/* WLC_SET_WSEC_PMK with the key as 64 hex digits (Linux's form); 64 hex digits to a key */
+unsigned fm_pmk_hex(uint8_t *buf, const uint8_t pmk[32]);
+int fm_hex_pmk(const char *s, uint8_t pmk[32]);
 /* "country" value for a two-letter ISO code. Returns its length (12). */
 unsigned fm_country(uint8_t *buf, const char *cc);
 

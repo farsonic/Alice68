@@ -381,7 +381,7 @@ static struct {
     uint32_t scan_cmd_seq;
     uint16_t scan_sync;
     uint32_t scan_t0, join_t0, retry_at, info_at, backoff;
-    int      ev_setssid_fail, ev_link_up, ev_link_down, ev_keyed, has_sae;
+    int      ev_setssid_fail, ev_link_up, ev_link_down, ev_keyed, has_sae, ev_assoc_ok;
     struct fm_bss scan[AN_SCAN_MAX];
     int      nscan;
     struct fm_bss cur;
@@ -521,15 +521,17 @@ static void event(const struct fm_event *e)
         if (e->status != E_STATUS_SUCCESS) { W.ev_setssid_fail = 1; wifi_log("join failed (status %u)\n", e->status); }
         break;
     case E_LINK:
-        if (e->flags & E_FLAG_LINK) W.ev_link_up = 1;
+        if (e->flags & E_FLAG_LINK) { W.ev_link_up = 1; wifi_log("link up\n"); }
         else { W.ev_link_down = 1; wifi_log("link down (reason %u)\n", e->reason); }
         break;
     case E_PSK_SUP:
-        if (e->status == E_STATUS_FWSUP_COMPLETED) W.ev_keyed = 1;
-        else wifi_log("supplicant state %u, reason %u\n", e->status, e->reason);
+        if (e->status == E_STATUS_FWSUP_COMPLETED) { W.ev_keyed = 1; wifi_log("WPA handshake done\n"); }
+        else wifi_log("WPA handshake: state %u, reason %u%s\n", e->status, e->reason,
+                      e->status == 7 ? " (timed out: is the password right?)" : "");
         break;
     case E_AUTH: case E_ASSOC: case E_REASSOC:
         wifi_log("%s: status %u, reason %u\n", e->type == E_AUTH ? "authentication" : "association", e->status, e->reason);
+        if (e->type != E_AUTH && e->status == E_STATUS_SUCCESS) W.ev_assoc_ok = 1;
         break;
     case E_DEAUTH: case E_DEAUTH_IND: case E_DISASSOC: case E_DISASSOC_IND:
         wifi_log("disconnected by the network (event %u, reason %u)\n", e->type, e->reason);
@@ -773,6 +775,7 @@ static int bringup(void)
     else wifi_log("no .clm_blob: the firmware's built-in regulatory data\n");
     memset(W.caps, 0, sizeof W.caps);
     iov_get("cap", W.caps, sizeof W.caps - 1);
+    wifi_log("firmware features: %s\n", W.caps);
     W.has_sae = 0;
     for (char *p = W.caps; *p; p++)
         if ((p == W.caps || p[-1] == ' ') && p[0] == 's' && p[1] == 'a' && p[2] == 'e' && (p[3] == ' ' || !p[3])) W.has_sae = 1;
@@ -889,10 +892,17 @@ static void join(const struct fm_bss *b)
             retry("the password must have 8 to 63 characters (or 64 hex digits)");
             return;
         } else {
-            n = fm_pmk(k, W.pass, pl, 0);
+            /* the key itself, as Linux gives it: PBKDF2 of the passphrase and the SSID,
+               as 64 hex digits - the firmware's supplicant does not hash a passphrase */
+            uint8_t pmk[32];
+            uint32_t t0 = now_ms();
+            if (pl != 64 || fm_hex_pmk(W.pass, pmk)) fm_wpa_pmk(W.pass, pl, W.ssid, strlen(W.ssid), pmk, wifi_relax);
+            wifi_log("WPA key from the password: %u ms\n", now_ms() - t0);
+            n = fm_pmk_hex(k, pmk);
             if (ctl(WLC_SET_WSEC_PMK, 1, k, n, 0)) {
-                n = fm_pmk(k, W.pass, pl, 1);
+                n = fm_pmk(k, W.pass, pl, 0);       /* the older passphrase form */
                 if (ctl(WLC_SET_WSEC_PMK, 1, k, n, 0)) { retry("the firmware refused the password"); return; }
+                wifi_log("the firmware took the password only as a passphrase\n");
             }
         }
     } else
@@ -906,7 +916,7 @@ static void join(const struct fm_bss *b)
         if (ctl(WLC_SET_SSID, 1, jp, n, 0)) { retry("join refused by the firmware"); return; }
     }
     W.keyed = (uint8_t)open;
-    W.ev_setssid_fail = W.ev_link_up = W.ev_link_down = W.ev_keyed = 0;
+    W.ev_setssid_fail = W.ev_link_up = W.ev_link_down = W.ev_keyed = W.ev_assoc_ok = 0;
     W.join_t0 = now_ms();
     char m[96]; unsigned i = 0;
     for (const char *p = "joining "; *p; ) m[i++] = *p++;
@@ -988,7 +998,7 @@ static void conn_tick(void)
     case AN_ST_JOINING:
         if (W.ev_setssid_fail) { retry("could not join the network"); break; }
         if (W.ev_link_down && now - W.join_t0 < 1000) W.ev_link_down = 0;
-        if (W.ev_link_down) { retry(W.cur.security & (SEC_WPA2 | SEC_WPA3 | SEC_WPA) ? "the network refused us: is the password right?" : "the network refused us"); break; }
+        if (W.ev_link_down) { retry(W.ev_assoc_ok && !W.keyed ? "the WPA handshake failed: is the password right?" : "the network refused us"); break; }
         if (W.ev_keyed) W.keyed = 1;
         if (W.ev_link_up && W.keyed) {
             W.backoff = 0;
@@ -1002,7 +1012,7 @@ static void conn_tick(void)
             wstate(AN_ST_CONNECTED, m);
             wifi_log("channel %u, %d dBm, %d Mbit/s\n", W.cur.channel, W.rssi, W.rate);
         } else if (now - W.join_t0 > 20000)
-            retry(W.ev_link_up ? "no WPA handshake: is the password right?" : "the network did not answer");
+            retry(W.ev_link_up || W.ev_assoc_ok ? "associated, but the WPA handshake did not finish: is the password right?" : "the network did not answer");
         break;
     case AN_ST_CONNECTED:
         if (W.ev_link_down) { W.ev_link_down = 0; retry("connection lost"); break; }
