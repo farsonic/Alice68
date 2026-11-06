@@ -20,10 +20,11 @@ Riptide (https://github.com/farsonic/riptide), commit 4e5f73c
   prefs/mui_util.c mui_lang.c mui_ids.h mui_lvos.txt mui_classes.h mui_theme.h
                          src/amiga/prefs/         (mui_theme.h: Alice68's icon list)
   prefs/mui_theme.c      src/amiga/prefs/         (the icon table rearranged for
-                                                   Alice68's pages; WiFi, traffic and
-                                                   "i" icons added)
-  prefs/mui_classes.c    src/amiga/prefs/         (the nav list's headings "Ethernet"
-                                                   and "WiFi", Status first, About last)
+                                                   Alice68's pages; WiFi, traffic, sliders
+                                                   and "i" icons added; no soft bold)
+  prefs/mui_classes.c    src/amiga/prefs/         (the nav list's rows and headings from
+                                                   rp_nav_order[]/rp_nav_head[]; titles in
+                                                   the accent colour instead of bold)
   prefs/mui_thunks.S     src/amiga/prefs/         (the dispatchers not taken left out)
   prefs/mui_widgets.c    src/amiga/prefs/mui_status.c: the graph, tabs, table and
                          stext classes only (no interface view, no Status page);

@@ -1,20 +1,22 @@
 /*
- * Alice68-Network 2.0 - the settings and statistics of Alice68's network
+ * Alice68-Network 2.1 - the settings and statistics of Alice68's network
  * card (alice68net.device: unit 0 the Pi 4's WiFi, unit 1 its Gigabit
  * Ethernet, both run by the kernel on CPU1). MUI, in the look of Riptide's
  * RiptidePrefs: its theme and classes are in rt/ (see rt/README).
  *
- * The window: the page list on the left (Status, then the Ethernet pages,
- * then the WiFi pages, then About), the page's head and contents on the
- * right, the Save, Apply and Close buttons and a status line below. The
- * numbers come straight from the network board, once a second; actions go
- * to alice68net.device without waiting (the window never blocks).
+ * The page list: About and Status; Networks (what the Ethernet and the WiFi
+ * are doing, and the WiFi networks in range); Settings (the Ethernet's
+ * speeds, duplex, autonegotiation and flow control; the WiFi's network,
+ * password, country and power saving); Traffic (each unit's numbers and
+ * the last minute as a graph). Save, Apply and Close below, and a status
+ * line. The numbers come straight from the network board, once a second;
+ * actions go to alice68net.device without waiting (the window never blocks).
  *
- * What it keeps: ENV:alice68wifi.prefs and ENVARC: (the WiFi network:
- * SSID, PASSWORD, COUNTRY - also read by "Alice68-WiFi RECONNECT") and
- * ENV:alice68net.prefs and ENVARC: (MAC0=, MAC1=: COMMODORE for Commodore
- * International's OUI 00:80:10 on the hardware's own last three bytes;
- * alice68net.device applies it when it starts).
+ * What it keeps: ENV:alice68wifi.prefs and ENVARC: (the WiFi network: SSID,
+ * PASSWORD, COUNTRY - also read by "Alice68-WiFi RECONNECT") and
+ * ENV:alice68net.prefs and ENVARC: (ETH= and WIFI=, which alice68net.device
+ * applies when it starts). The MAC addresses are the kernel's business:
+ * Commodore's OUI 00:80:10, unless net.oui=off is in cmdline.txt.
  *
  * Start: from the Shell or Workbench, no arguments.
  * SPDX-License-Identifier: GPL-2.0-only
@@ -30,7 +32,7 @@
 #include "alice_net.h"
 #include "wifi_api.h"
 
-#define A68N_VERSION "2.0"
+#define A68N_VERSION "2.1"
 #define A68N_DATE    "07.11.2026"
 #define A68N_TITLE   "Alice68 Network"
 static const char vers[] __attribute__((used)) = "$VER: Alice68-Network " A68N_VERSION " (" A68N_DATE ")";
@@ -52,22 +54,27 @@ struct Library *ExpansionBase;
  * the pages (the nav list and the heads draw these)
  * ================================================================== */
 const struct rp_page rp_pages[RP_NPAGES] = {
-	[P_ETH] = { "Ethernet", "The Pi's Gigabit Ethernet port (alice68net.device unit 1): the link, "
-	                        "what each side offers, and the MAC address." },
-	[P_ETHTRAFFIC] = { "Ethernet traffic", "Frames and bytes in and out, drops and errors, and the last minute." },
-	[P_WIFI] = { "WiFi", "The Pi's WiFi (unit 0): the network it is on, and joining another. "
-	                     "The password stays hidden unless Show is ticked." },
-	[P_WIFINETS] = { "Networks", "The WiFi networks in range. Scan looks again; a click on one takes its "
-	                             "name to the WiFi page." },
-	[P_WIFITRAFFIC] = { "WiFi traffic", "Frames and bytes in and out, drops and errors, and the last minute." },
-	[P_STATUS] = { "Status", "Both network units at a glance, and all their traffic of the last minute." },
 	[P_ABOUT] = { "About", "Alice68-Network: which version this is, and where it comes from." },
+	[P_STATUS] = { "Status", "Both network units at a glance, and all their traffic of the last minute." },
+	[P_ETH] = { "Ethernet", "The Pi's Gigabit Ethernet port (unit 1): the link, what each side offers, "
+	                        "and the MAC address." },
+	[P_WIFI] = { "WiFi", "The Pi's WiFi (unit 0): the network it is on, and the networks in range. "
+	                     "Click one to join it." },
+	[P_ETHSET] = { "Ethernet", "Speeds and duplex to offer, a fixed speed instead, flow control. Apply "
+	                           "renegotiates the link; Save keeps it for the next start." },
+	[P_WIFISET] = { "WiFi", "The network to join, its password (hidden unless Show is ticked), the "
+	                        "country and power saving." },
+	[P_ETHTRAFFIC] = { "Ethernet", "Frames and bytes in and out, drops and errors, and the last minute." },
+	[P_WIFITRAFFIC] = { "WiFi", "Frames and bytes in and out, drops and errors, and the last minute." },
 };
+const int rp_nav_order[RP_NPAGES] = { P_ABOUT, P_STATUS, P_ETH, P_WIFI, P_ETHSET, P_WIFISET, P_ETHTRAFFIC,
+                                      P_WIFITRAFFIC };
+const char *const rp_nav_head[RP_NPAGES] = { NULL, NULL, "Networks", NULL, "Settings", NULL, "Traffic", NULL };
 
 /* return IDs */
 enum {
 	ID_SAVE = 1, ID_APPLY, ID_CLOSE, ID_PAGE, ID_FRONT,
-	ID_ETH_ON, ID_ETH_OFF, ID_OUI_E, ID_WIFI_ON, ID_WIFI_OFF, ID_OUI_W,
+	ID_ETH_ON, ID_ETH_OFF, ID_AUTONEG, ID_WIFI_ON, ID_WIFI_OFF,
 	ID_JOIN, ID_DISC, ID_SCAN, ID_PICK, ID_SHOWPW
 };
 
@@ -81,7 +88,7 @@ static volatile UBYTE *nb;
 static volatile struct an_unit *U(int u) { return (volatile struct an_unit *)(nb + AN_OFF_UNIT(u)); }
 
 /* seconds since the Pi started, as the kernel last wrote it */
-static ULONG H_boot_s(void)
+static ULONG boot_s(void)
 {
 	return nb ? ((volatile struct an_hdr *)nb)->boot_us / 1000000u : 0;
 }
@@ -108,13 +115,14 @@ static void find_board(void)
  * the device: requests that never block the window
  * ================================================================== */
 static struct MsgPort *ioport;
-enum { R_WIFI, R_SCAN, R_ETH, NREQ };
+enum { R_WIFI, R_SCAN, R_WCFG, R_ETH, R_ECFG, NREQ };
 static struct IOStdReq *rq[NREQ];
 static int ropen[NREQ], rbusy[NREQ];
 static UWORD rcmd[NREQ];
 static struct WifiScanEntry scanbuf[AN_SCAN_MAX];
 static struct WifiJoin joinbuf;
-static UBYTE macbuf[2][8];
+static struct NetEthCfg ecfg;
+static ULONG wcfg;
 static char note[120];                  /* what the last action did, for the status line */
 
 static void dev_open(void)
@@ -126,7 +134,7 @@ static void dev_open(void)
 		return;
 	for (i = 0; i < NREQ; i++) {
 		rq[i] = (struct IOStdReq *)CreateIORequest(ioport, sizeof(struct IOStdReq));
-		if (rq[i] && !OpenDevice((CONST_STRPTR)"alice68net.device", i == R_ETH ? 1 : 0, (struct IORequest *)rq[i], 0))
+		if (rq[i] && !OpenDevice((CONST_STRPTR)"alice68net.device", i >= R_ETH ? 1 : 0, (struct IORequest *)rq[i], 0))
 			ropen[i] = 1;
 	}
 }
@@ -184,17 +192,24 @@ static int mac_zero(const volatile UBYTE *m)
 	return !(m[0] | m[1] | m[2] | m[3] | m[4] | m[5]);
 }
 
-static int mac_commodore(const volatile UBYTE *m)
+/* the MAC address, and whose it is */
+static void fmt_mac_full(char *buf, int len, volatile struct an_unit *x, const char *none)
 {
-	return m[0] == (UBYTE)(AN_OUI_COMMODORE >> 16) && m[1] == (UBYTE)(AN_OUI_COMMODORE >> 8) &&
-	       m[2] == (UBYTE)AN_OUI_COMMODORE;
+	if (mac_zero(x->mac)) {
+		rt_strlcpy(buf, none, (size_t)len);
+		return;
+	}
+	fmt_mac(buf, len, x->mac);
+	if (x->mac[0] == (UBYTE)(AN_OUI_COMMODORE >> 16) && x->mac[1] == (UBYTE)(AN_OUI_COMMODORE >> 8) &&
+	    x->mac[2] == (UBYTE)AN_OUI_COMMODORE)
+		rt_strlcpy(buf + strlen(buf), "  Commodore", (size_t)len - strlen(buf));
 }
 
 /* what one side of an Ethernet link advertises: "10M half, 10M full, ..." */
 static void fmt_modes(char *buf, int len, ULONG m)
 {
-	static const char *const names[8] = { "10M half", "10M full", "100M half", "100M full", "1G half", "1G full",
-	                                      "pause", "asymmetric pause" };
+	static const char *const names[8] = { "10 half", "10 full", "100 half", "100 full", "1G half", "1G full",
+	                                      "pause", "asym. pause" };
 	int i, n = 0;
 
 	buf[0] = 0;
@@ -203,6 +218,17 @@ static void fmt_modes(char *buf, int len, ULONG m)
 			n += rt_snprintf(buf + n, (size_t)(len - n > 0 ? len - n : 0), "%s%s", n ? ", " : "", names[i]);
 	if (!n)
 		rt_strlcpy(buf, "-", (size_t)len);
+}
+
+/* a value cut to fit a line (the labels do not wrap) */
+static void cut(char *b, int max)
+{
+	if ((int)strlen(b) > max && max > 3) {
+		b[max - 3] = '.';
+		b[max - 2] = '.';
+		b[max - 1] = '.';
+		b[max] = 0;
+	}
 }
 
 /* ==================================================================
@@ -247,15 +273,30 @@ static Object *checkbox(ULONG id)
 	                    MUIA_Image_Spec, MUII_CheckMark, MUIA_Image_FreeVert, FALSE, MUIA_Background, MUII_ButtonBack,
 	                    MUIA_ShowSelState, FALSE, MUIA_CycleChain, 1, TAGEND);
 
-	if (g)
+	if (g && id)
 		mui_do(g, MUIM_Notify, MUIA_Selected, MUIV_EveryTime, (ULONG)app, 2, MUIM_Application_ReturnID, id);
 	return g;
+}
+
+/* a check box with its text right of it, the rest of the row empty */
+static Object *check_row(Object *cb, const char *text)
+{
+	return cb ? mui_new(MUIC_Group, MUIA_Group_Horiz, TRUE, MUIA_Group_Spacing, 6, MUIA_Group_Child, (ULONG)cb,
+	                    MUIA_Group_Child, (ULONG)label(text, QL_LABEL), MUIA_Group_Child, (ULONG)rect(), TAGEND)
+	          : NULL;
 }
 
 static Object *string(ULONG maxlen, int secret)
 {
 	return mui_new(MUIC_String, MUIA_Frame, MUIV_Frame_String, MUIA_String_MaxLen, maxlen,
 	               secret ? MUIA_String_Secret : TAG_IGNORE, TRUE, MUIA_CycleChain, 1, TAGEND);
+}
+
+static Object *row(Object *a, Object *b, Object *c, Object *d)
+{
+	return mui_new(MUIC_Group, MUIA_Group_Horiz, TRUE, MUIA_Group_Spacing, 8, MUIA_Group_Child, (ULONG)a,
+	               b ? MUIA_Group_Child : TAG_IGNORE, (ULONG)b, c ? MUIA_Group_Child : TAG_IGNORE, (ULONG)c,
+	               d ? MUIA_Group_Child : TAG_IGNORE, (ULONG)d, MUIA_Group_Child, (ULONG)rect(), TAGEND);
 }
 
 /* a page's contents with the theme's margins */
@@ -268,10 +309,21 @@ static Object *page_box(Object *c)
 	                   MUIA_Group_Child, (ULONG)rect(), TAGEND) : NULL;
 }
 
-/* A block of "name  value" rows, as MikroTik's Status tab: labels on the
- * right of the first column, the values (which change) in the second. */
-#define VMAX 12
-#define VLEN 96
+static Object *vgroup(int spacing)
+{
+	return mui_new(MUIC_Group, MUIA_Group_VertSpacing, theme_compact() ? spacing / 2 : spacing, TAGEND);
+}
+
+static void add(Object *g, Object *o)
+{
+	if (g && o)
+		mui_do(g, OM_ADDMEMBER, (ULONG)o);
+}
+
+/* A block of "name  value" rows, as MikroTik's Status tab: names right-aligned
+ * in the first column, the values (which change) in the others. */
+#define VMAX 14
+#define VLEN 64                         /* longer values are cut */
 struct vblock {
 	int n;
 	Object *obj[VMAX];
@@ -280,7 +332,7 @@ struct vblock {
 
 static Object *vblock_build(struct vblock *v, const char *const *names, int n, int cols)
 {
-	Object *g = mui_new(MUIC_Group, MUIA_Group_Columns, cols, MUIA_Group_HorizSpacing, 10,
+	Object *g = mui_new(MUIC_Group, MUIA_Group_Columns, cols, MUIA_Group_HorizSpacing, 12,
 	                    MUIA_Group_VertSpacing, theme_compact() ? 1 : 3, TAGEND);
 	int i, c;
 
@@ -291,7 +343,7 @@ static Object *vblock_build(struct vblock *v, const char *const *names, int n, i
 		Object *l = label(names[i], QL_LABEL);
 		if (!l)
 			return NULL;
-		mui_do(g, OM_ADDMEMBER, (ULONG)l);
+		add(g, l);
 		for (c = 1; c < cols; c++) {
 			int k = i * (cols - 1) + (c - 1);
 			v->text[k][0] = '-';
@@ -299,7 +351,7 @@ static Object *vblock_build(struct vblock *v, const char *const *names, int n, i
 			v->obj[k] = label(v->text[k], QL_NOTE);
 			if (!v->obj[k])
 				return NULL;
-			mui_do(g, OM_ADDMEMBER, (ULONG)v->obj[k]);
+			add(g, v->obj[k]);
 		}
 	}
 	return g;
@@ -311,6 +363,7 @@ static void vset(struct vblock *v, int k, const char *s)
 	if (!v->obj[k])
 		return;
 	rt_strlcpy(v->text[k], s, VLEN);
+	cut(v->text[k], VLEN - 1 < 52 ? VLEN - 1 : 52);
 	if (strcmp(v->text[k], v->shown[k])) {
 		rt_strlcpy(v->shown[k], v->text[k], VLEN);
 		mui_set(v->obj[k], MUIA_QLabel_Text, (ULONG)v->text[k]);
@@ -326,17 +379,17 @@ struct traffic {
 	int valid;
 	struct rp_hist hist;
 };
-static struct traffic tr_[2], tr_all;
+static struct traffic trf[2], trf_all;
 
 static void traffic_sample(int u, ULONG ms)
 {
 	volatile struct an_unit *x = U(u);
-	struct traffic *t = &tr_[u];
+	struct traffic *t = &trf[u];
 	ULONG rb = x->rx_bytes, tb = x->tx_bytes, rp = x->rx_pkts, tp = x->tx_pkts;
 
 	if (t->valid && ms) {
-		t->rate_rxb = (rb - t->rx_b) * 1000u / ms;
-		t->rate_txb = (tb - t->tx_b) * 1000u / ms;
+		t->rate_rxb = (rb - t->rx_b) / ms * 1000u + (rb - t->rx_b) % ms * 1000u / ms;
+		t->rate_txb = (tb - t->tx_b) / ms * 1000u + (tb - t->tx_b) % ms * 1000u / ms;
 		t->rate_rxp = (rp - t->rx_p) * 1000u / ms;
 		t->rate_txp = (tp - t->tx_p) * 1000u / ms;
 	}
@@ -346,64 +399,95 @@ static void traffic_sample(int u, ULONG ms)
 }
 
 /* ==================================================================
+ * About
+ * ================================================================== */
+static Object *about_page(void)
+{
+	Object *g = vgroup(6);
+
+	add(g, left(label("Alice68-Network " A68N_VERSION " (" A68N_DATE ")", QL_TITLE)));
+	add(g, left(label("The settings and numbers of Alice68's network card:\n"
+	                  "the Raspberry Pi 4's WiFi and Gigabit Ethernet, run by\n"
+	                  "the kernel on CPU1, used through alice68net.device.", QL_TEXT)));
+	add(g, left(label("MAC addresses", QL_TITLE)));
+	add(g, left(label("Both units' addresses start with Commodore International's\n"
+	                  "00:80:10; the last three bytes are the Pi's own. net.oui=off\n"
+	                  "in cmdline.txt keeps the Pi's own addresses.", QL_TEXT)));
+	add(g, left(label("Licence and source", QL_TITLE)));
+	add(g, left(label("Free software under the GNU General Public License,\n"
+	                  "version 2. Its look and classes are Riptide's\n"
+	                  "RiptidePrefs (github.com/farsonic/riptide).", QL_TEXT)));
+	return page_box(g);
+}
+
+/* ==================================================================
  * Status
  * ================================================================== */
-static const char *const st_names[] = { "Ethernet", "  Link", "  In / out", "WiFi", "  Network", "  In / out" };
+enum { S_ETH, S_ETHRATE, S_WIFI, S_WIFIRATE, S_N };
+static const char *const st_names[S_N] = { "Ethernet", "in / out", "WiFi", "in / out" };
 static struct vblock st_v;
 static Object *st_graph;
 
 static Object *status_page(void)
 {
-	Object *v = vblock_build(&st_v, st_names, 6, 2);
+	Object *g = vgroup(10);
 
-	st_graph = mui_newc(graph_mcc, MUIA_Graph_Hist, (ULONG)&tr_all.hist, MUIA_Graph_Kind, GK_BYTES,
+	st_graph = mui_newc(graph_mcc, MUIA_Graph_Hist, (ULONG)&trf_all.hist, MUIA_Graph_Kind, GK_BYTES,
 	                    MUIA_Graph_Title, (ULONG)"All traffic", MUIA_Graph_Lines, 7, TAGEND);
-	if (!v || !st_graph)
-		return NULL;
-	return page_box(mui_new(MUIC_Group, MUIA_Group_VertSpacing, theme_compact() ? 4 : 10, MUIA_Group_Child, (ULONG)v,
-	                        MUIA_Group_Child, (ULONG)st_graph, TAGEND));
+	add(g, vblock_build(&st_v, st_names, S_N, 2));
+	add(g, st_graph);
+	return st_graph ? page_box(g) : NULL;
+}
+
+static void status_refresh(void)
+{
+	volatile struct an_unit *e = U(1), *w = U(0);
+	char b[VLEN], i1[24], o1[24];
+
+	if (e->kind == AN_KIND_NONE)
+		rt_strlcpy(b, "not in use (eth=off)", sizeof(b));
+	else if (e->link)
+		rt_snprintf(b, sizeof(b), "up, %lu Mbit/s %s duplex", (unsigned long)e->speed_mbps,
+		            (e->link_flags & AN_LF_FULL) ? "full" : "half");
+	else
+		rt_strlcpy(b, e->state == AN_ST_OFF ? "off" : "no link", sizeof(b));
+	vset(&st_v, S_ETH, b);
+	rp_fmt_rate(i1, sizeof(i1), trf[1].rate_rxb);
+	rp_fmt_rate(o1, sizeof(o1), trf[1].rate_txb);
+	rt_snprintf(b, sizeof(b), "%s / %s", i1, o1);
+	vset(&st_v, S_ETHRATE, b);
+	if (w->kind == AN_KIND_NONE)
+		rt_strlcpy(b, "not in use", sizeof(b));
+	else if (w->state == AN_ST_CONNECTED)
+		rt_snprintf(b, sizeof(b), "%s, %ld dBm, %lu Mbit/s", (const char *)w->ssid, (long)w->rssi,
+		            (unsigned long)w->speed_mbps);
+	else
+		rt_strlcpy(b, w->msg[0] ? (const char *)w->msg : "off", sizeof(b));
+	vset(&st_v, S_WIFI, b);
+	rp_fmt_rate(i1, sizeof(i1), trf[0].rate_rxb);
+	rp_fmt_rate(o1, sizeof(o1), trf[0].rate_txb);
+	rt_snprintf(b, sizeof(b), "%s / %s", i1, o1);
+	vset(&st_v, S_WIFIRATE, b);
+	mui_set(st_graph, MUIA_Graph_Hist, (ULONG)&trf_all.hist);
 }
 
 /* ==================================================================
- * Ethernet
+ * Networks: Ethernet
  * ================================================================== */
-enum { E_STATE, E_RATE, E_AUTONEG, E_ADV, E_LPA, E_FLOW, E_DOWNS, E_MAC, E_FMAC, E_N };
-static const char *const eth_names[E_N] = { "State", "Rate", "Auto negotiation", "Advertising", "Link partner",
-                                            "Flow control", "Link downs", "MAC address", "The Pi's own" };
+enum { E_STATE, E_RATE, E_AUTONEG, E_ADV, E_LPA, E_FLOW, E_DOWNS, E_UP, E_MAC, E_FMAC, E_N };
+static const char *const eth_names[E_N] = { "State", "Rate", "Autonegotiation", "Offered here", "Offered there",
+                                            "Flow control", "Link downs", "Link up for", "MAC address",
+                                            "The Pi's own" };
 static struct vblock eth_v;
-static Object *eth_oui;
 
 static Object *eth_page(void)
 {
-	Object *v = vblock_build(&eth_v, eth_names, E_N, 2);
-	Object *on = button("_Ethernet on", ID_ETH_ON), *off = button("Ethernet off", ID_ETH_OFF);
-	Object *ouil = label("Use Commodore's OUI (00:80:10) for the MAC address", QL_LABEL);
-
-	eth_oui = checkbox(ID_OUI_E);
-	if (!v || !on || !off || !ouil || !eth_oui)
-		return NULL;
-	mui_set(eth_oui, MUIA_ShortHelp, (ULONG)theme_bubble("Commodore's OUI",
-	        "The first three bytes of the address become Commodore International's, 00:80:10; the last "
-	        "three stay the Pi's. A stack already using the card keeps the old address until it opens the "
-	        "card again. Save keeps the choice for the next start."));
-	return page_box(mui_new(MUIC_Group, MUIA_Group_VertSpacing, theme_compact() ? 3 : 8,
-	                        MUIA_Group_Child, (ULONG)left(label("Link", QL_TITLE)),
-	                        MUIA_Group_Child, (ULONG)v,
-	                        MUIA_Group_Child, (ULONG)left(label("Settings", QL_TITLE)),
-	                        MUIA_Group_Child, (ULONG)mui_new(MUIC_Group, MUIA_Group_Horiz, TRUE, MUIA_Group_Spacing, 8,
-	                                                         MUIA_Group_Child, (ULONG)eth_oui,
-	                                                         MUIA_Group_Child, (ULONG)ouil,
-	                                                         MUIA_Group_Child, (ULONG)rect(), TAGEND),
-	                        MUIA_Group_Child, (ULONG)mui_new(MUIC_Group, MUIA_Group_Horiz, TRUE, MUIA_Group_Spacing, 8,
-	                                                         MUIA_Group_Child, (ULONG)on, MUIA_Group_Child, (ULONG)off,
-	                                                         MUIA_Group_Child, (ULONG)rect(), TAGEND),
-	                        TAGEND));
+	return page_box(vblock_build(&eth_v, eth_names, E_N, 2));
 }
 
 static void eth_refresh(void)
 {
 	volatile struct an_unit *x = U(1);
-	static const char *const st[] = { "off", "starting", "no link", "", "", "up", "", "FAILED", "" };
 	char b[VLEN];
 	ULONG f = x->link_flags;
 
@@ -411,168 +495,102 @@ static void eth_refresh(void)
 		vset(&eth_v, E_STATE, "not in use (eth=off in cmdline.txt)");
 		return;
 	}
-	rt_snprintf(b, sizeof(b), "%s%s%s", x->state < 9 ? st[x->state] : "?", x->msg[0] ? " - " : "", (const char *)x->msg);
-	vset(&eth_v, E_STATE, b);
+	vset(&eth_v, E_STATE, x->link ? "up" : x->state == AN_ST_OFF ? "off" : x->state == AN_ST_FAILED ?
+	                      "FAILED" : "no link");
 	if (x->link) {
 		rt_snprintf(b, sizeof(b), "%lu Mbit/s, %s duplex", (unsigned long)x->speed_mbps, (f & AN_LF_FULL) ? "full" : "half");
 		vset(&eth_v, E_RATE, b);
-		vset(&eth_v, E_AUTONEG, (f & AN_LF_AUTONEG) ? "done" : "no");
+		vset(&eth_v, E_AUTONEG, (f & AN_LF_AUTONEG) ? "done" : "off (fixed speed)");
 		fmt_modes(b, sizeof(b), x->link_adv);
 		vset(&eth_v, E_ADV, b);
 		fmt_modes(b, sizeof(b), x->link_lpa);
 		vset(&eth_v, E_LPA, b);
-		rt_snprintf(b, sizeof(b), "receive %s, send %s", (f & AN_LF_RXPAUSE) ? "on" : "off", (f & AN_LF_TXPAUSE) ? "on" : "off");
-		vset(&eth_v, E_FLOW, b);
+		vset(&eth_v, E_FLOW, (f & AN_LF_RXPAUSE) ? "on (pause frames)" : "off");
 	} else {
-		vset(&eth_v, E_RATE, "-");
-		vset(&eth_v, E_AUTONEG, "-");
-		vset(&eth_v, E_ADV, "-");
-		vset(&eth_v, E_LPA, "-");
-		vset(&eth_v, E_FLOW, "-");
+		static const int k[] = { E_RATE, E_AUTONEG, E_ADV, E_LPA, E_FLOW };
+		int i;
+		for (i = 0; i < 5; i++)
+			vset(&eth_v, k[i], "-");
 	}
-	{
-		ULONG now = H_boot_s(), up = x->link_up_s;
-		char d[32];
-		if (x->link && up && now >= up) {
-			rp_fmt_uptime(d, sizeof(d), now - up);
-			rt_snprintf(b, sizeof(b), "%lu, up for %s", (unsigned long)x->link_downs, d);
-		} else
-			rt_snprintf(b, sizeof(b), "%lu", (unsigned long)x->link_downs);
-		vset(&eth_v, E_DOWNS, b);
-	}
-	if (mac_zero(x->mac))
-		vset(&eth_v, E_MAC, "- (known once the Ethernet has started)");
-	else {
-		fmt_mac(b, sizeof(b), x->mac);
-		if (mac_commodore(x->mac))
-			rt_strlcpy(b + strlen(b), "  (Commodore)", sizeof(b) - strlen(b));
-		vset(&eth_v, E_MAC, b);
-	}
+	rt_snprintf(b, sizeof(b), "%lu", (unsigned long)x->link_downs);
+	vset(&eth_v, E_DOWNS, b);
+	if (x->link && x->link_up_s && boot_s() >= x->link_up_s)
+		rp_fmt_uptime(b, sizeof(b), boot_s() - x->link_up_s);
+	else
+		rt_strlcpy(b, "-", sizeof(b));
+	vset(&eth_v, E_UP, b);
+	fmt_mac_full(b, sizeof(b), x, "- (known once the Ethernet has started)");
+	vset(&eth_v, E_MAC, b);
 	if (mac_zero(x->factory_mac))
-		vset(&eth_v, E_FMAC, "-");
-	else {
+		rt_strlcpy(b, "-", sizeof(b));
+	else
 		fmt_mac(b, sizeof(b), x->factory_mac);
-		vset(&eth_v, E_FMAC, b);
-	}
+	vset(&eth_v, E_FMAC, b);
 }
 
 /* ==================================================================
- * traffic pages (one per unit)
- * ================================================================== */
-enum { T_RATE, T_PRATE, T_BYTES, T_PKTS, T_DROPS, T_ERRS, T_N };
-static const char *const tr_names[T_N] = { "Rate", "Packet rate", "Bytes", "Packets", "Drops", "Errors" };
-static struct vblock trv[2];
-static Object *trgraph[2];
-
-static Object *traffic_page(int u)
-{
-	Object *hdr = mui_new(MUIC_Group, MUIA_Group_Columns, 3, MUIA_Group_HorizSpacing, 10,
-	                      MUIA_Group_Child, (ULONG)label("", QL_LABEL),
-	                      MUIA_Group_Child, (ULONG)label("In", QL_TITLE),
-	                      MUIA_Group_Child, (ULONG)label("Out", QL_TITLE), TAGEND);
-	Object *v = vblock_build(&trv[u], tr_names, T_N, 3);
-
-	trgraph[u] = mui_newc(graph_mcc, MUIA_Graph_Hist, (ULONG)&tr_[u].hist, MUIA_Graph_Kind, GK_BYTES,
-	                      MUIA_Graph_Title, (ULONG)(u ? "Ethernet" : "WiFi"), MUIA_Graph_Lines, 7, TAGEND);
-	if (!hdr || !v || !trgraph[u])
-		return NULL;
-	return page_box(mui_new(MUIC_Group, MUIA_Group_VertSpacing, theme_compact() ? 3 : 8,
-	                        MUIA_Group_Child, (ULONG)trgraph[u],
-	                        MUIA_Group_Child, (ULONG)mui_new(MUIC_Group, MUIA_Group_VertSpacing, 2,
-	                                                         MUIA_Group_Child, (ULONG)hdr,
-	                                                         MUIA_Group_Child, (ULONG)v, TAGEND),
-	                        TAGEND));
-}
-
-static void count(char *b, int len, ULONG v)
-{
-	rp_fmt_count(b, len, v);
-}
-
-static void traffic_refresh(int u)
-{
-	volatile struct an_unit *x = U(u);
-	struct traffic *t = &tr_[u];
-	struct vblock *v = &trv[u];
-	char b[VLEN];
-
-	rp_fmt_rate(b, sizeof(b), t->rate_rxb); vset(v, T_RATE * 2, b);
-	rp_fmt_rate(b, sizeof(b), t->rate_txb); vset(v, T_RATE * 2 + 1, b);
-	count(b, sizeof(b), t->rate_rxp); rt_strlcpy(b + strlen(b), " p/s", sizeof(b) - strlen(b)); vset(v, T_PRATE * 2, b);
-	count(b, sizeof(b), t->rate_txp); rt_strlcpy(b + strlen(b), " p/s", sizeof(b) - strlen(b)); vset(v, T_PRATE * 2 + 1, b);
-	rp_fmt_bytes(b, sizeof(b), 0, x->rx_bytes); vset(v, T_BYTES * 2, b);
-	rp_fmt_bytes(b, sizeof(b), 0, x->tx_bytes); vset(v, T_BYTES * 2 + 1, b);
-	count(b, sizeof(b), x->rx_pkts); vset(v, T_PKTS * 2, b);
-	count(b, sizeof(b), x->tx_pkts); vset(v, T_PKTS * 2 + 1, b);
-	count(b, sizeof(b), x->rx_drop); vset(v, T_DROPS * 2, b);
-	vset(v, T_DROPS * 2 + 1, "-");
-	count(b, sizeof(b), u ? 0 : x->sd_errors); vset(v, T_ERRS * 2, b);
-	count(b, sizeof(b), x->tx_err); vset(v, T_ERRS * 2 + 1, b);
-}
-
-/* ==================================================================
- * WiFi
+ * Networks: WiFi (the connection, and the networks in range)
  * ================================================================== */
 enum { W_STATE, W_SSID, W_BSSID, W_CHAN, W_RSSI, W_RATE, W_SEC, W_CHIP, W_FW, W_MAC, W_N };
 static const char *const wifi_names[W_N] = { "State", "Network", "Access point", "Channel", "Signal", "Rate",
                                              "Security", "Chip", "Firmware", "MAC address" };
 static struct vblock wifi_v;
-static Object *w_ssid, *w_pw_page, *w_pw[2], *w_show, *w_country, *wifi_oui;
+static Object *nets_table;
+static char nets_row[AN_SCAN_MAX][120];
+static const char *nets_rows[AN_SCAN_MAX];
+static int nets_n;
 
 static Object *wifi_page(void)
 {
-	Object *v = vblock_build(&wifi_v, wifi_names, W_N, 2);
-	Object *join = button("_Join and save", ID_JOIN), *disc = button("_Disconnect", ID_DISC);
-	Object *on = button("_WiFi on", ID_WIFI_ON), *off = button("WiFi off", ID_WIFI_OFF);
-	Object *form;
+	Object *g = vgroup(8);
 
-	w_ssid = string(33, 0);
-	w_pw[0] = string(65, 1);
-	w_pw[1] = string(65, 0);
-	w_country = string(3, 0);
-	w_show = checkbox(ID_SHOWPW);
-	wifi_oui = checkbox(ID_OUI_W);
-	if (!v || !join || !disc || !on || !off || !w_ssid || !w_pw[0] || !w_pw[1] || !w_country || !w_show || !wifi_oui)
+	nets_table = mui_newc(table_mcc, MUIA_Table_Header, (ULONG)"Network\tSignal\tChannel\tSecurity", TAGEND);
+	if (!nets_table)
 		return NULL;
-	w_pw_page = mui_new(MUIC_Group, MUIA_Group_PageMode, TRUE, MUIA_Group_Child, (ULONG)w_pw[0],
-	                    MUIA_Group_Child, (ULONG)w_pw[1], TAGEND);
-	form = mui_new(MUIC_Group, MUIA_Group_Columns, 2, MUIA_Group_HorizSpacing, 8,
-	               MUIA_Group_VertSpacing, theme_compact() ? 2 : 4,
-	               MUIA_Group_Child, (ULONG)label("Network name", QL_LABEL), MUIA_Group_Child, (ULONG)w_ssid,
-	               MUIA_Group_Child, (ULONG)label("Password", QL_LABEL),
-	               MUIA_Group_Child, (ULONG)mui_new(MUIC_Group, MUIA_Group_Horiz, TRUE, MUIA_Group_Spacing, 8,
-	                                                MUIA_Group_Child, (ULONG)w_pw_page,
-	                                                MUIA_Group_Child, (ULONG)w_show,
-	                                                MUIA_Group_Child, (ULONG)label("Show", QL_LABEL), TAGEND),
-	               MUIA_Group_Child, (ULONG)label("Country", QL_LABEL),
-	               MUIA_Group_Child, (ULONG)hgroup2(w_country, mui_new(MUIC_Group, MUIA_Group_Horiz, TRUE,
-	                                                MUIA_Group_Child, (ULONG)label("  two letters, as GB, AU, US", QL_NOTE),
-	                                                MUIA_Group_Child, (ULONG)rect(), TAGEND)),
-	               TAGEND);
-	if (!w_pw_page || !form)
-		return NULL;
-	mui_set(w_country, MUIA_HorizWeight, 10);
-	mui_set(w_pw_page, MUIA_ShortHelp, (ULONG)theme_bubble("Password",
-	        "The network's passphrase, 8 to 63 characters (or 64 hex digits). Dots unless Show is ticked; "
-	        "it is saved in ENVARC:alice68wifi.prefs, which anyone at the machine can read."));
-	mui_set(wifi_oui, MUIA_ShortHelp, (ULONG)theme_bubble("Commodore's OUI",
-	        "The first three bytes of the WiFi's address become Commodore International's, 00:80:10. The "
-	        "WiFi leaves the network for a moment and joins it again with the new address."));
-	return page_box(mui_new(MUIC_Group, MUIA_Group_VertSpacing, theme_compact() ? 3 : 8,
-	                        MUIA_Group_Child, (ULONG)left(label("Connection", QL_TITLE)),
-	                        MUIA_Group_Child, (ULONG)v,
-	                        MUIA_Group_Child, (ULONG)left(label("Join a network", QL_TITLE)),
-	                        MUIA_Group_Child, (ULONG)form,
-	                        MUIA_Group_Child, (ULONG)mui_new(MUIC_Group, MUIA_Group_Horiz, TRUE, MUIA_Group_Spacing, 8,
-	                                                         MUIA_Group_Child, (ULONG)join, MUIA_Group_Child, (ULONG)disc,
-	                                                         MUIA_Group_Child, (ULONG)rect(),
-	                                                         MUIA_Group_Child, (ULONG)on, MUIA_Group_Child, (ULONG)off,
-	                                                         TAGEND),
-	                        MUIA_Group_Child, (ULONG)mui_new(MUIC_Group, MUIA_Group_Horiz, TRUE, MUIA_Group_Spacing, 8,
-	                                                         MUIA_Group_Child, (ULONG)wifi_oui,
-	                                                         MUIA_Group_Child, (ULONG)label("Use Commodore's OUI (00:80:10) for the MAC address", QL_LABEL),
-	                                                         MUIA_Group_Child, (ULONG)rect(), TAGEND),
-	                        TAGEND));
+	mui_do(nets_table, MUIM_Notify, MUIA_Table_Active, MUIV_EveryTime, (ULONG)app, 2, MUIM_Application_ReturnID, ID_PICK);
+	add(g, vblock_build(&wifi_v, wifi_names, W_N, 2));
+	add(g, row(label("Networks in range", QL_TITLE), button("Sca_n", ID_SCAN), NULL, NULL));
+	add(g, nets_table);
+	return page_box(g);
+}
+
+static const char *find(const char *h, const char *n)
+{
+	size_t l = strlen(n);
+
+	for (; *h; h++)
+		if (!strncmp(h, n, l))
+			return h;
+	return NULL;
+}
+
+/* "wl0: Apr 15 2021 03:03:20 version 7.45.234 (4ca95bb CY) FWID ..." -> "7.45.234, Apr 15 2021" */
+static void fmt_fw(char *b, int len, const volatile char *v)
+{
+	char t[96];
+	const char *ver, *date;
+	int i;
+
+	for (i = 0; i < 95 && v[i]; i++)
+		t[i] = v[i];
+	t[i] = 0;
+	ver = find(t, "version ");
+	date = strchr(t, ':') ? strchr(t, ':') + 2 : t;
+	if (!ver) {
+		rt_strlcpy(b, t, (size_t)len);
+		return;
+	}
+	ver += 8;
+	{
+		char vs[24], ds[16];
+		int k = 0;
+		while (ver[k] && ver[k] != ' ' && k < 23) { vs[k] = ver[k]; k++; }
+		vs[k] = 0;
+		k = 0;
+		while (date[k] && k < 11) { ds[k] = date[k]; k++; }
+		ds[k] = 0;
+		rt_snprintf(b, (size_t)len, "%s, %s", vs, ds);
+	}
 }
 
 static void wifi_refresh(void)
@@ -587,7 +605,10 @@ static void wifi_refresh(void)
 		vset(&wifi_v, W_STATE, "not in use");
 		return;
 	}
-	rt_snprintf(b, sizeof(b), "%s%s%s", x->state < 9 ? st[x->state] : "?", x->msg[0] ? " - " : "", (const char *)x->msg);
+	if (conn || !x->msg[0])
+		rt_strlcpy(b, x->state < 9 ? st[x->state] : "?", sizeof(b));
+	else
+		rt_snprintf(b, sizeof(b), "%s: %s", x->state < 9 ? st[x->state] : "?", (const char *)x->msg);
 	vset(&wifi_v, W_STATE, b);
 	vset(&wifi_v, W_SSID, conn && x->ssid[0] ? (const char *)x->ssid : "-");
 	if (conn)
@@ -603,76 +624,206 @@ static void wifi_refresh(void)
 	rt_snprintf(b, sizeof(b), "BCM%lx rev %lu, SDIO %lu MHz", (unsigned long)x->chip, (unsigned long)x->chiprev,
 	            (unsigned long)x->sdmhz);
 	vset(&wifi_v, W_CHIP, x->chip ? b : "-");
-	vset(&wifi_v, W_FW, x->fwver[0] ? (const char *)x->fwver : "-");
-	if (mac_zero(x->mac))
-		vset(&wifi_v, W_MAC, "-");
-	else {
-		fmt_mac(b, sizeof(b), x->mac);
-		if (mac_commodore(x->mac))
-			rt_strlcpy(b + strlen(b), "  (Commodore)", sizeof(b) - strlen(b));
-		vset(&wifi_v, W_MAC, b);
-	}
-}
-
-/* ==================================================================
- * Networks: the scan table
- * ================================================================== */
-static Object *nets_table;
-static char nets_row[AN_SCAN_MAX][120];
-static const char *nets_rows[AN_SCAN_MAX];
-static int nets_n;
-
-static Object *nets_page(void)
-{
-	Object *scan = button("Sca_n", ID_SCAN);
-
-	nets_table = mui_newc(table_mcc, MUIA_Table_Header, (ULONG)"Network\tSignal\tChannel\tSecurity", TAGEND);
-	if (!scan || !nets_table)
-		return NULL;
-	mui_do(nets_table, MUIM_Notify, MUIA_Table_Active, MUIV_EveryTime, (ULONG)app, 2, MUIM_Application_ReturnID, ID_PICK);
-	return page_box(mui_new(MUIC_Group, MUIA_Group_VertSpacing, theme_compact() ? 3 : 8,
-	                        MUIA_Group_Child, (ULONG)hgroup2(scan, rect()),
-	                        MUIA_Group_Child, (ULONG)nets_table, TAGEND));
+	if (x->fwver[0])
+		fmt_fw(b, sizeof(b), x->fwver);
+	vset(&wifi_v, W_FW, x->fwver[0] ? b : "-");
+	fmt_mac_full(b, sizeof(b), x, "-");
+	vset(&wifi_v, W_MAC, b);
 }
 
 static void nets_show(int n)
 {
-	int i, j, k;
+	int i, j;
 
-	/* strongest first */
-	for (i = 1; i < n; i++)
+	for (i = 1; i < n; i++)                         /* strongest first */
 		for (j = i; j > 0 && scanbuf[j].we_Rssi > scanbuf[j - 1].we_Rssi; j--) {
 			struct WifiScanEntry t = scanbuf[j];
 			scanbuf[j] = scanbuf[j - 1];
 			scanbuf[j - 1] = t;
 		}
-	for (i = k = 0; i < n; i++) {
+	for (i = 0; i < n; i++) {
 		const struct WifiScanEntry *e = &scanbuf[i];
-		rt_snprintf(nets_row[k], sizeof(nets_row[k]), "%s\n%ld dBm\t%u\t%s", e->we_Ssid[0] ? e->we_Ssid : "(hidden)",
+		rt_snprintf(nets_row[i], sizeof(nets_row[i]), "%s\n%ld dBm\t%u\t%s", e->we_Ssid[0] ? e->we_Ssid : "(hidden)",
 		            (long)e->we_Rssi, (unsigned)e->we_Channel, secname(e->we_Security));
-		nets_rows[k] = nets_row[k];
-		k++;
+		nets_rows[i] = nets_row[i];
 	}
-	nets_n = k;
+	nets_n = n;
 	mui_set(nets_table, MUIA_Table_NRows, (ULONG)nets_n);
 	mui_set(nets_table, MUIA_Table_Rows, (ULONG)nets_rows);
 }
 
 /* ==================================================================
- * About
+ * Settings: Ethernet
  * ================================================================== */
-static Object *about_page(void)
+static Object *e_auto, *e_mode[6], *e_speed, *e_full, *e_pause;
+static const char *const speeds[] = { "10 Mbit/s", "100 Mbit/s", "1000 Mbit/s", NULL };
+static const char *const mode_names[6] = { "10 half", "10 full", "100 half", "100 full", "1000 half", "1000 full" };
+
+static Object *ethset_page(void)
 {
-	return page_box(mui_new(MUIC_Group, MUIA_Group_VertSpacing, theme_compact() ? 3 : 6,
-	        MUIA_Group_Child, (ULONG)left(label("Alice68-Network " A68N_VERSION " (" A68N_DATE ")", QL_TITLE)),
-	        MUIA_Group_Child, (ULONG)left(label("The settings and numbers of Alice68's network card:\n"
-	                                         "the Raspberry Pi 4's WiFi and Gigabit Ethernet, run by\n"
-	                                         "the kernel on CPU1, used through alice68net.device.", QL_TEXT)),
-	        MUIA_Group_Child, (ULONG)left(label("Licence and source", QL_TITLE)),
-	        MUIA_Group_Child, (ULONG)left(label("Free software under the GNU General Public License,\n"
-	                                         "version 2. Its look and classes are Riptide's\n"
-	                                         "RiptidePrefs (github.com/farsonic/riptide).", QL_TEXT)),
-	        TAGEND));
+	Object *g = vgroup(6), *modes;
+	int i;
+
+	e_auto = checkbox(ID_AUTONEG);
+	for (i = 0; i < 6; i++)
+		e_mode[i] = checkbox(0);
+	e_speed = mui_make(MUIO_Cycle, (ULONG)"", (ULONG)speeds);
+	e_full = checkbox(0);
+	e_pause = checkbox(0);
+	if (!e_auto || !e_speed || !e_full || !e_pause)
+		return NULL;
+	mui_set(e_speed, MUIA_CycleChain, 1);
+	modes = mui_new(MUIC_Group, MUIA_Group_Columns, 4, MUIA_Group_HorizSpacing, 6, MUIA_Group_VertSpacing, 4, TAGEND);
+	for (i = 0; i < 6; i++) {
+		add(modes, e_mode[i]);
+		add(modes, label(mode_names[i], QL_LABEL));
+	}
+	add(modes, rect());
+	add(modes, rect());
+	add(g, left(label("Link", QL_TITLE)));
+	add(g, check_row(e_auto, "Autonegotiate the speed and duplex"));
+	add(g, left(label("Offer these speeds (Mbit/s) and duplexes:", QL_NOTE)));
+	add(g, left(modes));
+	add(g, left(label("Without autonegotiation, use:", QL_NOTE)));
+	add(g, row(e_speed, e_full, label("full duplex", QL_LABEL), NULL));
+	add(g, left(label("Flow control", QL_TITLE)));
+	add(g, check_row(e_pause, "Offer and honour pause frames (full duplex)"));
+	add(g, left(label("The port", QL_TITLE)));
+	add(g, row(button("_Ethernet on", ID_ETH_ON), button("Ethernet off", ID_ETH_OFF), NULL, NULL));
+	return page_box(g);
+}
+
+static void ethset_disable(void)
+{
+	int a = (int)mui_get(e_auto, MUIA_Selected), i;
+
+	for (i = 0; i < 6; i++)
+		mui_set(e_mode[i], MUIA_Disabled, !a);
+	mui_set(e_speed, MUIA_Disabled, a);
+	mui_set(e_full, MUIA_Disabled, a);
+}
+
+/* the gadgets from the settings now (the kernel's) */
+static void ethset_load(ULONG adv, ULONG flags, ULONG speed)
+{
+	int i;
+
+	mui_nnset(e_auto, MUIA_Selected, (flags & AN_EC_AUTONEG) != 0);
+	for (i = 0; i < 6; i++)
+		mui_nnset(e_mode[i], MUIA_Selected, (adv >> i) & 1);
+	mui_nnset(e_speed, MUIA_Cycle_Active, speed == 10 ? 0 : speed == 100 ? 1 : 2);
+	mui_nnset(e_full, MUIA_Selected, (flags & AN_EC_FULL) != 0);
+	mui_nnset(e_pause, MUIA_Selected, (flags & AN_EC_PAUSE) != 0);
+	ethset_disable();
+}
+
+static void ethset_read(struct NetEthCfg *c)
+{
+	int i, s = (int)mui_get(e_speed, MUIA_Cycle_Active);
+
+	c->ec_Adv = 0;
+	for (i = 0; i < 6; i++)
+		if (mui_get(e_mode[i], MUIA_Selected))
+			c->ec_Adv |= 1UL << i;
+	c->ec_Flags = (mui_get(e_auto, MUIA_Selected) ? AN_EC_AUTONEG : 0) | (mui_get(e_full, MUIA_Selected) ? AN_EC_FULL : 0) |
+	              (mui_get(e_pause, MUIA_Selected) ? AN_EC_PAUSE : 0);
+	c->ec_Speed = s == 0 ? 10 : s == 1 ? 100 : 1000;
+}
+
+/* ==================================================================
+ * Settings: WiFi
+ * ================================================================== */
+static Object *w_ssid, *w_pw_page, *w_pw[2], *w_show, *w_country, *w_ps;
+
+static Object *wifiset_page(void)
+{
+	Object *g = vgroup(6), *form;
+
+	w_ssid = string(33, 0);
+	w_pw[0] = string(65, 1);
+	w_pw[1] = string(65, 0);
+	w_country = string(3, 0);
+	w_show = checkbox(ID_SHOWPW);
+	w_ps = checkbox(0);
+	if (!w_ssid || !w_pw[0] || !w_pw[1] || !w_country || !w_show || !w_ps)
+		return NULL;
+	w_pw_page = mui_new(MUIC_Group, MUIA_Group_PageMode, TRUE, MUIA_Group_Child, (ULONG)w_pw[0],
+	                    MUIA_Group_Child, (ULONG)w_pw[1], TAGEND);
+	form = mui_new(MUIC_Group, MUIA_Group_Columns, 2, MUIA_Group_HorizSpacing, 8,
+	               MUIA_Group_VertSpacing, theme_compact() ? 2 : 4,
+	               MUIA_Group_Child, (ULONG)label("Network name", QL_LABEL), MUIA_Group_Child, (ULONG)w_ssid,
+	               MUIA_Group_Child, (ULONG)label("Password", QL_LABEL),
+	               MUIA_Group_Child, (ULONG)mui_new(MUIC_Group, MUIA_Group_Horiz, TRUE, MUIA_Group_Spacing, 6,
+	                                                MUIA_Group_Child, (ULONG)w_pw_page,
+	                                                MUIA_Group_Child, (ULONG)w_show,
+	                                                MUIA_Group_Child, (ULONG)label("Show", QL_LABEL), TAGEND),
+	               MUIA_Group_Child, (ULONG)label("Country", QL_LABEL),
+	               MUIA_Group_Child, (ULONG)mui_new(MUIC_Group, MUIA_Group_Horiz, TRUE, MUIA_Group_Spacing, 8,
+	                                                MUIA_Group_Child, (ULONG)w_country,
+	                                                MUIA_Group_Child, (ULONG)label("two letters: GB, AU, US, DE...", QL_NOTE),
+	                                                TAGEND),
+	               TAGEND);
+	if (!w_pw_page || !form)
+		return NULL;
+	mui_set(w_country, MUIA_HorizWeight, 25);
+	mui_set(w_pw_page, MUIA_ShortHelp, (ULONG)theme_bubble("Password",
+	        "The network's passphrase, 8 to 63 characters (or 64 hex digits). Dots unless Show is ticked; "
+	        "it is saved in ENVARC:alice68wifi.prefs, which anyone at the machine can read."));
+	add(g, left(label("Network", QL_TITLE)));
+	add(g, form);
+	add(g, row(button("_Join and save", ID_JOIN), button("_Disconnect", ID_DISC), NULL, NULL));
+	add(g, left(label("Radio", QL_TITLE)));
+	add(g, check_row(w_ps, "Power saving (the chip dozes between beacons: slower to answer)"));
+	add(g, row(button("_WiFi on", ID_WIFI_ON), button("WiFi off", ID_WIFI_OFF), NULL, NULL));
+	return page_box(g);
+}
+
+/* ==================================================================
+ * Traffic (one page per unit)
+ * ================================================================== */
+enum { T_RATE, T_PRATE, T_BYTES, T_PKTS, T_DROPS, T_ERRS, T_N };
+static const char *const tr_names[T_N] = { "Rate", "Packet rate", "Bytes", "Packets", "Drops", "Errors" };
+static struct vblock trv[2];
+static Object *trgraph[2];
+
+static Object *traffic_page(int u)
+{
+	Object *g = vgroup(8), *hdr;
+
+	trgraph[u] = mui_newc(graph_mcc, MUIA_Graph_Hist, (ULONG)&trf[u].hist, MUIA_Graph_Kind, GK_BYTES,
+	                      MUIA_Graph_Title, (ULONG)(u ? "Ethernet" : "WiFi"), MUIA_Graph_Lines, 7, TAGEND);
+	hdr = mui_new(MUIC_Group, MUIA_Group_Columns, 3, MUIA_Group_HorizSpacing, 12,
+	              MUIA_Group_Child, (ULONG)label("", QL_LABEL),
+	              MUIA_Group_Child, (ULONG)label("In", QL_TITLE),
+	              MUIA_Group_Child, (ULONG)label("Out", QL_TITLE), TAGEND);
+	if (!trgraph[u] || !hdr)
+		return NULL;
+	add(g, trgraph[u]);
+	add(g, hdr);
+	add(g, vblock_build(&trv[u], tr_names, T_N, 3));
+	return page_box(g);
+}
+
+static void traffic_refresh(int u)
+{
+	volatile struct an_unit *x = U(u);
+	struct traffic *t = &trf[u];
+	struct vblock *v = &trv[u];
+	char b[VLEN];
+
+	rp_fmt_rate(b, sizeof(b), t->rate_rxb); vset(v, T_RATE * 2, b);
+	rp_fmt_rate(b, sizeof(b), t->rate_txb); vset(v, T_RATE * 2 + 1, b);
+	rp_fmt_count(b, sizeof(b), t->rate_rxp); rt_strlcpy(b + strlen(b), " p/s", sizeof(b) - strlen(b)); vset(v, T_PRATE * 2, b);
+	rp_fmt_count(b, sizeof(b), t->rate_txp); rt_strlcpy(b + strlen(b), " p/s", sizeof(b) - strlen(b)); vset(v, T_PRATE * 2 + 1, b);
+	rp_fmt_bytes(b, sizeof(b), 0, x->rx_bytes); vset(v, T_BYTES * 2, b);
+	rp_fmt_bytes(b, sizeof(b), 0, x->tx_bytes); vset(v, T_BYTES * 2 + 1, b);
+	rp_fmt_count(b, sizeof(b), x->rx_pkts); vset(v, T_PKTS * 2, b);
+	rp_fmt_count(b, sizeof(b), x->tx_pkts); vset(v, T_PKTS * 2 + 1, b);
+	rp_fmt_count(b, sizeof(b), x->rx_drop); vset(v, T_DROPS * 2, b);
+	vset(v, T_DROPS * 2 + 1, "-");
+	rp_fmt_count(b, sizeof(b), u ? 0 : x->sd_errors); vset(v, T_ERRS * 2, b);
+	rp_fmt_count(b, sizeof(b), x->tx_err); vset(v, T_ERRS * 2 + 1, b);
+	mui_set(trgraph[u], MUIA_Graph_Hist, (ULONG)&trf[u].hist);
 }
 
 /* ==================================================================
@@ -681,7 +832,7 @@ static Object *about_page(void)
 static void file_read(const char *name, char *buf, LONG max)
 {
 	BPTR fh = Open((CONST_STRPTR)name, MODE_OLDFILE);
-	LONG n = 0;
+	LONG n;
 
 	buf[0] = 0;
 	if (!fh)
@@ -714,12 +865,9 @@ static void pref_get(const char *buf, const char *key, char *out, int max)
 	while (*l) {
 		while (*l == ' ' || *l == '\t')
 			l++;
-		if (!strncmp(l, key, (size_t)kl) && (l[kl] == '=' || l[kl] == ' ')) {
-			const char *v = l + kl;
-			int q;
-			while (*v == ' ' || *v == '=')
-				v++;
-			q = *v == '"';
+		if (!strncmp(l, key, (size_t)kl) && l[kl] == '=') {
+			const char *v = l + kl + 1;
+			int q = *v == '"';
 			if (q)
 				v++;
 			while (*v && i < max - 1 && (q ? *v != '"' : (*v != ' ' && *v != '\n' && *v != '\r')))
@@ -749,13 +897,14 @@ static void prefs_load(void)
 	mui_set(w_pw[1], MUIA_String_Contents, (ULONG)v);
 	pref_get(buf, "COUNTRY", v, 3);
 	mui_set(w_country, MUIA_String_Contents, (ULONG)v);
-	file_read("ENV:alice68net.prefs", buf, sizeof(buf));
-	if (!buf[0])
-		file_read("ENVARC:alice68net.prefs", buf, sizeof(buf));
-	pref_get(buf, "MAC0", v, 20);
-	mui_nnset(wifi_oui, MUIA_Selected, (v[0] | 0x20) == 'c');
-	pref_get(buf, "MAC1", v, 20);
-	mui_nnset(eth_oui, MUIA_Selected, (v[0] | 0x20) == 'c');
+	/* the Ethernet's and the WiFi's settings: as the kernel has them now */
+	if (nb) {
+		volatile struct an_unit *e = U(1), *w = U(0);
+		ethset_load(e->cfg_adv ? e->cfg_adv : 0x3f, e->cfg_adv ? e->cfg_flags : AN_EC_AUTONEG | AN_EC_FULL,
+		            e->cfg_speed ? e->cfg_speed : 1000);
+		mui_nnset(w_ps, MUIA_Selected, (w->cfg_flags & AN_WC_POWERSAVE) != 0);
+	} else
+		ethset_load(0x3f, AN_EC_AUTONEG | AN_EC_FULL, 1000);
 }
 
 static const char *pw_text(void)
@@ -763,12 +912,13 @@ static const char *pw_text(void)
 	return (const char *)mui_get(w_pw[mui_get(w_show, MUIA_Selected) ? 1 : 0], MUIA_String_Contents);
 }
 
-/* 1: both files of each kind written */
+/* 1: all four files written */
 static int prefs_save(void)
 {
 	static char t[512];
 	const char *ssid = (const char *)mui_get(w_ssid, MUIA_String_Contents);
 	const char *cc = (const char *)mui_get(w_country, MUIA_String_Contents);
+	struct NetEthCfg c;
 	int ok = 1;
 
 	rt_snprintf(t, sizeof(t), "SSID=\"%s\"\nPASSWORD=\"%s\"\n", ssid ? ssid : "", pw_text() ? pw_text() : "");
@@ -776,8 +926,9 @@ static int prefs_save(void)
 		rt_snprintf(t + strlen(t), sizeof(t) - strlen(t), "COUNTRY=%s\n", cc);
 	ok &= file_write("ENV:alice68wifi.prefs", t);
 	ok &= file_write("ENVARC:alice68wifi.prefs", t);
-	rt_snprintf(t, sizeof(t), "MAC0=%s\nMAC1=%s\n", mui_get(wifi_oui, MUIA_Selected) ? "COMMODORE" : "",
-	            mui_get(eth_oui, MUIA_Selected) ? "COMMODORE" : "");
+	ethset_read(&c);
+	rt_snprintf(t, sizeof(t), "ETH=%lu,%lu,%lu\nWIFI=%lu\n", (unsigned long)c.ec_Adv, (unsigned long)c.ec_Flags,
+	            (unsigned long)c.ec_Speed, (unsigned long)(mui_get(w_ps, MUIA_Selected) ? AN_WC_POWERSAVE : 0));
 	ok &= file_write("ENV:alice68net.prefs", t);
 	ok &= file_write("ENVARC:alice68net.prefs", t);
 	return ok;
@@ -788,29 +939,31 @@ static int prefs_save(void)
  * ================================================================== */
 static void say(const char *s)
 {
-	rt_strlcpy(note, s, sizeof(note));
+	if (s != note)
+		rt_strlcpy(note, s, sizeof(note));
 	if (status)
 		mui_set(status, MUIA_Status_Text, (ULONG)note);
 }
 
-static void set_oui(int u, int on)
+/* the Ethernet and WiFi settings to the kernel, when they differ from its own */
+static int apply_settings(void)
 {
-	UBYTE *m = macbuf[u];
-	int r = u ? R_ETH : R_WIFI;
+	volatile struct an_unit *e = U(1), *w = U(0);
+	ULONG ps = mui_get(w_ps, MUIA_Selected) ? AN_WC_POWERSAVE : 0;
+	int sent = 0;
 
-	memset(m, 0, 8);
-	if (on) {
-		m[0] = (UBYTE)(AN_OUI_COMMODORE >> 16);
-		m[1] = (UBYTE)(AN_OUI_COMMODORE >> 8);
-		m[2] = (UBYTE)AN_OUI_COMMODORE;
-		m[6] = NETMAC_OUI;
-	} else
-		m[6] = NETMAC_FACTORY;
-	if (dev_send(r, NET_CMD_SETMAC, m, 8))
-		say("busy: try again in a moment");
-	else
-		say(on ? "MAC address: Commodore's OUI (Save keeps it for the next start)"
-		       : "MAC address: the hardware's own (Save keeps it for the next start)");
+	ethset_read(&ecfg);
+	if (ecfg.ec_Flags & AN_EC_AUTONEG && !ecfg.ec_Adv) {
+		say("tick at least one speed to offer, or switch autonegotiation off");
+		return -1;
+	}
+	if (!nb || ecfg.ec_Adv != e->cfg_adv || ecfg.ec_Flags != e->cfg_flags || ecfg.ec_Speed != e->cfg_speed)
+		sent |= !dev_send(R_ECFG, NET_CMD_ETHCFG, &ecfg, sizeof(ecfg));
+	if (!nb || ps != (w->cfg_flags & AN_WC_POWERSAVE)) {
+		wcfg = ps;
+		sent |= !dev_send(R_WCFG, NET_CMD_WIFICFG, &wcfg, sizeof(wcfg));
+	}
+	return sent;
 }
 
 static void do_join(int save)
@@ -821,7 +974,7 @@ static void do_join(int save)
 	size_t pl = pw ? strlen(pw) : 0;
 
 	if (!ssid || !ssid[0]) {
-		say("type the network's name first (or pick one on the Networks page)");
+		say("type the network's name first (or click one on Networks: WiFi)");
 		return;
 	}
 	if (pl && (pl < 8 || pl > 64)) {
@@ -877,7 +1030,7 @@ static void dev_done(void)
 				say(note);
 			}
 		} else if (rq[i]->io_Error)
-			say(rcmd[i] == NET_CMD_SETMAC ? "the MAC address was not taken" : "the card said no");
+			say(rcmd[i] == NET_CMD_ETHCFG ? "the Ethernet did not take those settings" : "the card said no");
 	}
 }
 
@@ -889,7 +1042,6 @@ static ULONG last_tick_us;
 static void refresh(void)
 {
 	ULONG now, ms;
-	char b[VLEN];
 
 	if (!nb)
 		return;
@@ -898,52 +1050,13 @@ static void refresh(void)
 	last_tick_us = now;
 	traffic_sample(0, ms);
 	traffic_sample(1, ms);
-	rp_hist_push(&tr_all.hist, tr_[0].rate_rxb + tr_[1].rate_rxb, tr_[0].rate_txb + tr_[1].rate_txb);
+	rp_hist_push(&trf_all.hist, trf[0].rate_rxb + trf[1].rate_rxb, trf[0].rate_txb + trf[1].rate_txb);
 	switch (page) {
-	case P_STATUS: {
-		volatile struct an_unit *e = U(1), *w = U(0);
-		if (e->link)
-			rt_snprintf(b, sizeof(b), "up, %lu Mbit/s %s duplex", (unsigned long)e->speed_mbps,
-			            (e->link_flags & AN_LF_FULL) ? "full" : "half");
-		else
-			rt_snprintf(b, sizeof(b), "%s", e->kind == AN_KIND_NONE ? "not in use" : e->msg[0] ? (const char *)e->msg : "off");
-		vset(&st_v, 1, b);
-		{
-			char i1[24], o1[24];
-			rp_fmt_rate(i1, sizeof(i1), tr_[1].rate_rxb);
-			rp_fmt_rate(o1, sizeof(o1), tr_[1].rate_txb);
-			rt_snprintf(b, sizeof(b), "%s / %s", i1, o1);
-			vset(&st_v, 3, b);
-			rp_fmt_rate(i1, sizeof(i1), tr_[0].rate_rxb);
-			rp_fmt_rate(o1, sizeof(o1), tr_[0].rate_txb);
-			rt_snprintf(b, sizeof(b), "%s / %s", i1, o1);
-			vset(&st_v, 5, b);
-		}
-		vset(&st_v, 0, "");
-		vset(&st_v, 2, "");
-		if (w->state == AN_ST_CONNECTED)
-			rt_snprintf(b, sizeof(b), "%s, %ld dBm, %lu Mbit/s", (const char *)w->ssid, (long)w->rssi,
-			            (unsigned long)w->speed_mbps);
-		else
-			rt_snprintf(b, sizeof(b), "%s", w->kind == AN_KIND_NONE ? "not in use" : w->msg[0] ? (const char *)w->msg : "off");
-		vset(&st_v, 4, b);
-		mui_set(st_graph, MUIA_Graph_Hist, (ULONG)&tr_all.hist);
-		break;
-	}
-	case P_ETH:
-		eth_refresh();
-		break;
-	case P_ETHTRAFFIC:
-		traffic_refresh(1);
-		mui_set(trgraph[1], MUIA_Graph_Hist, (ULONG)&tr_[1].hist);
-		break;
-	case P_WIFI:
-		wifi_refresh();
-		break;
-	case P_WIFITRAFFIC:
-		traffic_refresh(0);
-		mui_set(trgraph[0], MUIA_Graph_Hist, (ULONG)&tr_[0].hist);
-		break;
+	case P_STATUS: status_refresh(); break;
+	case P_ETH: eth_refresh(); break;
+	case P_WIFI: wifi_refresh(); break;
+	case P_ETHTRAFFIC: traffic_refresh(1); break;
+	case P_WIFITRAFFIC: traffic_refresh(0); break;
 	}
 }
 
@@ -953,13 +1066,14 @@ static void refresh(void)
 static Object *build_page(int p)
 {
 	switch (p) {
+	case P_ABOUT: return about_page();
 	case P_STATUS: return status_page();
 	case P_ETH: return eth_page();
-	case P_ETHTRAFFIC: return traffic_page(1);
 	case P_WIFI: return wifi_page();
-	case P_WIFINETS: return nets_page();
+	case P_ETHSET: return ethset_page();
+	case P_WIFISET: return wifiset_page();
+	case P_ETHTRAFFIC: return traffic_page(1);
 	case P_WIFITRAFFIC: return traffic_page(0);
-	case P_ABOUT: return about_page();
 	}
 	return NULL;
 }
@@ -969,9 +1083,10 @@ static int build_window(void)
 	static const char *const blabel[3] = { "_Save", "_Apply", "_Close" };
 	static const ULONG bid[3] = { ID_SAVE, ID_APPLY, ID_CLOSE };
 	static const char *const bhelp[3] = {
-		"Keeps the WiFi network and the MAC choices for the next start, and joins the network typed in "
-		"if the WiFi is not on it already.",
-		"Joins the network typed in, without keeping it. (The MAC choices take effect when ticked.)",
+		"Applies the settings and keeps them, and the WiFi network, for the next start; joins the "
+		"network typed in if the WiFi is not on it already.",
+		"Applies the Ethernet and WiFi settings now, without keeping them, and joins the network "
+		"typed in if the WiFi is not on it already.",
 		"Closes the window. The card keeps running." };
 	Object *right, *top;
 	int i;
@@ -989,14 +1104,14 @@ static int build_window(void)
 		Object *pg = build_page(i);
 		if (!pg)
 			return -1;
-		mui_do(pages, OM_ADDMEMBER, (ULONG)pg);
+		add(pages, pg);
 	}
 	for (i = 0; i < 3; i++) {
 		btn[i] = button(blabel[i], bid[i]);
 		if (!btn[i])
 			return -1;
 		mui_set(btn[i], MUIA_ShortHelp, (ULONG)theme_bubble(blabel[i] + 1, bhelp[i]));
-		mui_do(bar, OM_ADDMEMBER, (ULONG)btn[i]);
+		add(bar, btn[i]);
 	}
 	mui_set(pages, MUIA_Group_ActivePage, (ULONG)page);
 	right = mui_new(MUIC_Group, MUIA_Group_Spacing, 0, MUIA_Group_Child, (ULONG)head, MUIA_Group_Child,
@@ -1013,7 +1128,7 @@ static int build_window(void)
 	              MUIA_Window_RootObject, (ULONG)root, TAGEND);
 	if (!win)
 		return -1;
-	mui_do(app, OM_ADDMEMBER, (ULONG)win);
+	add(app, win);
 	mui_do(win, MUIM_Notify, MUIA_Window_CloseRequest, TRUE, (ULONG)app, 2, MUIM_Application_ReturnID, ID_CLOSE);
 	mui_do(app, MUIM_Notify, MUIA_Application_DoubleStart, MUIV_EveryTime, (ULONG)app, 2,
 	       MUIM_Application_ReturnID, ID_FRONT);
@@ -1023,6 +1138,13 @@ static int build_window(void)
 	       MUIV_TriggerValue);
 	mui_do(nav, MUIM_Notify, MUIA_Nav_Active, MUIV_EveryTime, (ULONG)app, 2, MUIM_Application_ReturnID, ID_PAGE);
 	return 0;
+}
+
+static void go_page(int p)
+{
+	page = p;
+	mui_set(nav, MUIA_Nav_Active, (ULONG)p);
+	refresh();
 }
 
 /* 1: quit */
@@ -1040,35 +1162,34 @@ static int command(ULONG id)
 		break;
 	case ID_SAVE:
 	case ID_APPLY: {
-		/* the network typed in, when it is not the one the WiFi is on; Save also keeps it all */
 		const char *ssid = (const char *)mui_get(w_ssid, MUIA_String_Contents);
 		volatile struct an_unit *w = U(0);
+		int r = apply_settings();
+		if (r < 0)
+			break;
 		if (ssid && ssid[0] && nb && (w->state != AN_ST_CONNECTED || strcmp(ssid, (const char *)w->ssid)))
 			do_join(id == ID_SAVE);
 		else if (id == ID_SAVE)
-			say(prefs_save() ? "saved in ENVARC:alice68wifi.prefs and ENVARC:alice68net.prefs"
+			say(prefs_save() ? (r ? "applied, and saved for the next start" : "saved for the next start")
 			                 : "the prefs could not be saved");
 		else
-			say("nothing to apply: the MAC choices take effect when ticked");
+			say(r ? "applied (not saved: Save keeps it)" : "nothing changed");
 		break;
 	}
+	case ID_AUTONEG:
+		ethset_disable();
+		break;
 	case ID_ETH_ON:
 		say(dev_send(R_ETH, WIFI_CMD_START, NULL, 0) ? "busy" : "starting the Ethernet");
 		break;
 	case ID_ETH_OFF:
-		say(dev_send(R_ETH, WIFI_CMD_OFF, NULL, 0) ? "busy" : "Ethernet off (a stack using it stops it from going off)");
-		break;
-	case ID_OUI_E:
-		set_oui(1, (int)mui_get(eth_oui, MUIA_Selected));
+		say(dev_send(R_ETH, WIFI_CMD_OFF, NULL, 0) ? "busy" : "Ethernet off (a stack using it keeps it on)");
 		break;
 	case ID_WIFI_ON:
 		say(dev_send(R_WIFI, WIFI_CMD_START, NULL, 0) ? "busy" : "starting the WiFi");
 		break;
 	case ID_WIFI_OFF:
-		say(dev_send(R_WIFI, WIFI_CMD_OFF, NULL, 0) ? "busy" : "WiFi off (a stack using it stops it from going off)");
-		break;
-	case ID_OUI_W:
-		set_oui(0, (int)mui_get(wifi_oui, MUIA_Selected));
+		say(dev_send(R_WIFI, WIFI_CMD_OFF, NULL, 0) ? "busy" : "WiFi off (a stack using it keeps it on)");
 		break;
 	case ID_JOIN:
 		do_join(1);
@@ -1083,8 +1204,7 @@ static int command(ULONG id)
 		LONG r = (LONG)mui_get(nets_table, MUIA_Table_Active);
 		if (r >= 0 && r < nets_n) {
 			mui_set(w_ssid, MUIA_String_Contents, (ULONG)scanbuf[r].we_Ssid);
-			page = P_WIFI;
-			mui_set(nav, MUIA_Nav_Active, (ULONG)page);
+			go_page(P_WIFISET);
 			mui_set(win, MUIA_Window_ActiveObject, (ULONG)w_pw[mui_get(w_show, MUIA_Selected) ? 1 : 0]);
 			say("type the password and press Join and save");
 		}
@@ -1120,7 +1240,7 @@ long amiga_main(char *args, long len)
 	MUIMasterBase = OpenLibrary((CONST_STRPTR)"muimaster.library", 19);
 	if (DOSBase && !MUIMasterBase) {
 		static const char t[] = "Alice68-Network needs MUI 3.8 or later (muimaster.library 19).\n"
-		                        "Alice68-NetworkGT is the same window without MUI.\n";
+		                        "Alice68-NetworkGT is a simpler window without MUI.\n";
 		Write(Output(), (APTR)t, (LONG)sizeof(t) - 1);
 	}
 	if (!DOSBase || !IntuitionBase || !GfxBase || !MUIMasterBase)

@@ -19,6 +19,13 @@
 #define NETMAC_ADDRESS      0           /* the address given */
 #define NETMAC_OUI          1           /* its first 3 bytes, on the hardware's own last 3 */
 #define NETMAC_FACTORY      2           /* the hardware's own again */
+#define NET_CMD_ETHCFG      0x8a49      /* unit 1. io_Data -> struct NetEthCfg; the link drops and comes back */
+#define NET_CMD_WIFICFG     0x8a4a      /* unit 0. io_Data -> ULONG: AN_WC_* (alice_net.h) */
+struct NetEthCfg {
+    ULONG ec_Adv;                       /* AN_LM_* speeds and duplexes to advertise (alice_net.h) */
+    ULONG ec_Flags;                     /* AN_EC_*: autonegotiation, fixed full duplex, flow control */
+    ULONG ec_Speed;                     /* 10, 100 or 1000: without autonegotiation */
+};
 
 #define WIFI_API_VERSION    2
 

@@ -260,20 +260,27 @@ only) cannot. The WiFi chip's own firmware does the WPA2 handshake (and WPA3 whe
 firmware supports it).
 
 **`Alice68-Network`** (in `C:`, or drag it to `SYS:Prefs`) is the settings window, in MUI
-(3.8 or later) and in the look of Riptide's preferences: a **Status** page, then the
-**Ethernet** pages (the link: rate, duplex, auto negotiation, what each side advertises,
-flow control, link downs; the MAC address; on/off; and a **traffic** page with rates,
-bytes, packets, drops and errors and a graph of the last minute) and the **WiFi** pages
-(the connection; network name, password - dots unless Show is ticked - and country,
-**Join and save**, Disconnect, on/off; **Networks**: Scan, and a click takes a network's
-name; traffic). **Save** keeps the WiFi network in `ENVARC:alice68wifi.prefs` and the MAC
-choices in `ENVARC:alice68net.prefs`. Without MUI, `Alice68-NetworkGT` is the simpler
-GadTools window.
+(3.8 or later) and in the look of Riptide's preferences. Its pages:
 
-**Commodore's MAC prefix.** Tick *Use Commodore's OUI* on the Ethernet or WiFi page and
-that unit's address starts with Commodore International's `00:80:10`, the last three bytes
-staying the Pi's own. It changes at once (a TCP/IP stack already using the unit keeps the
-old address until it opens it again) and, saved, from the next start on.
+- **About**, **Status** (both units and all traffic of the last minute);
+- **Networks**: **Ethernet** (the link: rate, duplex, autonegotiation, what each side
+  offers, flow control, link downs, time up, the MAC address) and **WiFi** (the connection,
+  and the networks in range: Scan, then a click on one to join it);
+- **Settings**: **Ethernet** (autonegotiation and the speeds and duplexes to offer, or a
+  fixed speed and duplex; flow control; on/off) and **WiFi** (network name, password - dots
+  unless Show is ticked -, country, power saving, Join and save, Disconnect, on/off);
+- **Traffic**: **Ethernet** and **WiFi** (rates, bytes, packets, drops and errors in and out,
+  and a graph of the last minute).
+
+**Apply** gives the kernel the settings now; **Save** also keeps them for the next start
+(the WiFi network in `ENVARC:alice68wifi.prefs`, the Ethernet and WiFi settings in
+`ENVARC:alice68net.prefs`, which `alice68net.device` applies when it starts). Without MUI,
+`Alice68-NetworkGT` is a simpler GadTools window.
+
+**Commodore's MAC prefix.** Both units' MAC addresses start with Commodore International's
+`00:80:10`; the last three bytes are the Pi's own. `net.oui=off` in `cmdline.txt` keeps the
+Pi's addresses. (Your router sees a new machine the first time: a DHCP server may give it a
+new address.)
 
 ### WiFi
 

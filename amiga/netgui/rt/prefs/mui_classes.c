@@ -124,10 +124,20 @@ static int nav_isz(void)
 	return nav_rh ? nav_is : theme_compact() ? 0 : nav_rowh() - 2 < 16 ? nav_rowh() - 2 : 16;
 }
 
+/* Alice68-Network: the headings come from rp_nav_head[] (prefs_fields.h) */
+static int nav_nheads(int upto)                 /* headings above rows 0..upto */
+{
+	int i, n = 0;
+
+	for (i = 0; i <= upto && i < RP_NPAGES; i++)
+		n += rp_nav_head[i] != NULL;
+	return n;
+}
+
 /* the height of all rows with the headings, for a row height rh */
 static LONG nav_fullh(int rh, int hh)
 {
-	return 2 * hh + (LONG)RP_NPAGES * rh + 4;
+	return nav_nheads(RP_NPAGES - 1) * hh + (LONG)RP_NPAGES * rh + 4;
 }
 
 /* the window's other parts: title bar, head, buttons, status line, borders */
@@ -148,19 +158,21 @@ static void nav_fit(Object *obj)
 	nav_is = compact || nav_rh - 2 < 12 ? 0 : nav_rh - 2 < 16 ? nav_rh - 2 : 16;
 }
 
-/* The list's order: About Riptide and Status first (NAV_LEAD rows), then
- * the settings in page order. pos is a row of the list, page a P_* number. */
-#define NAV_LEAD 2
-
-/* Alice68-Network: Status, then the Ethernet and WiFi pages, About last */
+/* The list's order: Alice68-Network's rp_nav_order[] (prefs_fields.h). pos is a
+ * row of the list, page a P_* number. */
 static int nav_page_at(int pos)
 {
-	return pos == 0 ? P_STATUS : pos == RP_NPAGES - 1 ? P_ABOUT : pos - 1;
+	return pos >= 0 && pos < RP_NPAGES ? rp_nav_order[pos] : 0;
 }
 
 static int nav_pos(int page)
 {
-	return page == P_STATUS ? 0 : page == P_ABOUT ? RP_NPAGES - 1 : page + 1;
+	int i;
+
+	for (i = 0; i < RP_NPAGES; i++)
+		if (rp_nav_order[i] == page)
+			return i;
+	return 0;
 }
 
 /* the top of row pos below the object's top ("Settings" heads the first
@@ -170,7 +182,7 @@ static LONG nav_rowy(const struct nav_data *d, int pos)
 {
 	if (d->scroll)
 		return (LONG)(pos - d->top) * nav_rowh();
-	return nav_headh() * ((pos >= NAV_LEAD) + (pos >= RP_FIRST_ADVANCED + NAV_LEAD)) + (LONG)pos * nav_rowh();
+	return nav_headh() * nav_nheads(pos) + (LONG)pos * nav_rowh();
 }
 
 /* whether the rows fit the height the object got, and which are shown
@@ -242,13 +254,11 @@ static void nav_draw(struct nav_data *d, Object *obj)
 	nav_geom(d, obj);
 	theme_fill(rp, x, _mtop(obj), r - 1, _mbottom(obj), tpen(T_PANEL));
 	theme_line(rp, r, _mtop(obj), r, _mbottom(obj), tpen(T_BORDER));
-	if (nav_headh() && !d->scroll) {
-		theme_text(rp, x + 10, _mtop(obj) + nav_rowy(d, NAV_LEAD) - nav_headh() + (nav_headh() - fh) / 2 + 1,
-		           "Ethernet", tpen(T_DIM), 1);
-		theme_text(rp, x + 10,
-		           _mtop(obj) + nav_rowy(d, RP_FIRST_ADVANCED + NAV_LEAD) - nav_headh() + (nav_headh() - fh) / 2 + 1,
-		           "WiFi", tpen(T_DIM), 1);
-	}
+	if (nav_headh() && !d->scroll)
+		for (i = 0; i < RP_NPAGES; i++)
+			if (rp_nav_head[i])
+				theme_text(rp, x + 10, _mtop(obj) + nav_rowy(d, i) - nav_headh() + (nav_headh() - fh) / 2 + 1,
+				           rp_nav_head[i], tpen(T_DIM), 1);
 	/* scrolled: an accent line at an edge rows are hidden behind */
 	if (d->scroll && d->top > 0)
 		theme_fill(rp, x, _mtop(obj), r - 1, _mtop(obj) + 1, tpen(T_ACCENT));
@@ -740,8 +750,8 @@ static void qlabel_draw(struct qlabel_data *d, Object *obj)
 		LONG w = theme_keytextlen(rp, d->text);
 		theme_keytext(rp, _mright(obj) - w, y, d->text, dis ? tpen(T_DISABLED) : tpen(T_TEXT));
 	} else {
-		theme_text(rp, _mleft(obj), y, d->text, d->kind == QL_NOTE ? tpen(T_DIM) : tpen(T_TEXT),
-		           d->kind == QL_TITLE);
+		theme_text(rp, _mleft(obj), y, d->text, d->kind == QL_NOTE ? tpen(T_DIM) :
+		           d->kind == QL_TITLE ? tpen(T_ACCENT) : tpen(T_TEXT), 0);   /* Alice68: titles by colour */
 	}
 }
 

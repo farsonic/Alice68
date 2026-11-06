@@ -7,20 +7,22 @@
 #ifndef RT_PREFS_FIELDS_H
 #define RT_PREFS_FIELDS_H
 
-/* page numbers: P_STATUS and P_ABOUT lead the list, then the Ethernet pages,
-   then (from RP_FIRST_ADVANCED) the WiFi pages; each page's icon is IC_ + its number */
+/* page numbers; each page's icon is IC_ + its number (mui_theme.h) */
 enum {
-	P_ETH, P_ETHTRAFFIC,                 /* Ethernet */
-	P_WIFI, P_WIFINETS, P_WIFITRAFFIC,   /* WiFi */
-	P_STATUS, P_ABOUT,
+	P_ABOUT, P_STATUS,
+	P_ETH, P_WIFI,                       /* Networks: what each is doing */
+	P_ETHSET, P_WIFISET,                 /* Settings */
+	P_ETHTRAFFIC, P_WIFITRAFFIC,         /* Traffic */
 	RP_NPAGES
 };
-#define RP_FIRST_ADVANCED P_WIFI
 
 struct rp_page {
 	const char *title;
 	const char *help;
 };
 extern const struct rp_page rp_pages[RP_NPAGES];
+/* the list, top to bottom: the page on each row, and a heading above a row (or NULL) */
+extern const int rp_nav_order[RP_NPAGES];
+extern const char *const rp_nav_head[RP_NPAGES];
 
 #endif

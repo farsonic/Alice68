@@ -18,8 +18,8 @@
 
 #define DEVNAME     "alice68net.device"
 #define VERSION     2
-#define REVISION    6
-#define IDSTRING    "alice68net 2.6 (07.11.2026)\r\n"
+#define REVISION    7
+#define IDSTRING    "alice68net 2.7 (07.11.2026)\r\n"
 
 #define BUFSZ       2048            /* one receive buffer: HEADROOM, the frame, spare room after it */
 #define HEADROOM    64              /* bytes before the frame, as genet.device leaves (its status block):
@@ -564,6 +564,18 @@ static int command(struct NUnit *n, struct IOStdReq *io)
         q_add(n, AN_CMD_SETMAC, a, 7, io);
         return 1;
     }
+    case NET_CMD_ETHCFG:
+        if (n->idx != 1) { err = IOERR_NOCMD; break; }
+        if (!io->io_Data || io->io_Length < sizeof(struct NetEthCfg)) { err = NDERR_BADPARAMS; break; }
+        q_add(n, AN_CMD_ETHCFG, io->io_Data, sizeof(struct NetEthCfg), io);
+        return 1;
+    case NET_CMD_WIFICFG: {
+        if (n->idx != 0) { err = IOERR_NOCMD; break; }
+        if (!io->io_Data || io->io_Length < 4) { err = NDERR_BADPARAMS; break; }
+        ULONG a[2] = { 0, *(const ULONG *)io->io_Data };
+        q_add(n, AN_CMD_WIFICFG, a, 8, io);
+        return 1;
+    }
     case NET_CMD_SETMAC: {                           /* UBYTE[8]: address, NETMAC_* */
         const UBYTE *m = io->io_Data;
         if (!m || io->io_Length < 8 || m[6] > NETMAC_FACTORY || (m[6] != NETMAC_FACTORY && (m[0] & 1))) { err = NDERR_BADPARAMS; break; }
@@ -615,10 +627,19 @@ void dev_irq(struct NetBase *n)
     }
 }
 
-/* ---- the saved MAC addresses (Alice68-Network): ENV:alice68net.prefs ---------------------
+/* ---- the saved settings (Alice68-Network): ENV:alice68net.prefs ---------------------------
    MAC0= and MAC1= (unit 0 WiFi, unit 1 Ethernet): COMMODORE (Commodore's OUI 00:80:10 on the
-   hardware's own last three bytes), an address aa:bb:cc:dd:ee:ff, or nothing (the hardware's own).
-   Read once, when the process starts: before any stack can attach. */
+   hardware's own last three bytes), an address aa:bb:cc:dd:ee:ff, or nothing (the kernel's
+   choice: Commodore's OUI unless net.oui=off). ETH=adv,flags,speed (NET_CMD_ETHCFG's numbers,
+   decimal) and WIFI=flags (AN_WC_*). Read once, when the process starts: before any stack can
+   attach. */
+static ULONG decv(const char **p)
+{
+    ULONG v = 0;
+    while (**p >= '0' && **p <= '9') v = v * 10 + (ULONG)(*(*p)++ - '0');
+    if (**p == ',') (*p)++;
+    return v;
+}
 static int hexv(char c) { return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1; }
 static void mac_prefs(struct NetBase *n)
 {
@@ -650,6 +671,15 @@ static void mac_prefs(struct NetBase *n)
                 if (a[0] & 1) ok = 0;
             } else ok = 0;                               /* nothing: the hardware's own, which it has */
             if (ok) q_add(nu, AN_CMD_SETMAC, a, 7, 0);
+        } else if (l[0] == 'E' && l[1] == 'T' && l[2] == 'H' && l[3] == '=' && l[4] >= '0' && l[4] <= '9') {
+            const char *v = l + 4;
+            ULONG c[3];
+            c[0] = decv(&v); c[1] = decv(&v); c[2] = decv(&v);
+            q_add(&n->u[1], AN_CMD_ETHCFG, c, 12, 0);
+        } else if (l[0] == 'W' && l[1] == 'I' && l[2] == 'F' && l[3] == 'I' && l[4] == '=' && l[5] >= '0' && l[5] <= '9') {
+            const char *v = l + 5;
+            ULONG c[2] = { 0, decv(&v) };
+            q_add(&n->u[0], AN_CMD_WIFICFG, c, 8, 0);
         }
         l = *e ? e + 1 : e;
     }
@@ -810,7 +840,7 @@ void dev_beginio(struct NetBase *n, struct IOStdReq *io)
             NSCMD_DEVICEQUERY, NETDEV_CMD_ATTACH, NETDEV_CMD_DETACH, NETDEV_CMD_START, NETDEV_CMD_STOP, NETDEV_CMD_SET_MAC, NET_CMD_SETMAC,
             NETDEV_CMD_SET_RXFILTER, NETDEV_CMD_SET_COALESCE, NETDEV_CMD_GET_STATS, NETDEV_CMD_GET_LINK,
             WIFI_CMD_STATUS, WIFI_CMD_SCAN, WIFI_CMD_LOG, WIFI_CMD_RECONNECT, WIFI_CMD_DISCONNECT, WIFI_CMD_OFF,
-            WIFI_CMD_START, WIFI_CMD_JOIN, 0 };
+            WIFI_CMD_START, WIFI_CMD_JOIN, NET_CMD_ETHCFG, NET_CMD_WIFICFG, 0 };
         if (!io->io_Data) io->io.io_Error = NDERR_BADPARAMS;
         else if (c == NSCMD_DEVICEQUERY) {
             struct NSDeviceQueryResult *q = io->io_Data;

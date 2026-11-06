@@ -90,7 +90,14 @@ struct an_fw {
 #define AN_FILT_ALLMULTI  2u
 #define AN_CMD_SETMAC     9u        /* arg[0..5]: the unit's MAC address; all zero: the factory one;
                                        arg[6] = 1: only arg[0..2], the OUI, with the factory's last 3 bytes */
-#define AN_OUI_COMMODORE  0x008010u /* Commodore International's OUI */
+#define AN_OUI_COMMODORE  0x008010u /* Commodore International's OUI: both units use it unless net.oui=off */
+#define AN_CMD_ETHCFG    10u        /* unit 1. arg[0..3] cfg_adv (AN_LM_*), arg[4..7] cfg_flags (AN_EC_*),
+                                       arg[8..11] cfg_speed (10, 100, 1000: without autonegotiation) */
+#define AN_CMD_WIFICFG   11u        /* unit 0. arg[4..7] cfg_flags (AN_WC_*) */
+#define AN_EC_AUTONEG     0x01u     /* Ethernet: autonegotiate (else cfg_speed and AN_EC_FULL, fixed) */
+#define AN_EC_FULL        0x02u     /* fixed full duplex */
+#define AN_EC_PAUSE       0x04u     /* flow control: advertise pause and honour it */
+#define AN_WC_POWERSAVE   0x01u     /* WiFi: the chip may doze between beacons */
 
 /* an_unit.link_adv / link_lpa: what this side and the other advertise (Ethernet) */
 #define AN_LM_10H     0x01u
@@ -148,7 +155,8 @@ struct an_unit {
     unsigned int link_flags;        /* AN_LF_* */
     unsigned int link_downs;        /* times the link went down since the kernel started */
     unsigned int link_up_s;         /* seconds since the Pi started, when the link last came up */
-    unsigned int pad[6];
+    unsigned int cfg_adv, cfg_flags, cfg_speed;     /* the settings now (AN_CMD_ETHCFG / AN_CMD_WIFICFG) */
+    unsigned int pad[3];
 };
 
 struct an_slot {

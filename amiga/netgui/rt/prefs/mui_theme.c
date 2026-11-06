@@ -207,6 +207,9 @@ LONG theme_textlen_bold(struct RastPort *rp, const char *s)
 
 void theme_text(struct RastPort *rp, LONG x, LONG y, const char *s, LONG pen, int bold)
 {
+	/* Alice68: no soft bold - graphics.library smears it into the next letter, which looks
+	   squashed on many fonts; titles and the page shown stand out by colour and background */
+	bold = 0;
 	s = tr(s);
 	if (font)
 		SetFont(rp, font);
@@ -298,21 +301,23 @@ void theme_line(struct RastPort *rp, LONG x0, LONG y0, LONG x1, LONG y1, LONG pe
  *   E cx cy r       filled circle    P n x0 y0 ...   polyline through n points
  * Same order as the IC_* enum (one per page); drawn for Riptide, rearranged for Alice68-Network. */
 static const char *const icons[IC_NICONS] = {
+	/* ABOUT: an "i" in a ring */
+	"ca O 8 8 6 ci F 7 7 8 11 F 7 4 8 5",
+	/* STATUS: a screen with a line graph going up and down (Riptide's) */
+	"cw F 2 3 13 10 ci R 1 2 14 11 L 5 14 10 14 L 7 12 7 13 ca P 5 3 9 6 6 8 8 10 4 12 6",
 	/* ETH: a network card: the board, a chip, the socket, the contacts (Riptide's IFACE) */
 	"cl F 1 3 14 11 ci R 1 3 14 11 F 3 5 6 8 ca R 9 5 13 9 F 10 6 12 8 ci L 3 12 3 13 L 5 12 5 13 L 7 12 7 13 "
 	"L 9 12 9 13 L 11 12 11 13",
-	/* ETHTRAFFIC: frames out (up, accent) and in (down, green) */
-	"ca L 5 13 5 3 L 3 5 5 3 L 7 5 5 3 cg L 11 3 11 13 L 9 11 11 13 L 13 11 11 13",
 	/* WIFI: a radio's waves above a dot */
 	"ca E 8 12 1 ci P 3 5 10 8 8 11 10 P 3 3 7 8 4 13 7 P 3 1 4 8 1 14 4",
-	/* WIFINETS: a list of networks (Riptide's QRULE) */
-	"ca F 2 3 3 4 ci F 2 7 3 8 F 2 11 3 12 L 6 4 14 4 L 6 8 14 8 L 6 12 14 12",
+	/* ETHSET: three sliders */
+	"ci L 3 2 3 14 L 8 2 8 14 L 13 2 13 14 ca F 2 9 4 11 F 7 4 9 6 F 12 10 14 12",
+	/* WIFISET: as ETHSET */
+	"ci L 3 2 3 14 L 8 2 8 14 L 13 2 13 14 ca F 2 9 4 11 F 7 4 9 6 F 12 10 14 12",
+	/* ETHTRAFFIC: frames out (up, accent) and in (down, green) */
+	"ca L 5 13 5 3 L 3 5 5 3 L 7 5 5 3 cg L 11 3 11 13 L 9 11 11 13 L 13 11 11 13",
 	/* WIFITRAFFIC: as ETHTRAFFIC */
 	"ca L 5 13 5 3 L 3 5 5 3 L 7 5 5 3 cg L 11 3 11 13 L 9 11 11 13 L 13 11 11 13",
-	/* STATUS: a screen with a line graph going up and down (Riptide's) */
-	"cw F 2 3 13 10 ci R 1 2 14 11 L 5 14 10 14 L 7 12 7 13 ca P 5 3 9 6 6 8 8 10 4 12 6",
-	/* ABOUT: an "i" in a ring */
-	"ca O 8 8 6 ci F 7 7 8 11 F 7 4 8 5",
 };
 
 /* the pen of an icon colour letter */

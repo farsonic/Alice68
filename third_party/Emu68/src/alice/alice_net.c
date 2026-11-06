@@ -101,6 +101,20 @@ static void an_irq(void)
 }
 
 static int bootarg_word(const char *w);
+/* both units' addresses start with Commodore International's OUI, 00:80:10, the last three
+   bytes staying the hardware's own - unless net.oui=off is in cmdline.txt */
+static int oui_default(uint8_t want[6])
+{
+    if (bootarg_word("net.oui=off")) return 0;
+    want[0] = (uint8_t)(AN_OUI_COMMODORE >> 16); want[1] = (uint8_t)(AN_OUI_COMMODORE >> 8);
+    want[2] = (uint8_t)AN_OUI_COMMODORE; want[3] = want[4] = want[5] = 0;
+    return 1;
+}
+/* a 32-bit word of a command's arg, big-endian as the 68k wrote it */
+static uint32_t arg32(volatile struct an_unit *u, unsigned o)
+{
+    return (uint32_t)u->arg[o] << 24 | (uint32_t)u->arg[o + 1] << 16 | (uint32_t)u->arg[o + 2] << 8 | u->arg[o + 3];
+}
 /* the MAC address a unit uses: the one asked for (AN_CMD_SETMAC), its OUI on the hardware's own
    last three bytes, or the hardware's own; 0: none asked for */
 static int mac_wanted(const uint8_t want[6], int oui_only, const uint8_t fact[6], uint8_t out[6])
@@ -862,7 +876,7 @@ static int bringup(void)
     cmd_int(WLC_SET_SCAN_CHANNEL_TIME, 40);
     cmd_int(WLC_SET_SCAN_UNASSOC_TIME, 40);
     cmd_int(WLC_SET_SCAN_PASSIVE_TIME, 120);
-    cmd_int(WLC_SET_PM, 0);
+    cmd_int(WLC_SET_PM, (U(0)->cfg_flags & AN_WC_POWERSAVE) ? 2 : 0);      /* 2: PM_FAST */
     iov_int("arp_ol", 0); iov_int("arpoe", 0); iov_int("ndoe", 0); iov_int("toe", 0);
     cmd_int(WLC_UP, 0);
     cmd_int(WLC_SET_INFRA, 1);
@@ -1163,6 +1177,13 @@ static void commands(void)
         u->rx_on = 0;
         cmd_finish(seq, 0);
         break;
+    case AN_CMD_WIFICFG:
+        u->cfg_flags = arg32(u, 4) & AN_WC_POWERSAVE;
+        if (W.chip_up) cmd_int(WLC_SET_PM, (u->cfg_flags & AN_WC_POWERSAVE) ? 2 : 0);
+        wifi_log("power saving %s\n", (u->cfg_flags & AN_WC_POWERSAVE) ? "on" : "off");
+        u->state_seq++;
+        cmd_finish(seq, 0);
+        break;
     case AN_CMD_SETMAC: {
         uint8_t m[6]; int any = 0;
         for (int i = 0; i < 6; i++) { m[i] = u->arg[i]; any |= m[i]; }
@@ -1204,6 +1225,8 @@ static void wifi_thread(void)
 {
     volatile struct an_unit *u = U(0);
     u->kind = AN_KIND_WIFI;
+    u->cfg_flags = 0;                               /* no power saving: it costs latency */
+    W.want_oui = oui_default(W.want_mac);
     W.sdclock = 25000000u;
     char v[80];
     if (bootarg_val("wifi.sdclock", v, sizeof v)) { uint32_t n = 0; for (char *p = v; *p >= '0' && *p <= '9'; p++) n = n * 10 + (uint32_t)(*p - '0'); if (n >= 400000 && n <= 50000000) W.sdclock = n; }
@@ -1526,6 +1549,23 @@ static void eth_start(void)
     E.state = E_PHYRESET;
     E.up = 0;
 }
+/* the PHY as the settings say: what to advertise and autonegotiate, or a fixed speed */
+static void eth_phy_apply(void)
+{
+    volatile struct an_unit *u = U(1);
+    uint32_t a = u->cfg_adv, f = u->cfg_flags;
+    if (f & AN_EC_AUTONEG) {
+        int adv4 = 0x0001 | ((a & AN_LM_10H) ? 0x020 : 0) | ((a & AN_LM_10F) ? 0x040 : 0) |
+                   ((a & AN_LM_100H) ? 0x080 : 0) | ((a & AN_LM_100F) ? 0x100 : 0) | ((f & AN_EC_PAUSE) ? 0x400 : 0);
+        int adv9 = ((a & AN_LM_1000H) ? 0x100 : 0) | ((a & AN_LM_1000F) ? 0x200 : 0);
+        phy_wr(4, adv4);
+        phy_wr(9, adv9);
+        phy_wr(0, 0x1200);                              /* autonegotiation on, restart */
+    } else {
+        int bmcr = (u->cfg_speed == 1000 ? 0x0040 : u->cfg_speed == 100 ? 0x2000 : 0) | ((f & AN_EC_FULL) ? 0x0100 : 0);
+        phy_wr(0, bmcr);                                /* autonegotiation off: this speed and duplex */
+    }
+}
 static void eth_link(int bmsr)
 {
     volatile struct an_unit *u = U(1);
@@ -1534,6 +1574,7 @@ static void eth_link(int bmsr)
         int c1000 = phy_rd(9), s1000 = phy_rd(10), adv = phy_rd(4), lpa = phy_rd(5);
         if (c1000 < 0 || s1000 < 0 || adv < 0 || lpa < 0) return;   /* an MDIO error: the next poll tries again */
         int com = adv & lpa;
+        uint32_t cf = u->cfg_flags;
         /* what each side advertises, for people (Alice68-Network's Ethernet page) */
         static const uint16_t bits[6] = { 0x020, 0x040, 0x080, 0x100, 0x400, 0x800 };
         static const uint8_t  flag[6] = { AN_LM_10H, AN_LM_10F, AN_LM_100H, AN_LM_100F, AN_LM_PAUSE, AN_LM_ASYM };
@@ -1545,18 +1586,22 @@ static void eth_link(int bmsr)
         la |= ((c1000 & 0x100) ? AN_LM_1000H : 0) | ((c1000 & 0x200) ? AN_LM_1000F : 0);
         lp |= ((s1000 & 0x400) ? AN_LM_1000H : 0) | ((s1000 & 0x800) ? AN_LM_1000F : 0);
         u->link_adv = la; u->link_lpa = lp;
-        if ((c1000 & 0x200) && (s1000 & 0x800)) { E.speed = 1000; E.full = 1; }
+        if (!(cf & AN_EC_AUTONEG)) { E.speed = (int)u->cfg_speed; E.full = (cf & AN_EC_FULL) != 0; }
+        else if ((c1000 & 0x200) && (s1000 & 0x800)) { E.speed = 1000; E.full = 1; }
         else if ((c1000 & 0x100) && (s1000 & 0x400)) { E.speed = 1000; E.full = 0; }
         else if (com & 0x100) { E.speed = 100; E.full = 1; }
         else if (com & 0x080) { E.speed = 100; E.full = 0; }
         else if (com & 0x040) { E.speed = 10; E.full = 1; }
         else { E.speed = 10; E.full = 0; }
         gwr(G_RGMII_OOB, (grd(G_RGMII_OOB) & ~(1u << 5)) | (1u << 4) | (1u << 6) | (1u << 16));
+        /* flow control when both sides offer it (full duplex only); else pause frames are ignored */
+        int pause = (cf & AN_EC_AUTONEG) && (cf & AN_EC_PAUSE) && E.full && (adv & lpa & 0x400);
         E.cmd_base = (uint32_t)(E.speed == 1000 ? 2 : E.speed == 100 ? 1 : 0) << 2 | (E.full ? 0 : CMD_HD_EN)
-                   | (1u << 8) | (1u << 28);           /* RX and TX pause ignored: pause is not advertised */
+                   | (pause ? 0 : (1u << 8) | (1u << 28));
         gwr(G_CMD, E.cmd_base | (E.promisc ? CMD_PROMISC : 0) | CMD_TX_EN | CMD_RX_EN);
         E.up = 1;
-        u->link_flags = ((bmsr & 0x20) ? AN_LF_AUTONEG : 0) | (E.full ? AN_LF_FULL : 0);   /* pause: ignored (bits 8, 28 above) */
+        u->link_flags = ((cf & AN_EC_AUTONEG) && (bmsr & 0x20) ? AN_LF_AUTONEG : 0) | (E.full ? AN_LF_FULL : 0) |
+                        (pause ? AN_LF_RXPAUSE | AN_LF_TXPAUSE : 0);
         u->link_up_s = wifi_usecs() / 1000000u;
         u->link = 1; u->speed_mbps = (unsigned)E.speed;
         char m[64]; unsigned k = 0;
@@ -1668,6 +1713,17 @@ static void eth_commands(void)
     case AN_CMD_OFF:   eth_stop(); break;
     case AN_CMD_RXON:  u->rx_on = 1; break;
     case AN_CMD_RXOFF: u->rx_on = 0; break;
+    case AN_CMD_ETHCFG: {
+        uint32_t a = arg32(u, 0) & 0x3fu, f = arg32(u, 4) & (AN_EC_AUTONEG | AN_EC_FULL | AN_EC_PAUSE), sp = arg32(u, 8);
+        if ((f & AN_EC_AUTONEG) ? !a : (sp != 10 && sp != 100 && sp != 1000)) { r = -2; break; }
+        u->cfg_adv = a; u->cfg_flags = f; u->cfg_speed = sp ? sp : 1000;
+        if (E.state == E_LINKWAIT || E.state == E_RUN) {
+            eth_phy_apply();                           /* the link drops and comes back as set */
+            eth_log("settings: %s\n", (f & AN_EC_AUTONEG) ? "autonegotiation" : "fixed speed");
+        }
+        u->state_seq++;
+        break;
+    }
     case AN_CMD_SETMAC: {
         uint8_t m[6]; int any = 0;
         for (int i = 0; i < 6; i++) { m[i] = u->arg[i]; any |= m[i]; }
@@ -1705,6 +1761,10 @@ static void eth_poll(void)
         E.disabled = bootarg_word("eth=off");
         if (E.disabled) { u->kind = AN_KIND_NONE; kprintf("[ETH] off (eth=off in cmdline.txt)\n"); return; }
         u->kind = AN_KIND_ETHER;
+        u->cfg_adv = AN_LM_10H | AN_LM_10F | AN_LM_100H | AN_LM_100F | AN_LM_1000H | AN_LM_1000F;
+        u->cfg_flags = AN_EC_AUTONEG | AN_EC_FULL;
+        u->cfg_speed = 1000;
+        E.want_oui = oui_default(E.want_mac);
         E.state = E_OFF;
         estate(AN_ST_OFF, "starts when a TCP/IP stack uses unit 1, or eth=on in cmdline.txt");
         if (bootarg_word("eth=on")) eth_start();
@@ -1717,9 +1777,7 @@ static void eth_poll(void)
         int bmcr = phy_rd(0);
         if ((bmcr >= 0 && !(bmcr & 0x8000)) || now - E.t0 > 500) {
             /* the RGMII clock delays: the PHY's own defaults, as Linux and U-Boot leave them on a Pi 4 */
-            phy_wr(4, 0x01e1);                            /* advertise 10/100 half and full */
-            phy_wr(9, 0x0300);                            /* and 1000 half and full */
-            phy_wr(0, 0x1200);                            /* autonegotiation on, restart */
+            eth_phy_apply();
             E.state = E_LINKWAIT;
             E.next_link = now;
             estate(AN_ST_IDLE, "waiting for the link");
