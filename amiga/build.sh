@@ -29,6 +29,8 @@ build Alice68-Monitor monitor_start.S monitor.c wifi/lvox.S lvo.S
 build Alice68-NetworkGT netprefs_start.S netprefs.c lvoy.S wifi/lvox.S lvo.S
 # Alice68-Network: the MUI window, built as Riptide's RiptidePrefs is (amiga/netgui/Makefile)
 make -s -C netgui OUT="$(pwd)/out"
+# the ALICE68 folder for the SD card: the files above, a ReadMe, Install and Uninstall
+python3 -I folder/mkfolder.py out
 # alice68hdf.device runs from Emu68's ROM board, which is mapped read-only:
 # it must not have writable static data
 python3 -I - out/alice68hdf.c.o out/folders.c.o out/hdf_core.c.o out/fatfs.c.o out/hdf_start.S.o <<'PY'

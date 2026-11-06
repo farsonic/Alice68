@@ -104,7 +104,10 @@ tools/splash-preview/build.sh > out.ppm  # the splash, drawn by the kernel's own
   framebuffer may belong to RTG.
 - Hardfile rules users rely on: every `.hdf` mounted, none boots unless `hdf.boot=NAME`;
   clashing names → `HF<unit><part>`; a duplicate FFS volume is left out unless chosen; dot
-  files (`._*`) ignored; writes only inside the file's own clusters, never the FAT.
+  files (`._*`) ignored; hardfile writes only inside the file's own clusters, never the FAT.
+- Folders (`amiga/hdf/folders.c` + `fatfs.c`, `alice68.folder=` in config.txt, `ALICE68`
+  always): the only code that writes the FAT; mounted hardfiles stay read-only through them.
+  Tests: `tools/hdf-test/fatfs.sh` (PC, fsck.fat + mtools), `amiga/test/harness_folders.py`.
 
 ## Licensing — keep it clean
 
@@ -126,7 +129,7 @@ tools/splash-preview/build.sh > out.ppm  # the splash, drawn by the kernel's own
 - Release: update `RELEASE-NOTES.md` (and `ALICE_VERSION` in `alice_splash.h`), commit,
   build from a fresh clone of that commit, then zip `README.md`, `RELEASE-NOTES.md`,
   `SHA256SUMS`, `boot/` (kernel8.img, kernel8-nousb.img, config.txt, cmdline.txt,
-  floppy.txt, overlays/), `amiga/` (DEVS/USBHardware/alice68-usb.device,
+  floppy.txt, overlays/, ALICE68/ = `amiga/out/ALICE68` from build.sh), `amiga/` (DEVS/USBHardware/alice68-usb.device,
   DEVS/alice68net.device, C/Alice68-USBLog, C/Alice68-HDF, C/Alice68-NetCheck, C/Alice68-WiFi, C/Alice68-Monitor, C/Alice68-Network, C/Alice68-NetworkGT,
   ReadMe-USB.txt), `Licenses/` (with amiga/wifi/LICENSE-netdev.txt) and `source/` (git archive
   of the commit plus the three submodules, and SOURCE.txt). The kernels report

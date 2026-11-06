@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **Folders of the SD card as Amiga volumes (new, not yet tested on a Pi).**
+  `alice68.folder=Games` in `config.txt` mounts the FAT partition's folder `Games` as the
+  volume `Games:` (`alice68.folder=Amiga/Work:Work` for a path and a volume name of your
+  own). Folders are read and written with long names, and are never bootable; the DOS
+  devices are `SDF0:`, `SDF1:` and so on. A folder `ALICE68` in the root is always mounted,
+  and the release puts Alice68's Amiga files there (`boot/ALICE68`), with
+  `Execute ALICE68:Install`, which copies them into `SYS:` and keeps what it replaces in
+  `SYS:Alice68-Backup` for `Uninstall`. `alice68.folders=off` turns them all off.
+  `alice68hdf.device` 0.5 has the DOS handler (from the ROM, like the rest of it) and a
+  FAT16/FAT32 read-write engine. Hardfiles that are mounted stay read-only through a folder.
+  Tested on a PC (`mkfs.fat` images checked with `fsck.fat` and mtools) and on a 68k
+  emulator (DOS packets), not yet on AmigaOS on a Pi.
 - **WiFi in the kernel (new, not yet tested on a Pi): a network card for AmigaOS.** The
   kernel runs the Pi 4's built-in WiFi on CPU1, beside USB (a coroutine that hands CPU1
   back at every wait, so keyboards and mice are never held up; without USB it has CPU1 to

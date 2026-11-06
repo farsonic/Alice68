@@ -43,7 +43,9 @@ Credits and licences: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md),
    `bcm2711-rpi-4-b.dtb` (`-400` for a Pi 400) from
    [raspberrypi/firmware](https://github.com/raspberrypi/firmware/tree/master/boot).
 3. Copy everything in the release's **`boot/`** folder onto it: `kernel8.img`,
-   `config.txt`, `cmdline.txt`, `floppy.txt` and the `overlays` folder.
+   `config.txt`, `cmdline.txt`, `floppy.txt`, the `overlays` folder and the `ALICE68`
+   folder (Alice68's Amiga files, which AmigaOS sees as the volume `ALICE68:`; see
+   [Folders](#folders-of-the-sd-card-as-amiga-volumes)).
 4. Copy **your own** 512 KB A1200 Kickstart 3.x ROM onto it as **`kick31.rom`**, or
    change the name in `floppy.txt`. Kickstart is not included.
 5. Plug a USB keyboard and mouse into the Pi's USB-A ports, connect HDMI0 (next to the
@@ -408,6 +410,58 @@ whose name is taken is mounted as `HF<unit><partition>` (e.g. `HF10`) instead.
 Limits: FAT32 holds files up to 4 GB. Copy files only while the Pi is off. `C:Alice68-HDF`
 lists the hardfiles found and the driver's log, including why anything was left out.
 `tools/hdf-test/run.sh` runs the tests on a PC.
+
+## Folders of the SD card as Amiga volumes
+
+Folders on the SD card's FAT partition can be mounted as Amiga volumes, in **read-write**
+mode. That gives you an easy way to move files between a PC and the Amiga. Name them in
+`config.txt`, one line each (the Pi's firmware ignores these lines):
+
+```ini
+alice68.folder=Games              # the folder Games, as volume Games:
+alice68.folder=Amiga/Work:Work    # the folder Amiga/Work, as volume Work:
+```
+
+- **The volume name** is the folder's own name, unless you give one after a `:`. A name
+  that is already taken by a mounted volume gets a digit (`Games2`).
+- **The DOS devices** are `SDF0:`, `SDF1:` and so on. Folders are **never bootable**.
+- **`ALICE68:`** - a folder named `ALICE68` in the card's root is always mounted. It
+  holds Alice68's Amiga files, put there by the build (see below).
+- `alice68.folders=off` mounts none of them, not even `ALICE68:`.
+- **Read-only** if the card is (`dtoverlay=emmc,unit0=ro`) or with `hdf.readonly` in
+  `cmdline.txt`.
+- **Names:** long names, any case, Latin-1 (`ä`, `é`). Characters FAT does not allow
+  (`* ? " < > | \`) are refused, as are names ending in a dot or a space. Each change is
+  on the card when the DOS call returns.
+- **What FAT can't keep:** comments (they are accepted and dropped, so that `Copy CLONE`
+  works), and protection bits other than write/delete protection (FAT's read-only flag)
+  and the archive bit. Every file shows as executable.
+- **Hardfiles in a folder:** a hardfile that is mounted (from the root or the `HDF`
+  folder) can be read through a folder, but not changed, deleted or replaced: its
+  clusters belong to its unit. New `.hdf` files can be copied in; they are mounted at the
+  next boot.
+- **Writing goes to the FAT.** Unlike hardfiles, folders change the FAT and the
+  directories (every copy of the FAT is updated, and FAT32's free-space count too). Don't
+  switch off in the middle of a copy, and check the card on a PC if you ever do.
+
+**Installing Alice68's Amiga files.** The release's `boot/ALICE68` folder (made by
+`amiga/build.sh` as `amiga/out/ALICE68`) holds `C/` (`Alice68-HDF`, `Alice68-USBLog`,
+`Alice68-NetCheck`, `Alice68-WiFi`, `Alice68-Network`, `Alice68-NetworkGT`,
+`Alice68-Monitor`), `DEVS/alice68net.device`, `DEVS/USBHardware/alice68-usb.device`, a
+`ReadMe.txt`, and two scripts. In a Shell:
+
+```
+Execute ALICE68:Install
+```
+
+This copies each file to `SYS:` (or `TO=<volume or drawer>`). The first time, it keeps
+whatever it replaces in `SYS:Alice68-Backup`, and `Execute ALICE68:Uninstall` puts that
+back. To update, copy a newer `ALICE68` folder onto the card, run `Install` again and
+reboot.
+
+`tools/hdf-test/run.sh` also tests the folders: the FAT engine on a PC against
+`mkfs.fat` images (checked afterwards with `fsck.fat` and mtools), and the DOS handler on
+a 68k emulator.
 
 ## Serial log
 
