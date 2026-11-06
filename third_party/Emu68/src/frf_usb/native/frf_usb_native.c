@@ -12,6 +12,7 @@
 #include "frf_dwc2_pio.h"
 #include "frf_usb_native_hid.h"
 #include "frf_native_keyboard.h"
+extern void alice_net_poll(void);   /* Alice68: src/alice/alice_net.c */
 
 #define FRF_PI3_DWC2_BASE 0xf2980000u /* EMU68 MMU mapping of BCM2837 physical 0x3f980000 */
 
@@ -204,7 +205,7 @@ void frf_usb_main(void)
             frf_boot_stage(10);
             __atomic_store_n(&frf_usb_boot_ready,1u,__ATOMIC_RELEASE);
             __asm__ volatile("sev" ::: "memory");
-            for (;;) __asm__ volatile("wfe");
+            for (;;) { alice_net_poll(); __asm__ volatile("yield"); }   /* CPU1 still runs the network */
         }
         kprintf("[FRF-NATIVE-USB] controller awake, trying real DWC2 init despite mailbox result\n");
 #else
@@ -212,7 +213,7 @@ void frf_usb_main(void)
         frf_boot_stage(10);
         __atomic_store_n(&frf_usb_boot_ready, 1u, __ATOMIC_RELEASE);
         __asm__ volatile("sev" ::: "memory");
-        for (;;) __asm__ volatile("wfe");
+        for (;;) { alice_net_poll(); __asm__ volatile("yield"); }   /* CPU1 still runs the network */
 #endif
     }
     delay_us(NULL, 100000u);
@@ -270,6 +271,7 @@ void frf_usb_main(void)
                 __atomic_store_n(&frf_usb_boot_ready,1u,__ATOMIC_RELEASE);
                 __asm__ volatile("sev" ::: "memory");
                 for (;;) {
+                    alice_net_poll();
                     frf_native_hid_poll(&ops,&hid);
                     /* one-millisecond coarse host poll. USB keyboard
                      * report receive is independent of gamepad. */
@@ -285,6 +287,6 @@ void frf_usb_main(void)
     __atomic_store_n(&frf_usb_boot_ready, 1u, __ATOMIC_RELEASE);
     __asm__ volatile("sev" ::: "memory");
     kprintf("[FRF-NATIVE-USB] Native USB bring-up failed; no HID input; restore known-good kernel8.img if needed\n");
-    for (;;) __asm__ volatile("wfe");
+    for (;;) { alice_net_poll(); __asm__ volatile("yield"); }   /* CPU1 still runs the network */
 #endif
 }

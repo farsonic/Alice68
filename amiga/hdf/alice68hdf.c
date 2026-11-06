@@ -748,7 +748,7 @@ static void offer_wifi(struct fat *f, struct hdf_io *io)
             hdf_file_free(io, &w[i]);
             continue;
         }
-        for (int c = 0; c < 48; c++) t[k].name[c] = c < 47 ? w[i].name[c] : 0;
+        for (int c = 0; c < 64; c++) t[k].name[c] = c < 63 ? w[i].name[c] : 0;
         t[k].addr = (ULONG)buf[k];
         t[k].len = w[i].size;
         hdf_log(io, "WiFi: %s, %lu bytes, for the kernel", w[i].name, w[i].size);
@@ -758,6 +758,7 @@ static void offer_wifi(struct fat *f, struct hdf_io *io)
     FreeMem(w, sizeof(struct hdf_file) * AN_FW_MAX);
     if (!k) return;
     h->fw_count = (ULONG)k;
+    __asm__ volatile("nop" ::: "memory");             /* Emu68: a full barrier - the table before the flag */
     h->fw_state = AN_FW_OFFERED;
     /* the kernel copies them on CPU1, as soon as its USB start-up lets it */
     ULONG t0 = pi_usecs();

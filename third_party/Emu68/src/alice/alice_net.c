@@ -34,8 +34,8 @@
 
 _Static_assert(sizeof(struct an_hdr) == 64, "an_hdr");
 _Static_assert(sizeof(struct an_unit) <= 0x800, "an_unit");
-_Static_assert(sizeof(struct an_fw) == 56 && sizeof(struct an_scan) == 56, "an_fw/an_scan");
-_Static_assert(AN_OFF_FW + AN_FW_MAX * 56 <= AN_OFF_SCAN && AN_OFF_SCAN + AN_SCAN_MAX * 56 <= AN_OFF_LOG, "layout");
+_Static_assert(sizeof(struct an_fw) == 72 && sizeof(struct an_scan) == 56, "an_fw/an_scan");
+_Static_assert(AN_OFF_FW + AN_FW_MAX * 72 <= AN_OFF_SCAN && AN_OFF_SCAN + AN_SCAN_MAX * 56 <= AN_OFF_LOG, "layout");
 _Static_assert(AN_OFF_TX(1) + AN_TX_SLOTS * AN_SLOT_BYTES <= AN_BOARD_BYTES, "slots");
 
 extern void *tlsf;
@@ -52,8 +52,8 @@ static int mcmp(const void *a, const void *b, unsigned n) { const uint8_t *x = a
 /* ---- time ---------------------------------------------------------------- */
 static inline uint64_t ticks(void) { uint64_t v; __asm__ volatile("mrs %0, CNTVCT_EL0" : "=r"(v)); return v; }
 static inline uint64_t tick_hz(void) { uint64_t v; __asm__ volatile("mrs %0, CNTFRQ_EL0" : "=r"(v)); return v; }
-uint32_t wifi_usecs(void) { return (uint32_t)(ticks() * 1000000u / tick_hz()); }
-static uint32_t now_ms(void) { return (uint32_t)(ticks() * 1000u / tick_hz()); }
+uint32_t wifi_usecs(void) { return (uint32_t)(ticks() / (tick_hz() / 1000000u)); }
+static uint32_t now_ms(void) { return (uint32_t)(ticks() / (tick_hz() / 1000u)); }
 
 /* ---- the board ------------------------------------------------------------- */
 #define AC_NIB(n)   ((uint16_t)(((n) & 15u) << 12))
@@ -95,6 +95,7 @@ static void an_board_map(struct ExpansionBoard *board)
         an_mem = tlsf_malloc_aligned(tlsf, AN_BOARD_BYTES, AN_BOARD_BYTES);
         if (!an_mem) { kprintf("[NET] network board: no memory\n"); return; }
         uintptr_t phys = mmu_virt2phys((uintptr_t)an_mem);
+        arm_flush_cache((uintptr_t)an_mem, AN_BOARD_BYTES);     /* no dirty line may land on the board later */
         mmu_map(phys, (uintptr_t)an_mem, AN_BOARD_BYTES, AN_MMU_ACCESS | AN_MMU_ISHARE | AN_MMU_NC, 0);
         __asm__ volatile("dsb ish; isb" ::: "memory");
         for (uint32_t i = 0; i < AN_BOARD_BYTES / 4; i++) ((volatile uint32_t *)an_mem)[i] = 0;
@@ -102,7 +103,7 @@ static void an_board_map(struct ExpansionBoard *board)
         __asm__ volatile("dsb ish; isb" ::: "memory");
         volatile struct an_hdr *h = an_mem;
         h->magic = AN_MAGIC; h->version = AN_VERSION; h->nunits = AN_UNITS; h->kernel_ver = AN_KERNEL_VER;
-        ((volatile struct an_unit *)((volatile uint8_t *)an_mem + AN_OFF_UNIT(0)))->kind = AN_KIND_WIFI;   /* unit 1: Ethernet, to come */
+        /* unit 0's kind is set by CPU1 when it first serves the board (alice_net_poll) */
         __asm__ volatile("dmb ish" ::: "memory");
         __atomic_store_n(&anb, (volatile uint8_t *)an_mem, __ATOMIC_RELEASE);
         kprintf("[NET] network board at $%08x (alice68net.device finds it there)\n", board->map_base);
@@ -152,12 +153,11 @@ void wifi_where(const char *fmt, ...)
 }
 
 /* ---- the coroutine ------------------------------------------------------------ */
-/* The kernel is built with x12-x29 reserved for the JIT (-ffixed-x..): no
-   compiled code touches them, so a switch keeps only what the AAPCS asks of
-   a callee here - sp, the return address, d8-d15 - and x19, which carries
-   the coroutine's entry for the trampoline. The other reserved registers are
-   simply left as they are, the same in both contexts. */
-struct an_ctx { uint64_t x19, x30, sp, d[8]; };
+/* A switch keeps what the AAPCS64 asks a callee to keep: x19-x29, the return
+   address, sp and d8-d15 (only x12 and v19-v26 are reserved in this file,
+   so the compiler uses x19-x28 across the call). x19 also carries the
+   coroutine's entry for the trampoline on its first switch. */
+struct an_ctx { uint64_t x[11], x30, sp, d[8]; };   /* x19..x29 */
 extern void an_switch(struct an_ctx *from, struct an_ctx *to);
 extern void an_trampoline(void);
 __asm__(
@@ -165,18 +165,28 @@ __asm__(
 "   .globl an_switch\n"
 "an_switch:\n"
 "   mov  x9, sp\n"
-"   stp  x19, x30, [x0, #0]\n"
-"   str  x9,       [x0, #16]\n"
-"   stp  d8,  d9,  [x0, #24]\n"
-"   stp  d10, d11, [x0, #40]\n"
-"   stp  d12, d13, [x0, #56]\n"
-"   stp  d14, d15, [x0, #72]\n"
-"   ldp  x19, x30, [x1, #0]\n"
-"   ldr  x9,       [x1, #16]\n"
-"   ldp  d8,  d9,  [x1, #24]\n"
-"   ldp  d10, d11, [x1, #40]\n"
-"   ldp  d12, d13, [x1, #56]\n"
-"   ldp  d14, d15, [x1, #72]\n"
+"   stp  x19, x20, [x0, #0]\n"
+"   stp  x21, x22, [x0, #16]\n"
+"   stp  x23, x24, [x0, #32]\n"
+"   stp  x25, x26, [x0, #48]\n"
+"   stp  x27, x28, [x0, #64]\n"
+"   stp  x29, x30, [x0, #80]\n"
+"   str  x9,       [x0, #96]\n"
+"   stp  d8,  d9,  [x0, #104]\n"
+"   stp  d10, d11, [x0, #120]\n"
+"   stp  d12, d13, [x0, #136]\n"
+"   stp  d14, d15, [x0, #152]\n"
+"   ldp  x19, x20, [x1, #0]\n"
+"   ldp  x21, x22, [x1, #16]\n"
+"   ldp  x23, x24, [x1, #32]\n"
+"   ldp  x25, x26, [x1, #48]\n"
+"   ldp  x27, x28, [x1, #64]\n"
+"   ldp  x29, x30, [x1, #80]\n"
+"   ldr  x9,       [x1, #96]\n"
+"   ldp  d8,  d9,  [x1, #104]\n"
+"   ldp  d10, d11, [x1, #120]\n"
+"   ldp  d12, d13, [x1, #136]\n"
+"   ldp  d14, d15, [x1, #152]\n"
 "   mov  sp, x9\n"
 "   ret\n"
 "   .globl an_trampoline\n"
@@ -184,6 +194,7 @@ __asm__(
 "   blr  x19\n"
 "1: b    1b\n"
 );
+_Static_assert(sizeof(struct an_ctx) == 168, "an_ctx: the offsets in an_switch");
 static struct an_ctx ctx_main, ctx_wifi;
 static int wifi_running;                     /* the coroutine exists */
 static int in_wifi;
@@ -196,6 +207,8 @@ static void an_yield(void)
     an_switch(&ctx_wifi, &ctx_main);
     in_wifi = 1;
 }
+/* the long polls in sdio.c and chip.c: CPU1's other work runs meanwhile */
+void wifi_relax(void) { an_yield(); }
 void wifi_udelay(uint32_t us)
 {
     uint64_t end = ticks() + tick_hz() * us / 1000000u;
@@ -235,7 +248,7 @@ static int bootarg_word(const char *w)
 }
 
 /* ---- firmware, copied from what AmigaOS offered ---------------------------------- */
-struct fwfile { char name[48]; uint8_t *p; uint32_t len; };
+struct fwfile { char name[64]; uint8_t *p; uint32_t len; };
 static struct fwfile fw[AN_FW_MAX];
 static int nfw;
 static int wifi_disabled;
@@ -275,15 +288,16 @@ static void fw_take(void)
         int k = 0;
         for (; k < nfw; k++) {
             int same = 1;
-            for (int c = 0; c < 48; c++) { if (fw[k].name[c] != t[i].name[c]) { same = 0; break; } if (!fw[k].name[c]) break; }
+            for (int c = 0; c < 64; c++) { if (fw[k].name[c] != t[i].name[c]) { same = 0; break; } if (!fw[k].name[c]) break; }
             if (same) break;
         }
-        if (k == nfw) { if (nfw == AN_FW_MAX) continue; nfw++; }
-        else if (fw[k].p) tlsf_free(tlsf, fw[k].p);
+        if (k < nfw) continue;                      /* have it: never replaced under the WiFi's feet */
+        if (nfw == AN_FW_MAX) continue;
+        nfw++;
         fw[k].p = tlsf_malloc(tlsf, len + 64);
         if (!fw[k].p) { kprintf("[WIFI] no memory for the firmware\n"); fw[k].len = 0; continue; }
-        for (int c = 0; c < 47; c++) fw[k].name[c] = t[i].name[c];
-        fw[k].name[47] = 0;
+        for (int c = 0; c < 63; c++) fw[k].name[c] = t[i].name[c];
+        fw[k].name[63] = 0;
         const volatile uint8_t *src = (const volatile uint8_t *)(uintptr_t)a;
         for (uint32_t c = 0; c < len; c++) fw[k].p[c] = src[c];
         fw[k].len = len;
@@ -295,11 +309,11 @@ static void fw_take(void)
 }
 static const struct fwfile *fw_find(const char *const *stems, const char *suffix)
 {
-    char want[64];
+    char want[80];
     for (int i = 0; stems[i]; i++) {
         unsigned k = 0;
-        for (const char *p = stems[i]; *p && k < 50; ) want[k++] = *p++;
-        for (const char *p = suffix; *p && k < 63; ) want[k++] = *p++;
+        for (const char *p = stems[i]; *p && k < 60; ) want[k++] = *p++;
+        for (const char *p = suffix; *p && k < 79; ) want[k++] = *p++;
         want[k] = 0;
         for (int f = 0; f < nfw; f++) if (fw[f].p && ieq(fw[f].name, want)) return &fw[f];
     }
@@ -322,7 +336,7 @@ static int mbox_tag(uint32_t tag, uint32_t a, uint32_t b, uint32_t *out)
     arm_flush_cache((uintptr_t)mbuf, 64);
     uint32_t addr = (uint32_t)mmu_virt2phys((uintptr_t)mbuf);
     uint64_t t = ticks(), hz = tick_hz();
-    while (mrd(MBOX_STATUS) & (1u << 31)) if (ticks() - t > hz) return -2;
+    while (mrd(MBOX_STATUS) & (1u << 31)) { if (ticks() - t > hz) return -2; an_yield(); }
     mwr(MBOX_WRITE, (addr & ~15u) | 8u);
     t = ticks();
     for (;;) {
@@ -331,12 +345,21 @@ static int mbox_tag(uint32_t tag, uint32_t a, uint32_t b, uint32_t *out)
             if ((r & 15u) == 8u && (r & ~15u) == (addr & ~15u)) break;
         }
         if (ticks() - t > 2 * hz) return -3;
+        an_yield();
     }
     arm_dcache_invalidate((uintptr_t)mbuf, 64);
     if (out) *out = __builtin_bswap32(mbuf[6]);
     return __builtin_bswap32(mbuf[1]) == 0x80000000u ? 0 : -4;
 }
-static void wl_on(int on) { mbox_tag(0x00038041u, 128u + 1u, on ? 1u : 0u, 0); }   /* SET_GPIO_STATE, expander line 1 */
+/* The mailbox is shared with CPU0, CPU2 and the 68k's mailbox.resource, each of which may take
+   another's answer: try again rather than give up. */
+static int mbox_try(uint32_t tag, uint32_t a, uint32_t b, uint32_t *out)
+{
+    int e = -1;
+    for (int i = 0; i < 4 && e; i++) { e = mbox_tag(tag, a, b, out); if (e) wifi_log("mailbox tag %x: error %d, again\n", tag, e); }
+    return e;
+}
+static void wl_on(int on) { mbox_try(0x00038041u, 128u + 1u, on ? 1u : 0u, 0); }   /* SET_GPIO_STATE, expander line 1 */
 
 /* ==== the WiFi =================================================================== */
 #define BUFSZ   2048
@@ -401,6 +424,7 @@ static void link_set(int up)
 }
 
 /* ---- control messages ---- */
+static void scan_reset(void);
 static void poll_frames(void);
 static void tx_fail(void);
 static void ctl_rx(const uint8_t *m, unsigned len)
@@ -691,15 +715,16 @@ static int bringup(void)
         W.rxbuf = m; W.txbuf = m + BUFSZ; W.ctlbuf = m + 2 * BUFSZ; W.iobuf = m + 3 * BUFSZ;
     }
     W.chip_up = 0;
+    scan_reset();
     wifi_where("pins and power");
     sdh_pins();
     wl_on(0);
     wifi_udelay(20000);
     wl_on(1);
     wifi_udelay(150000);
-    mbox_tag(0x00038001u, 1, 1, 0);                 /* SET_CLOCK_STATE: the EMMC clock on */
+    mbox_try(0x00038001u, 1, 1, 0);                 /* SET_CLOCK_STATE: the EMMC clock on */
     uint32_t base = 0;
-    if (mbox_tag(0x00030002u, 1, 0, &base) || !base) base = 250000000u;     /* GET_CLOCK_RATE */
+    if (mbox_try(0x00030002u, 1, 0, &base) || !base) base = 250000000u;     /* GET_CLOCK_RATE */
     wifi_log("SD host clock %u Hz\n", base);
     wifi_where("SD host");
     W.h.regs = (volatile uint32_t *)(uintptr_t)SDH_BASE;
@@ -764,8 +789,16 @@ static int bringup(void)
     wstate(AN_ST_IDLE, W.ssid[0] ? "ready" : "ready - no network yet (Alice68-WiFi JOIN, or wifi.ssid= in cmdline.txt)");
     return 0;
 }
+static void cmd_finish(uint32_t seq, int result);
+/* a scan the chip will never finish (restart, off): its command answered, nothing joined from it */
+static void scan_reset(void)
+{
+    if (W.scan_cmd) { W.scan_cmd = 0; cmd_finish(W.scan_cmd_seq, -1); }
+    W.scan_busy = W.scan_for_join = W.scan_done = 0;
+}
 static void chip_off(void)
 {
+    scan_reset();
     if (W.chip_up) cmd_int(WLC_DOWN, 0);
     W.chip_up = 0;
     link_set(0);
@@ -901,6 +934,7 @@ static void scan_publish(void)
 static void cmd_finish(uint32_t seq, int result)
 {
     volatile struct an_unit *u = U(0);
+    if (seq != u->cmd_seq) return;                  /* the Amiga has moved on: done is never moved backwards */
     u->cmd_result = result;
     __asm__ volatile("dmb ish" ::: "memory");
     u->cmd_done = seq;
@@ -922,9 +956,12 @@ static void conn_tick(void)
                 if (W.scan[i].ssid_len == strlen(W.ssid) && !mcmp(W.scan[i].ssid, W.ssid, W.scan[i].ssid_len) &&
                     (!best || W.scan[i].rssi > best->rssi))
                     best = &W.scan[i];
-            if (!best) wifi_log("\"%s\" not seen in the scan\n", W.ssid);
-            else wifi_log("\"%s\": %d dBm, channel %u, security %x\n", W.ssid, best->rssi, best->channel, best->security);
-            join(best);
+            if (!W.want) { wifi_log("scan done; no longer asked to join\n"); }
+            else {
+                if (!best) wifi_log("\"%s\" not seen in the scan\n", W.ssid);
+                else wifi_log("\"%s\": %d dBm, channel %u, security %x\n", W.ssid, best->rssi, best->channel, best->security);
+                join(best);
+            }
         }
     }
     unsigned st = U(0)->state;
@@ -992,6 +1029,7 @@ static void commands(void)
         if (!W.ssid[0]) { cmd_finish(seq, -2); break; }
         if (j->country[0]) { W.country[0] = j->country[0]; W.country[1] = j->country[1]; W.country[2] = 0; }
         W.want = 1; W.backoff = 0; W.start_req = 1; W.off_req = 0;
+        W.scan_for_join = 0;
         if (W.chip_up) {
             if (u->state == AN_ST_CONNECTED || u->state == AN_ST_JOINING) cmd_int(WLC_DISASSOC, 0);
             link_set(0);
@@ -1008,6 +1046,7 @@ static void commands(void)
         break;
     case AN_CMD_DISCONNECT:
         W.want = 0;
+        W.scan_for_join = 0;
         if (W.chip_up) cmd_int(WLC_DISASSOC, 0);
         link_set(0);
         if (W.chip_up) wstate(AN_ST_IDLE, "disconnected");
@@ -1015,10 +1054,11 @@ static void commands(void)
         break;
     case AN_CMD_OFF:
         W.off_req = 1;
+        W.want = 0;
+        W.scan_for_join = 0;
         cmd_finish(seq, 0);
         break;
-    case AN_CMD_RXON:
-        u->rx_tail = u->rx_head;
+    case AN_CMD_RXON:                               /* the Amiga skips what is in the slots itself */
         u->rx_on = 1;
         cmd_finish(seq, 0);
         break;
@@ -1086,6 +1126,7 @@ static void an_reset_session(void)
 {
     an_reset_req = 0;
     H()->amiga_ver = 0;
+    if (H()->fw_state == AN_FW_OFFERED) H()->fw_state = AN_FW_NONE;     /* its buffers belonged to the old AmigaOS */
     for (int i = 0; i < AN_UNITS; i++) {
         volatile struct an_unit *u = U(i);
         u->rx_on = 0;
@@ -1100,7 +1141,7 @@ void alice_net_poll(void)
     if (!anb) return;
     H()->boot_us = wifi_usecs();
     if (an_reset_req) an_reset_session();
-    if (!wifi_running) wifi_disabled = bootarg_word("wifi=off");
+    if (!wifi_running) { wifi_disabled = bootarg_word("wifi=off"); U(0)->kind = AN_KIND_WIFI; }
     fw_take();
     if (!wifi_running) {
         wifi_running = 1;
@@ -1112,7 +1153,7 @@ void alice_net_poll(void)
         uint8_t *stk = tlsf_malloc_aligned(tlsf, WIFI_STACK, 16);
         if (!stk) { kprintf("[WIFI] no memory for its stack\n"); wifi_disabled = 1; return; }
         memset(&ctx_wifi, 0, sizeof ctx_wifi);
-        ctx_wifi.x19 = (uint64_t)(uintptr_t)wifi_thread;                /* the trampoline calls it */
+        ctx_wifi.x[0] = (uint64_t)(uintptr_t)wifi_thread;               /* x19: the trampoline calls it */
         ctx_wifi.x30 = (uint64_t)(uintptr_t)an_trampoline;
         ctx_wifi.sp = ((uint64_t)(uintptr_t)(stk + WIFI_STACK)) & ~15ull;
         kprintf("[WIFI] the WiFi runs on CPU1 (alice_net.c)\n");

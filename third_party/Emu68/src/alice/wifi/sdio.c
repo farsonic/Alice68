@@ -68,7 +68,9 @@ static int wait_bits(struct sdhost *h, uint32_t off, uint32_t mask, int set, uin
     for (;;) {
         uint32_t v = rd(h, off);
         if (set ? (v & mask) : !(v & mask)) return 0;
-        if (wifi_usecs() - t0 > us) return -1;
+        uint32_t dt = wifi_usecs() - t0;
+        if (dt > us) return -1;
+        if (dt > 200) wifi_relax();
     }
 }
 
@@ -87,7 +89,9 @@ static int wait_int(struct sdhost *h, uint32_t bit, uint32_t us)
             wr(h, R_INTERRUPT, bit);
             return 0;
         }
-        if (wifi_usecs() - t0 > us) { h->last_int = v; return -0x10000; }
+        uint32_t dt = wifi_usecs() - t0;
+        if (dt > us) { h->last_int = v; return -0x10000; }
+        if (dt > 200) wifi_relax();
     }
 }
 
@@ -193,6 +197,7 @@ int sdh_init(struct sdhost *h, uint32_t base_hz)
     do {
         if (cmd(h, 5, ocr & 0x00ff8000u, CMD_RSP_48, &ocr)) return -3;
         if (wifi_usecs() - t0 > 1000000) { wifi_log("SDIO card not ready (OCR %08x)\n", ocr); return -4; }
+        wifi_relax();
     } while (!(ocr & 0x80000000u));
     wifi_log("SDIO card: %u functions, OCR %08x\n", (ocr >> 28) & 7, ocr);
 

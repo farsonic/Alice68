@@ -18,6 +18,7 @@
 #include "class/hid/hid_host.h"
 #include "class/msc/msc_host.h"
 #include "common/tusb_fifo.h"
+extern void alice_net_poll(void);   /* Alice68: src/alice/alice_net.c */
 
 extern volatile uint8_t frf_usb_boot_ready;
 extern volatile uint8_t frf_usb_mouse_present;
@@ -591,7 +592,7 @@ void frf_tinyusb_host_main(void)
         frf_boot_stage(10);
         __atomic_store_n(&frf_usb_boot_ready,1u,__ATOMIC_RELEASE);
         __asm__ volatile("sev" ::: "memory");
-        for(;;) __asm__ volatile("wfe");
+        for(;;) { alice_net_poll(); __asm__ volatile("yield"); }   /* CPU1 still runs the network */
     }
     /* Pi 3B's internal LAN9514 USB hub is physically connected before
        our standalone CPU1 USB worker starts. A connection-change edge may
@@ -655,6 +656,7 @@ void frf_tinyusb_host_main(void)
         frf_tinyusb_xpad_task(); /* vendor class Xbox controllers, CPU1 only */
         frf_tinyusb_pad_retry_task(); /* RC9-style initial HID pad retry */
         frf_hid_watch_retry(); /* R38: recover ALL idle HID IN endpoints */
+        alice_net_poll(); /* Alice68: the network board and WiFi (src/alice/alice_net.c) */
         /* USPi USBGamePadDeviceGetReport fallback, only when the exact
            receiver has not produced interrupt-IN packets recently. */
         const uint32_t ctl_now=tusb_time_millis_api();

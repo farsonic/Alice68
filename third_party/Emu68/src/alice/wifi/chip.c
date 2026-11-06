@@ -153,6 +153,7 @@ int chip_ram(struct chip *c, uint32_t addr, uint8_t *buf, uint32_t len, int writ
         if (e) return e;
         if (!write) memcpy(buf, c->bounce, n);
         addr += n; buf += n; len -= n;
+        if (len) wifi_relax();
     }
     return 0;
 }
@@ -280,6 +281,7 @@ int chip_attach(struct chip *c, struct sdhost *h)
     do {
         if (sdh_cmd52(h, 0, 0, CCCR_IORDY, &v)) return -2;
         if (wifi_usecs() - t0 > 500000) { wifi_log("function 1 not ready\n"); return -3; }
+        wifi_relax();
     } while (!(v & 2));
     sdh_set_blksz(h, 0, 64);
     sdh_set_blksz(h, 1, 64);
@@ -288,8 +290,10 @@ int chip_attach(struct chip *c, struct sdhost *h)
     /* ALP clock (OpenBSD buscore_prepare) */
     chip_w8(c, F1_CHIPCLKCSR, CLK_ALP_AVAIL_REQ | CLK_FORCE_HW_CLKREQ_OFF);
     t0 = wifi_usecs();
-    while (!(chip_r8(c, F1_CHIPCLKCSR) & (CLK_ALP_AVAIL | CLK_HT_AVAIL)))
+    while (!(chip_r8(c, F1_CHIPCLKCSR) & (CLK_ALP_AVAIL | CLK_HT_AVAIL))) {
         if (wifi_usecs() - t0 > 100000) { wifi_log("no ALP clock (%02x)\n", chip_r8(c, F1_CHIPCLKCSR)); return -4; }
+        wifi_relax();
+    }
     chip_w8(c, F1_CHIPCLKCSR, CLK_FORCE_HW_CLKREQ_OFF | CLK_FORCE_ALP);
     wifi_udelay(65);
     chip_w8(c, F1_SDIOPULLUP, 0);
@@ -362,8 +366,10 @@ static int clock_wait(struct chip *c, uint8_t req, uint8_t avail, uint32_t us)
 {
     chip_w8(c, F1_CHIPCLKCSR, req);
     uint32_t t0 = wifi_usecs();
-    while (!(chip_r8(c, F1_CHIPCLKCSR) & avail))
+    while (!(chip_r8(c, F1_CHIPCLKCSR) & avail)) {
         if (wifi_usecs() - t0 > us) return -1;
+        wifi_relax();
+    }
     return 0;
 }
 
@@ -376,6 +382,7 @@ static int verify(struct chip *c, uint32_t addr, const uint8_t *want, uint32_t l
         for (uint32_t i = 0; i < n; i++)
             if (tmp[i] != want[i]) { wifi_log("verify failed at %x\n", addr + i); return -2; }
         addr += n; want += n; len -= n;
+        wifi_relax();
     }
     return 0;
 }
@@ -423,6 +430,7 @@ int chip_load(struct chip *c, const uint8_t *fw, uint32_t fwlen, const uint8_t *
     do {
         if (sdh_cmd52(c->h, 0, 0, CCCR_IORDY, &v)) return -5;
         if (wifi_usecs() - t0 > 3000000) { wifi_log("function 2 not ready: firmware did not come up\n"); return -6; }
+        wifi_relax();
     } while (!(v & 4));
     wifi_log("firmware running (%u ms)\n", (wifi_usecs() - t0) / 1000);
 

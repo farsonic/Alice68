@@ -55,10 +55,10 @@ struct an_hdr {
 #define AN_FW_REFUSED   3u          /* the kernel will not take them (WiFi off, no room) */
 
 struct an_fw {
-    char         name[48];          /* file name, e.g. "cyfmac43455-sdio.bin" */
+    char         name[64];          /* file name, e.g. "cyfmac43455-sdio.bin" */
     unsigned int addr;              /* 68k address of the bytes */
     unsigned int len;
-};                                  /* 56 bytes */
+};                                  /* 72 bytes */
 
 /* unit kinds and states */
 #define AN_KIND_NONE    0u

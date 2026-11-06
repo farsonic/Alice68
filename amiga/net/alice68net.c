@@ -25,13 +25,13 @@
 #define TXRING      64
 #define MAXSEGS     4
 #define RXBATCH     16
-#define NQ          8               /* kernel commands waiting */
+#define NQ          16              /* kernel commands waiting */
 #define SIGF_SINGLE (1u << 4)
 #define INTB_PORTS  3
 #define INTB_VERTB  5
 
 ACHECK(sizeof(struct an_hdr) == 64);
-ACHECK(sizeof(struct an_fw) == 56 && sizeof(struct an_scan) == 56);
+ACHECK(sizeof(struct an_fw) == 72 && sizeof(struct an_scan) == 56);
 ACHECK(sizeof(struct an_join) == 108 && sizeof(struct WifiJoin) == 108);
 ACHECK(__builtin_offsetof(struct an_unit, arg) == 440);
 
@@ -115,8 +115,10 @@ static void q_run(struct NetBase *n)
     if (n->busy) {
         barrier();
         int done = u->cmd_done == n->busy_seq;
-        int late = n->ticks - n->busy_t0 > (n->q[n->qhead % NQ].cmd == AN_CMD_SCAN ? 15u * 50 : 5u * 50);
+        /* the kernel may be busy starting the chip for some seconds before it reads a command */
+        int late = n->ticks - n->busy_t0 > (n->q[n->qhead % NQ].cmd == AN_CMD_SCAN ? 45u * 50 : 30u * 50);
         if (!done && !late) return;
+        barrier();                                  /* cmd_result and the scan table after cmd_done */
         struct kcmd *k = &n->q[n->qhead % NQ];
         if (k->io) {
             k->io->io.io_Error = done ? (u->cmd_result ? (BYTE)IOERR_OPENFAIL : 0) : (BYTE)NDERR_BUSY;
@@ -363,6 +365,7 @@ static int command(struct NetBase *n, struct IOStdReq *io)
     LONG err = 0;
     switch (io->io.io_Command) {
     case NETDEV_CMD_ATTACH:
+        if (n->attach_io) { err = NDERR_BUSY; break; }
         if (!mac_known(n)) { n->attach_io = io; n->attach_t0 = n->ticks; return 1; }   /* the chip is still starting */
         err = do_attach(n, io);
         break;
@@ -375,6 +378,7 @@ static int command(struct NetBase *n, struct IOStdReq *io)
         break;
     case NETDEV_CMD_START:
         if (!n->attached) { err = NDERR_NOTATTACHED; break; }
+        U(n)->rx_tail = U(n)->rx_head;              /* old frames: skipped (the tail is ours) */
         n->started = 1;
         q_add(n, AN_CMD_RXON, 0, 0, 0);
         n->link = 0xff;                             /* tell the stack the link state now */

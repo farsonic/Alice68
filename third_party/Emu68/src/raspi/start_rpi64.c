@@ -1081,14 +1081,17 @@ void frf_bootlog_start_timer(void)   /* stage 5: the 68k starts */
     __asm__ volatile("mrs %0, CNTFRQ_EL0" : "=r"(f));
     __asm__ volatile("mrs %0, CNTVCT_EL0" : "=r"(t));
     uint64_t cap = t + (uint64_t)SPLASH_CAP_SECS * f;
-    if (!blog_stop_at || cap < blog_stop_at) blog_stop_at = cap;    /* 0 means "not started" */
+    uint64_t old = blog_stop_at;
+    while ((!old || cap < old) && !__atomic_compare_exchange_n(&blog_stop_at, &old, cap, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) ;
 }
 /* aga_hvs.c, CPU2: AmigaOS's first picture is on the screen - the splash stops now */
 void frf_splash_first_frame(void)
 {
     uint64_t t; __asm__ volatile("mrs %0, CNTVCT_EL0" : "=r"(t));
-    blog_stop_at = t ? t : 1;
-    __asm__ volatile("dmb ish" ::: "memory");
+    if (!t) t = 1;
+    uint64_t old = __atomic_load_n(&blog_stop_at, __ATOMIC_ACQUIRE);
+    /* before the 68k starts (no limit set yet) a frame is not AmigaOS's: ignored */
+    while (old && t < old && !__atomic_compare_exchange_n(&blog_stop_at, &old, t, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) ;
 }
 
 /* called with print_lock held (support_rpi.c putByte) */

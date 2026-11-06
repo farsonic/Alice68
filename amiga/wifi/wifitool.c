@@ -156,7 +156,7 @@ static int wait_state(struct IOStdReq *io, struct WifiStatus *s, int want_connec
 }
 
 /* the prefs file without its SSID/PASSWORD lines, then the new ones */
-static int save_prefs(const char *ssid, const char *pass)
+static int save_prefs(const char *ssid, const char *pass, const char *country)
 {
     static char buf[2048];
     LONG n = 0;
@@ -174,13 +174,14 @@ static int save_prefs(const char *ssid, const char *pass)
         char key[16]; int k = 0;
         while (k < 15 && l + k < buf + i && l[k] != '=' && l[k] != ' ') { key[k] = l[k]; k++; }
         key[k] = 0;
-        if (!sieq(key, "SSID") && !sieq(key, "PASSWORD") && !sieq(key, "PSK") && !sieq(key, "PASSPHRASE")) {
+        if (!sieq(key, "SSID") && !sieq(key, "PASSWORD") && !sieq(key, "PSK") && !sieq(key, "PASSPHRASE") &&
+            !(country[0] && sieq(key, "COUNTRY"))) {
             for (LONG j = s; j < e; j++) outb[o++] = buf[j];
             if (e == i && i > s) outb[o++] = '\n';
         }
         i = e;
     }
-    const char *parts[] = { "SSID=\"", ssid, "\"\nPASSWORD=\"", pass, "\"\n", 0 };
+    const char *parts[] = { "SSID=\"", ssid, "\"\nPASSWORD=\"", pass, "\"\n", country[0] ? "COUNTRY=" : "", country, country[0] ? "\n" : "", 0 };
     for (int p = 0; parts[p]; p++) for (const char *c = parts[p]; *c && o < (LONG)sizeof outb - 1; ) outb[o++] = *c++;
     int ok = 0;
     static const char *const files[] = { "ENV:alice68wifi.prefs", "ENVARC:alice68wifi.prefs" };
@@ -326,7 +327,7 @@ LONG wifitool_main(const char *args, ULONG arglen)
                 for (int i = 0; a1[i] && i < 32; i++) j.wj_Ssid[i] = a1[i];
                 for (int i = 0; a2[i] && i < 64; i++) j.wj_Pass[i] = a2[i];
                 if (a3[0] && a3[1]) { j.wj_Country[0] = a3[0]; j.wj_Country[1] = a3[1]; }
-                if (!save_prefs(a1, a2)) put("could not write ENV:alice68wifi.prefs\n");
+                if (!save_prefs(a1, a2, j.wj_Country)) put("could not write ENV:alice68wifi.prefs\n");
                 else put("Saved in ENV: and ENVARC:alice68wifi.prefs\n");
             } else if (!read_prefs(&j)) put("no SSID in ENV:alice68wifi.prefs: the last network again\n");
             io->io.io_Command = j.wj_Ssid[0] ? WIFI_CMD_JOIN : WIFI_CMD_RECONNECT;

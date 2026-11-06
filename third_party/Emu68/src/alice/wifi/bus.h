@@ -13,7 +13,8 @@
 void wifi_udelay(uint32_t us);
 uint32_t wifi_usecs(void);                     /* free-running microsecond counter */
 void wifi_log(const char *fmt, ...);
-void wifi_where(const char *fmt, ...);         /* what the driver is doing now (Alice68-Monitor) */
+void wifi_where(const char *fmt, ...);
+void wifi_relax(void);                         /* in long polls: let the host's other work run (kernel: CPU1's USB) */         /* what the driver is doing now (Alice68-Monitor) */
 extern int wifi_debug;                         /* DEBUG= in the prefs: 0; 1 files, power, steps; 2 + every command; 3 + every CMD52/53 */
 
 /* ---- SD host ------------------------------------------------------------- */
