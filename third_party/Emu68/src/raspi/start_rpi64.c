@@ -262,6 +262,8 @@ static volatile uint32_t post_kb=~0u, post_ms=~0u, post_gp=~0u, post_storage=~0u
 static volatile int post_hdf_boot = -1, post_hdf_other = -1, post_hdf_left = -1;   /* Alice68 hardfiles */
 static char post_wifi[48];                               /* Alice68 WiFi (alice_net.c), "" none yet */
 static volatile int post_wifi_col;
+static char post_eth[48];                                /* Alice68 Ethernet (alice_net.c), "" not in use */
+static volatile int post_eth_col;
 static volatile uint32_t post_rx, post_bad, post_err, post_id, post_len;
 static volatile uint32_t post_raw0, post_raw1, post_joy, post_fire, post_events;
 static volatile uint32_t post_decoded;
@@ -897,6 +899,19 @@ void frf_post_wifi(const char *text, int col)
 #endif
 }
 
+void frf_post_eth(const char *text, int col)
+{
+#ifdef ALICE_SPLASH
+    unsigned i = 0;
+    for (; text && text[i] && i < sizeof post_eth - 1; i++) post_eth[i] = text[i];
+    post_eth[i] = 0;
+    post_eth_col = col;
+    alice_status();
+#else
+    (void)text; (void)col;
+#endif
+}
+
 void frf_post_usb_devices(unsigned kb,unsigned ms,unsigned gp,unsigned msc)
 {
     post_kb=kb;post_ms=ms;post_gp=gp;post_storage=msc;
@@ -990,6 +1005,7 @@ static void alice_status(void)
     st.usb_fail = frf_usb_failed;
     st.hdf_boot = post_hdf_boot; st.hdf_other = post_hdf_other; st.hdf_left = post_hdf_left;
     st.wifi = post_wifi; st.wifi_col = post_wifi_col;
+    st.eth = post_eth; st.eth_col = post_eth_col;
     al_status_draw(&st);
     __asm__ volatile("dsb ishst" ::: "memory");
     __atomic_store_n(&alice_lock, 0u, __ATOMIC_RELEASE);

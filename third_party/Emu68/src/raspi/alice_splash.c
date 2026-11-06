@@ -203,6 +203,8 @@ void al_status_draw(const struct al_status *s)
         b[k] = 0;
         x = chip(x, "HARDFILES", b, nl ? C_WAIT : (nb || no) ? C_OK : C_DIM);
     }
+    if (s->eth && s->eth[0] && x + 16 * 8 < fw)          /* the kernel's Ethernet (alice_net.c) */
+        x = chip(x, "LAN", s->eth, s->eth_col == 1 ? C_OK : s->eth_col == 2 ? C_FAIL : C_WAIT);
     if (s->wifi && s->wifi[0] && x + 16 * 8 < fw) {      /* the kernel's WiFi (alice_net.c), cut to the room left */
         char w[48];
         uint32_t room = (fw - x - 16 - 5 * 8 - 16) / 8, k = 0;

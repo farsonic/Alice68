@@ -52,6 +52,11 @@ was copied from them, but they deserve the credit:
   modify, and/or distribute this software for any purpose with or without fee is hereby
   granted, provided that the above copyright notice and this permission notice appear in
   all copies. THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES..."
+* **U-Boot `drivers/net/bcmgenet.c`** (Copyright (C) 2019 Amit Singh Tomar, from Linux's
+  bcmgenet, Copyright (c) 2014-2017 Broadcom; GPL-2.0-or-later) and **Linux's Broadcom PHY
+  driver** (GPL-2.0) – the references for the kernel's Gigabit Ethernet in
+  `third_party/Emu68/src/alice/alice_net.c`: GENET v5's register layout and start-up order,
+  and the BCM54213PE's RGMII delay settings. Both licences allow it in the GPL-2.0-only kernel.
 * The SD Host Controller and SDIO Simplified Specifications (SD Association) for the
   Arasan host and the SDIO commands.
 * `gic400.library` and `mailbox.resource` (Michal Schulz, rondoval; MPL-2.0), which

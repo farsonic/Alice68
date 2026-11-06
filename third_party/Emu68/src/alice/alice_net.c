@@ -1190,6 +1190,419 @@ static void claim_host_in_dt(void)
     }
 }
 
+
+/* ==== Gigabit Ethernet: GENET v5 and its BCM54213PE PHY (unit 1) ==================
+   A polled driver, a state machine that never waits: CPU1 runs it every turn
+   beside USB and the WiFi. Register layout and start-up order follow U-Boot's
+   bcmgenet.c (GPL-2.0+, itself from Linux's bcmgenet); the PHY's RGMII delay
+   settings follow Linux's Broadcom PHY driver (GPL-2.0). Descriptors live in
+   GENET's registers; the frame buffers in uncached memory, so no cache work. */
+extern void frf_post_eth(const char *text, int col);
+#define G_SYS_REV       0x0000
+#define G_PORT_CTRL     0x0004
+#define G_RBUF_FLUSH    0x0008
+#define G_RGMII_OOB     0x008c
+#define G_RBUF_CTRL     0x0300
+#define G_RBUF_TBUF_SZ  0x03b4
+#define G_CMD           0x0808
+#define G_MAC0          0x080c
+#define G_MAC1          0x0810
+#define G_MAX_FRAME     0x0814
+#define G_TX_FLUSH      0x0b34
+#define G_MIB_CTRL      0x0d80
+#define G_MDIO          0x0e14
+#define G_RXD           0x2000          /* 256 descriptors * 12 bytes */
+#define G_TXD           0x4000
+#define G_RR            0x3000          /* RDMA ring 16 (the default queue) */
+#define G_TR            0x5000          /* TDMA ring 16 */
+#define G_RDMA          0x3040          /* RDMA control */
+#define G_TDMA          0x5040
+#define CMD_TX_EN       (1u << 0)
+#define CMD_RX_EN       (1u << 1)
+#define CMD_PROMISC     (1u << 4)
+#define CMD_HD_EN       (1u << 10)
+#define CMD_SW_RESET    (1u << 13)
+#define CMD_LCL_LOOP    (1u << 15)
+#define DMA_EN          1u
+#define DESC_SOP        0x2000u
+#define DESC_EOP        0x4000u
+#define DESC_CRC        0x0040u
+#define NRX             256
+#define NTXB            64
+#define GBUF            2048
+
+static struct {
+    volatile uint8_t *regs;
+    uint8_t *rxb, *txb;                  /* uncached */
+    uint64_t rxp, txp;                   /* their physical addresses */
+    uint32_t state, t0, next_link, cidx, tprod, cmd_base, rx_err;
+    int      phy, up, speed, full, started, promisc, disabled;
+    uint8_t  mac[6];
+} E;
+enum { E_OFF, E_PHYRESET, E_LINKWAIT, E_RUN, E_FAILED };
+
+static inline uint32_t grd(uint32_t o) { return __builtin_bswap32(*(volatile uint32_t *)(E.regs + o)); }
+static inline void gwr(uint32_t o, uint32_t v) { *(volatile uint32_t *)(E.regs + o) = __builtin_bswap32(v); }
+static void gdelay(uint32_t us) { uint64_t end = ticks() + tick_hz() * us / 1000000u; while ((int64_t)(end - ticks()) > 0) ; }
+
+static void eth_log(const char *fmt, ...)
+{
+    struct lbuf b; b.n = 0;
+    for (const char *p = "[ETH] "; *p; ) b.s[b.n++] = *p++;
+    va_list ap; va_start(ap, fmt); vkprintf_pc(lb_c, &b, fmt, ap); va_end(ap);
+    if (!b.n || b.s[b.n - 1] != '\n') b.s[b.n++] = '\n';
+    b.s[b.n] = 0;
+    kprintf("%s", b.s);
+    ring_put(b.s, b.n);
+}
+static void estate(unsigned st, const char *msg)
+{
+    volatile struct an_unit *u = U(1);
+    unsigned i = 0;
+    for (; msg[i] && i < 95; i++) u->msg[i] = msg[i];
+    u->msg[i] = 0;
+    u->state = st;
+    u->state_seq++;
+    an_irq();
+    eth_log("%s\n", msg);
+    char t[48]; unsigned k = 0;
+    if (st == AN_ST_CONNECTED) {
+        uint32_t v = (uint32_t)E.speed; char d[8]; int nd = 0;
+        do { d[nd++] = (char)('0' + v % 10); v /= 10; } while (v);
+        while (nd) t[k++] = d[--nd];
+        for (const char *p = E.full ? " Mbit/s" : " Mbit/s half"; *p; ) t[k++] = *p++;
+    } else for (const char *p = st == AN_ST_IDLE ? "no link" : st == AN_ST_STARTING ? "starting" : st == AN_ST_FAILED ? "FAILED" : "off"; *p; ) t[k++] = *p++;
+    t[k] = 0;
+    frf_post_eth(st == AN_ST_OFF ? "" : t, st == AN_ST_CONNECTED ? 1 : st == AN_ST_FAILED ? 2 : 0);
+}
+
+static int mdio(int wr, int reg, uint16_t v)
+{
+    gwr(G_MDIO, (wr ? (1u << 26) : (2u << 26)) | ((uint32_t)E.phy << 21) | ((uint32_t)reg << 16) | (wr ? v : 0));
+    gwr(G_MDIO, grd(G_MDIO) | (1u << 29));           /* start */
+    for (int i = 0; i < 1000; i++) {
+        uint32_t c = grd(G_MDIO);
+        if (!(c & (1u << 29))) return (!wr && (c & (1u << 28))) ? -1 : (int)(c & 0xffff);
+        gdelay(1);
+    }
+    return -2;
+}
+static int phy_rd(int reg) { return mdio(0, reg, 0); }
+static void phy_wr(int reg, uint16_t v) { mdio(1, reg, v); }
+
+/* the genet node: its registers (through /scb's ranges, rewritten to virtual
+   addresses at boot) and its MAC address */
+static of_node_t *genet_node(void)
+{
+    of_node_t *al = dt_find_node("/aliases");
+    of_property_t *ap = al ? dt_find_property(al, "ethernet0") : 0;
+    return (ap && ap->op_value) ? dt_find_node((char *)ap->op_value) : 0;
+}
+static uintptr_t scb_virt(uint32_t bus)
+{
+    of_node_t *e = dt_find_node("/scb");
+    of_property_t *p = e ? dt_find_property(e, "ranges") : 0;
+    if (!p) return 0;
+    int ac = (int)dt_get_property_value_u32(e->on_parent, "#address-cells", 1, 0);
+    int ab = (int)dt_get_property_value_u32(e, "#address-cells", 1, 1);
+    int sb = (int)dt_get_property_value_u32(e, "#size-cells", 1, 1);
+    int n = ab + ac + sb;
+    uint32_t *r = p->op_value;
+    for (int32_t len = (int32_t)p->op_length; len >= n * 4; len -= n * 4, r += n) {
+        uint32_t b = r[ab - 1], c = r[ab + ac - 1], l = r[n - 1];
+        if (b == c) continue;
+        if (bus - b < l) return (uintptr_t)c + (bus - b);
+    }
+    return 0;
+}
+static int eth_find(void)
+{
+    if (E.regs) return 0;
+    of_node_t *g = genet_node();
+    if (!g) { eth_log("no ethernet0 in the device tree\n"); return -1; }
+    of_property_t *reg = dt_find_property(g, "reg");
+    int ac = (int)dt_get_property_value_u32(g->on_parent, "#address-cells", 1, 0);
+    if (!reg || reg->op_length < (uint32_t)ac * 4) return -1;
+    uintptr_t v = scb_virt(((uint32_t *)reg->op_value)[ac - 1]);
+    if (!v) { eth_log("GENET's registers are not mapped\n"); return -1; }
+    E.regs = (volatile uint8_t *)v;
+    of_property_t *m = dt_find_property(g, "local-mac-address");
+    if (m && m->op_length >= 6) memcpy(E.mac, m->op_value, 6);
+    if (!(E.mac[0] | E.mac[1] | E.mac[2] | E.mac[3] | E.mac[4] | E.mac[5])) {
+        /* GET_BOARD_MAC_ADDRESS: the six bytes come back in the two value words */
+        if (!mbox_tag(0x00010003u, 0, 0, 0)) memcpy(E.mac, (uint8_t *)mbuf + 20, 6);
+    }
+    /* the kernel drives it now: a driver in AmigaOS that reads the device tree leaves it alone */
+    static char disabled[] = "disabled";
+    of_property_t *st = dt_find_property(g, "status");
+    if (st) { st->op_value = disabled; st->op_length = sizeof disabled; }
+    else dt_add_property(g, "status", disabled, sizeof disabled);
+    eth_log("GENET at %p, MAC %02x:%02x:%02x:%02x:%02x:%02x; %s marked disabled for AmigaOS\n", (void *)v,
+            E.mac[0], E.mac[1], E.mac[2], E.mac[3], E.mac[4], E.mac[5], g->on_name);
+    return 0;
+}
+static int eth_buffers(void)
+{
+    if (E.rxb) return 0;
+    uint32_t size = (NRX + NTXB) * GBUF;
+    uint8_t *m = tlsf_malloc_aligned(tlsf, size, 0x10000);
+    if (!m) return -1;
+    uintptr_t phys = mmu_virt2phys((uintptr_t)m);
+    arm_flush_cache((uintptr_t)m, size);
+    mmu_map(phys, (uintptr_t)m, size, AN_MMU_ACCESS | AN_MMU_ISHARE | AN_MMU_NC, 0);
+    __asm__ volatile("dsb ish; isb" ::: "memory");
+    E.rxb = m; E.txb = m + NRX * GBUF;
+    E.rxp = phys; E.txp = phys + NRX * GBUF;
+    return 0;
+}
+
+static void eth_start(void)
+{
+    volatile struct an_unit *u = U(1);
+    estate(AN_ST_STARTING, "starting the Ethernet");
+    if (eth_find() || eth_buffers()) { E.state = E_FAILED; estate(AN_ST_FAILED, "Ethernet: no GENET, or no memory"); return; }
+    uint32_t rev = grd(G_SYS_REV);
+    if (((rev >> 24) & 15) != 6) { E.state = E_FAILED; estate(AN_ST_FAILED, "Ethernet: not a GENET v5"); eth_log("SYS_REV %x\n", rev); return; }
+    for (int i = 0; i < 6; i++) u->mac[i] = E.mac[i];
+    gwr(G_PORT_CTRL, 3);                                /* external gigabit PHY (RGMII) */
+    /* the MAC reset, as U-Boot */
+    gwr(G_RBUF_FLUSH, grd(G_RBUF_FLUSH) | 2); gdelay(10);
+    gwr(G_RBUF_FLUSH, grd(G_RBUF_FLUSH) & ~2u); gdelay(10);
+    gwr(G_RBUF_FLUSH, 0); gdelay(10);
+    gwr(G_CMD, 0);
+    gwr(G_CMD, CMD_SW_RESET | CMD_LCL_LOOP); gdelay(2);
+    gwr(G_CMD, 0);
+    gwr(G_MIB_CTRL, 7); gwr(G_MIB_CTRL, 0);
+    gwr(G_MAX_FRAME, 1536);
+    gwr(G_RBUF_CTRL, grd(G_RBUF_CTRL) | 2);             /* 2-byte alignment pad before each frame */
+    gwr(G_RBUF_TBUF_SZ, 1);
+    gwr(G_MAC0, (uint32_t)E.mac[0] << 24 | (uint32_t)E.mac[1] << 16 | (uint32_t)E.mac[2] << 8 | E.mac[3]);
+    gwr(G_MAC1, (uint32_t)E.mac[4] << 8 | E.mac[5]);
+    /* DMA off, TX flushed */
+    gwr(G_TDMA + 4, grd(G_TDMA + 4) & ~DMA_EN);
+    gwr(G_RDMA + 4, grd(G_RDMA + 4) & ~DMA_EN);
+    gwr(G_TX_FLUSH, 1); gdelay(10); gwr(G_TX_FLUSH, 0);
+    /* receive ring: 256 buffers, all of them ours to fill */
+    gwr(G_RDMA + 0x0c, 8);                              /* SCB burst */
+    gwr(G_RR + 0x14, 0); gwr(G_RR + 0x2c, 0); gwr(G_RR + 0x00, 0);
+    gwr(G_RR + 0x1c, NRX * 12 / 4 - 1);
+    E.cidx = grd(G_RR + 0x08) & 0xffff;                 /* the producer index cannot be set: follow it */
+    gwr(G_RR + 0x0c, E.cidx);
+    gwr(G_RR + 0x10, (uint32_t)NRX << 16 | GBUF);
+    gwr(G_RR + 0x28, (5u << 16) | (NRX >> 4));
+    gwr(G_RDMA + 0x00, 1u << 16);
+    for (int i = 0; i < NRX; i++) {
+        uint64_t a = E.rxp + (uint64_t)i * GBUF;
+        gwr(G_RXD + i * 12 + 4, (uint32_t)a);
+        gwr(G_RXD + i * 12 + 8, (uint32_t)(a >> 32));
+        gwr(G_RXD + i * 12 + 0, (uint32_t)GBUF << 16 | 0x8000u);
+    }
+    /* transmit ring */
+    gwr(G_TDMA + 0x0c, 8);
+    gwr(G_TR + 0x14, 0); gwr(G_TR + 0x00, 0); gwr(G_TR + 0x2c, 0);
+    gwr(G_TR + 0x1c, 256 * 12 / 4 - 1);
+    E.tprod = grd(G_TR + 0x08) & 0xffff;
+    gwr(G_TR + 0x0c, E.tprod);
+    gwr(G_TR + 0x24, 1); gwr(G_TR + 0x28, 0);
+    gwr(G_TR + 0x10, 256u << 16 | GBUF);
+    gwr(G_TDMA + 0x00, 1u << 16);
+    /* DMA on */
+    gwr(G_TDMA + 4, (1u << 17) | DMA_EN);
+    gwr(G_RDMA + 4, grd(G_RDMA + 4) | (1u << 17) | DMA_EN);
+    /* the PHY: the first address that answers (1 on a Pi 4), reset */
+    E.phy = -1;
+    for (int a = 0; a < 32 && E.phy < 0; a++) {
+        E.phy = a;
+        int id1 = phy_rd(2), id2 = phy_rd(3);
+        if (id1 <= 0 || id1 == 0xffff) { E.phy = -1; continue; }
+        eth_log("PHY at %d: id %04x:%04x\n", a, id1, id2);
+    }
+    if (E.phy < 0) { E.state = E_FAILED; estate(AN_ST_FAILED, "Ethernet: no PHY answers"); return; }
+    phy_wr(0, 0x8000);                                    /* BMCR: reset */
+    E.t0 = now_ms();
+    E.state = E_PHYRESET;
+    E.up = 0;
+}
+/* rgmii-rxid, as Linux's bcm54xx_config_clock_delay: the PHY delays RXC, not GTXCLK */
+static void phy_delays(void)
+{
+    phy_wr(0x18, (7u << 12) | 7);                         /* AUXCTL: select MISC for reading */
+    int misc = phy_rd(0x18);
+    if (misc >= 0) phy_wr(0x18, (uint16_t)(((uint32_t)misc | 0x0100u | 0x8000u | 7u) & 0xffffu));   /* RGMII RXC skew on, write enable */
+    phy_wr(0x1c, 3u << 10);                               /* shadow 3: clock alignment */
+    int clk = phy_rd(0x1c);
+    if (clk >= 0) phy_wr(0x1c, (uint16_t)(0x8000u | (3u << 10) | ((uint32_t)clk & 0x3ffu & ~0x200u)));   /* GTXCLK delay off */
+}
+static void eth_link(int bmsr)
+{
+    volatile struct an_unit *u = U(1);
+    int link = (bmsr & 4) != 0;
+    if (link && !E.up) {
+        int c1000 = phy_rd(9), s1000 = phy_rd(10), adv = phy_rd(4), lpa = phy_rd(5);
+        int com = adv & lpa;
+        if ((c1000 & 0x200) && (s1000 & 0x800)) { E.speed = 1000; E.full = 1; }
+        else if ((c1000 & 0x100) && (s1000 & 0x400)) { E.speed = 1000; E.full = 0; }
+        else if (com & 0x100) { E.speed = 100; E.full = 1; }
+        else if (com & 0x080) { E.speed = 100; E.full = 0; }
+        else if (com & 0x040) { E.speed = 10; E.full = 1; }
+        else { E.speed = 10; E.full = 0; }
+        gwr(G_RGMII_OOB, (grd(G_RGMII_OOB) & ~(1u << 5)) | (1u << 4) | (1u << 6) | (1u << 16));
+        E.cmd_base = (uint32_t)(E.speed == 1000 ? 2 : E.speed == 100 ? 1 : 0) << 2 | (E.full ? 0 : CMD_HD_EN);
+        gwr(G_CMD, E.cmd_base | (E.promisc ? CMD_PROMISC : 0) | CMD_TX_EN | CMD_RX_EN);
+        E.up = 1;
+        u->link = 1; u->speed_mbps = (unsigned)E.speed;
+        char m[64]; unsigned k = 0;
+        for (const char *p = "link up, "; *p; ) m[k++] = *p++;
+        { uint32_t v = (uint32_t)E.speed; char d[8]; int nd = 0; do { d[nd++] = (char)('0' + v % 10); v /= 10; } while (v); while (nd) m[k++] = d[--nd]; }
+        for (const char *p = E.full ? " Mbit/s full duplex" : " Mbit/s half duplex"; *p; ) m[k++] = *p++;
+        m[k] = 0;
+        estate(AN_ST_CONNECTED, m);
+    } else if (!link && E.up) {
+        E.up = 0;
+        gwr(G_CMD, grd(G_CMD) & ~(CMD_TX_EN | CMD_RX_EN));
+        u->link = 0; u->speed_mbps = 0;
+        u->state_seq++;
+        estate(AN_ST_IDLE, "no link: is the cable in?");
+    }
+}
+static void eth_rx(void)
+{
+    volatile struct an_unit *u = U(1);
+    uint32_t prod = grd(G_RR + 0x08) & 0xffff, n = 0;
+    while (E.cidx != prod && n < 64) {
+        uint32_t d = E.cidx & 0xff, ls = grd(G_RXD + d * 12);
+        uint32_t len = (ls >> 16) & 0xfff, st = ls & 0xffff;
+        const uint8_t *f = E.rxb + d * GBUF + 2;
+        if ((st & (DESC_SOP | DESC_EOP)) != (DESC_SOP | DESC_EOP) || (st & 0x1f) || len < 16 || len > 1536 + 2) E.rx_err++, u->rx_drop++;
+        else if (!u->rx_on || u->rx_head - u->rx_tail >= AN_RX_SLOTS) u->rx_drop++;
+        else {
+            len -= 2;
+            volatile struct an_slot *s = (volatile struct an_slot *)(anb + AN_OFF_RX(1) + (u->rx_head % AN_RX_SLOTS) * AN_SLOT_BYTES);
+            for (uint32_t i = 0; i < len; i++) s->data[i] = f[i];
+            s->len = len;
+            s->flags = (f[0] & 1) ? (f[0] == 0xff && f[1] == 0xff ? AN_SF_BCAST : AN_SF_MCAST) : 0;
+            __asm__ volatile("dmb ish" ::: "memory");
+            u->rx_head++;
+            u->rx_pkts++; u->rx_bytes += len;
+            an_irq();
+        }
+        E.cidx = (E.cidx + 1) & 0xffff;
+        n++;
+    }
+    if (n) gwr(G_RR + 0x0c, E.cidx);
+}
+static void eth_tx(void)
+{
+    volatile struct an_unit *u = U(1);
+    int sent = 0;
+    while (u->tx_tail != u->tx_head) {
+        uint32_t cons = grd(G_TR + 0x08) & 0xffff;
+        if (((E.tprod - cons) & 0xffff) >= 32) break;  /* in flight: at most 32 (the buffers are 64) */
+        __asm__ volatile("dmb ish" ::: "memory");
+        volatile struct an_slot *s = (volatile struct an_slot *)(anb + AN_OFF_TX(1) + (u->tx_tail % AN_TX_SLOTS) * AN_SLOT_BYTES);
+        uint32_t len = s->len;
+        if (len < 14 || len > 1518 || !E.up) u->tx_err++;
+        else {
+            uint32_t b = E.tprod % NTXB, d = E.tprod & 0xff;
+            uint8_t *q = E.txb + b * GBUF;
+            for (uint32_t i = 0; i < len; i++) q[i] = s->data[i];
+            for (; len < 60; len++) q[len] = 0;         /* the shortest Ethernet frame */
+            uint64_t a = E.txp + (uint64_t)b * GBUF;
+            gwr(G_TXD + d * 12 + 4, (uint32_t)a);
+            gwr(G_TXD + d * 12 + 8, (uint32_t)(a >> 32));
+            gwr(G_TXD + d * 12 + 0, len << 16 | (0x3fu << 7) | DESC_CRC | DESC_SOP | DESC_EOP);
+            E.tprod = (E.tprod + 1) & 0xffff;
+            u->tx_pkts++; u->tx_bytes += len;
+            sent = 1;
+        }
+        __asm__ volatile("dmb ish" ::: "memory");
+        u->tx_tail++;
+        an_irq();
+    }
+    if (sent) { __asm__ volatile("dsb sy" ::: "memory"); gwr(G_TR + 0x0c, E.tprod); }
+}
+static void eth_stop(void)
+{
+    if (E.regs && E.state != E_OFF && E.state != E_FAILED) {
+        gwr(G_CMD, grd(G_CMD) & ~(CMD_TX_EN | CMD_RX_EN));
+        gwr(G_TDMA + 4, grd(G_TDMA + 4) & ~DMA_EN);
+        gwr(G_RDMA + 4, grd(G_RDMA + 4) & ~DMA_EN);
+        if (E.phy >= 0) phy_wr(0, 0x0800);                /* PHY power down */
+    }
+    E.up = 0;
+    U(1)->link = 0;
+    E.state = E_OFF;
+    estate(AN_ST_OFF, "Ethernet off");
+}
+static void eth_commands(void)
+{
+    volatile struct an_unit *u = U(1);
+    uint32_t seq = u->cmd_seq;
+    if (seq == u->cmd_done) return;
+    __asm__ volatile("dmb ish" ::: "memory");
+    int r = 0;
+    switch (u->cmd) {
+    case AN_CMD_START: if (E.state == E_OFF || E.state == E_FAILED) eth_start(); break;
+    case AN_CMD_OFF:   eth_stop(); break;
+    case AN_CMD_RXON:  u->rx_on = 1; break;
+    case AN_CMD_RXOFF: u->rx_on = 0; break;
+    case AN_CMD_FILTER:
+        E.promisc = u->arg[3] & (AN_FILT_PROMISC | AN_FILT_ALLMULTI);   /* no multicast filter yet: all of it */
+        if (E.up) gwr(G_CMD, E.cmd_base | (E.promisc ? CMD_PROMISC : 0) | CMD_TX_EN | CMD_RX_EN);
+        break;
+    default: r = -3; break;
+    }
+    u->cmd_result = r;
+    __asm__ volatile("dmb ish" ::: "memory");
+    u->cmd_done = seq;
+    an_irq();
+}
+static void eth_poll(void)
+{
+    volatile struct an_unit *u = U(1);
+    if (!E.started) {
+        E.started = 1;
+        E.disabled = bootarg_word("eth=off");
+        if (E.disabled) { u->kind = AN_KIND_NONE; kprintf("[ETH] off (eth=off in cmdline.txt)\n"); return; }
+        u->kind = AN_KIND_ETHER;
+        E.state = E_OFF;
+        estate(AN_ST_OFF, "off - starts when a TCP/IP stack uses unit 1, or eth=on in cmdline.txt");
+        if (bootarg_word("eth=on")) eth_start();
+    }
+    if (E.disabled) return;
+    eth_commands();
+    uint32_t now = now_ms();
+    switch (E.state) {
+    case E_PHYRESET: {
+        int bmcr = phy_rd(0);
+        if ((bmcr >= 0 && !(bmcr & 0x8000)) || now - E.t0 > 500) {
+            phy_delays();
+            phy_wr(4, 0x01e1);                            /* advertise 10/100 half and full */
+            phy_wr(9, 0x0300);                            /* and 1000 half and full */
+            phy_wr(0, 0x1200);                            /* autonegotiation on, restart */
+            E.state = E_LINKWAIT;
+            E.next_link = now;
+            estate(AN_ST_IDLE, "waiting for the link");
+        }
+        break;
+    }
+    case E_LINKWAIT:
+    case E_RUN:
+        if ((int32_t)(now - E.next_link) >= 0) {
+            E.next_link = now + 250;
+            phy_rd(1);                                     /* BMSR's link bit latches low: read twice */
+            int bmsr = phy_rd(1);
+            if (bmsr >= 0) eth_link(bmsr);
+            E.state = E.up ? E_RUN : E_LINKWAIT;
+        }
+        if (E.up) { eth_rx(); eth_tx(); }
+        else while (u->tx_tail != u->tx_head) { u->tx_tail++; u->tx_err++; }
+        break;
+    default:
+        break;
+    }
+}
+
 /* ---- CPU1's turn ------------------------------------------------------------- */
 static void an_reset_session(void)
 {
@@ -1210,6 +1623,7 @@ void alice_net_poll(void)
     if (!anb) return;
     H()->boot_us = wifi_usecs();
     if (an_reset_req) an_reset_session();
+    eth_poll();                                     /* the Ethernet: a state machine, never waits */
     if (!wifi_running) { wifi_disabled = bootarg_word("wifi=off"); U(0)->kind = AN_KIND_WIFI; }
     fw_take();
     if (!wifi_running) {

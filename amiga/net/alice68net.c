@@ -2,8 +2,8 @@
  * alice68net.device - Alice68's network board as a netdev device for
  * rondoval's lwip-amiga stack.
  *
- * The network hardware is the kernel's: CPU1 runs the Pi 4's WiFi (unit 0;
- * unit 1 is kept for the kernel's own Ethernet) and shares a 128 KB Zorro II
+ * The network hardware is the kernel's: CPU1 runs the Pi 4's WiFi (unit 0)
+ * and its Gigabit Ethernet (unit 1), and shares a 128 KB Zorro II
  * board with AmigaOS (alice_net.h). This device only moves frames between
  * the board's slots and the stack, and passes commands (join, scan, ...) to
  * the kernel; the level-2 interrupt says when the kernel has something new.
@@ -18,8 +18,8 @@
 
 #define DEVNAME     "alice68net.device"
 #define VERSION     2
-#define REVISION    0
-#define IDSTRING    "alice68net 2.0 (07.11.2026)\r\n"
+#define REVISION    1
+#define IDSTRING    "alice68net 2.1 (07.11.2026)\r\n"
 
 #define BUFSZ       1536            /* one receive buffer */
 #define TXRING      64
@@ -38,18 +38,11 @@ ACHECK(__builtin_offsetof(struct an_unit, arg) == 440);
 struct txent { APTR cookie; UWORD nseg; struct NetDevSg sg[MAXSEGS]; };
 struct kcmd { ULONG cmd; struct IOStdReq *io; UBYTE arg[108]; UWORD arglen; };
 
-struct NetBase {
-    struct Library lib;
-    UWORD   pad0;
-    APTR    seglist;
-    struct Unit unit;
-    volatile UBYTE *b;              /* the board */
-    struct Task *task, *waiter;
-    ULONG   sig_port, sig_irq, sig_kick;
-    volatile UBYTE running, alive, pad1, pad2;
-    ULONG   sem[12];                /* SignalSemaphore: one opener starts the process */
-    struct Interrupt irq_ports, irq_vbl;
-    UBYTE   irqs_on, pad3;
+struct NetBase;
+struct NUnit {                      /* one unit of the board: 0 WiFi, 1 Ethernet */
+    struct Unit unit;               /* io_Unit points here */
+    struct NetBase *nb;
+    UWORD   idx;
     /* kernel commands, one at a time */
     struct kcmd q[NQ];
     UWORD   qhead, qtail;
@@ -57,7 +50,7 @@ struct NetBase {
     ULONG   busy_seq, busy_t0;
     /* netdev */
     UBYTE   attached, started, link, pad5;
-    struct IOStdReq *attach_io;     /* waiting for the chip's MAC */
+    struct IOStdReq *attach_io;     /* waiting for the hardware's MAC */
     ULONG   attach_t0;
     APTR    stackctx;
     const struct NetDevStackOps *sops;
@@ -71,8 +64,24 @@ struct NetBase {
     struct NetDevRxDesc rxd[RXBATCH];
     ULONG   nrxd, rxbatch_max;
     ULONG   tx_drop, rx_nobuf;
-    ULONG   ticks;
 };
+
+struct NetBase {
+    struct Library lib;
+    UWORD   pad0;
+    APTR    seglist;                /* at 36: Alice68-Monitor finds the code through it */
+    struct MsgPort port;            /* both units' requests */
+    volatile UBYTE *b;              /* the board */
+    struct Task *task, *waiter;
+    ULONG   sig_port, sig_irq, sig_kick;
+    volatile UBYTE running, alive, pad1, pad2;
+    ULONG   sem[12];                /* SignalSemaphore: one opener starts the process */
+    struct Interrupt irq_ports, irq_vbl;
+    UBYTE   irqs_on, pad3;
+    ULONG   ticks;
+    struct NUnit u[AN_UNITS];
+};
+ACHECK(__builtin_offsetof(struct NetBase, seglist) == 36);
 
 static struct NetBase *g_nb;
 void *memcpy(void *d, const void *s, unsigned long n) { UBYTE *a = d; const UBYTE *b = s; while (n--) *a++ = *b++; return d; }
@@ -80,13 +89,11 @@ void *memset(void *d, int c, unsigned long n) { UBYTE *a = d; while (n--) *a++ =
 static void scpy(char *d, const volatile char *s, unsigned max) { unsigned i = 0; while (s[i] && i + 1 < max) { d[i] = s[i]; i++; } d[i] = 0; }
 
 static inline volatile struct an_hdr *H(struct NetBase *n) { return (volatile struct an_hdr *)n->b; }
-static inline volatile struct an_unit *U(struct NetBase *n) { return (volatile struct an_unit *)(n->b + AN_OFF_UNIT(0)); }
-
-static inline APTR OpenResource_(const char *n) { return (APTR)lvo(SYSBASE, -498, 0, 0, 0, (ULONG)n); }
+static inline volatile struct an_unit *U(struct NUnit *n) { return (volatile struct an_unit *)(n->nb->b + AN_OFF_UNIT(n->idx)); }
 static void barrier(void) { __asm__ volatile("nop" ::: "memory"); }
 
 /* ---- the kernel's commands --------------------------------------------------- */
-static void q_add(struct NetBase *n, ULONG cmd, const void *arg, UWORD len, struct IOStdReq *io)
+static void q_add(struct NUnit *n, ULONG cmd, const void *arg, UWORD len, struct IOStdReq *io)
 {
     if ((UWORD)(n->qtail - n->qhead) >= NQ) { if (io) { io->io.io_Error = NDERR_BUSY; ReplyMsg(io); } return; }
     struct kcmd *k = &n->q[n->qtail % NQ];
@@ -94,10 +101,10 @@ static void q_add(struct NetBase *n, ULONG cmd, const void *arg, UWORD len, stru
     if (arg) memcpy(k->arg, arg, k->arglen);
     n->qtail++;
 }
-static void scan_copy(struct NetBase *n, struct IOStdReq *io)
+static void scan_copy(struct NUnit *n, struct IOStdReq *io)
 {
     struct WifiScanEntry *e = io->io_Data;
-    volatile struct an_scan *t = (volatile struct an_scan *)(n->b + AN_OFF_SCAN);
+    volatile struct an_scan *t = (volatile struct an_scan *)(n->nb->b + AN_OFF_SCAN);
     ULONG max = io->io_Length / sizeof *e, cnt = U(n)->scan_count, k = 0;
     if (cnt > AN_SCAN_MAX) cnt = AN_SCAN_MAX;
     for (; k < cnt && k < max; k++) {
@@ -109,14 +116,14 @@ static void scan_copy(struct NetBase *n, struct IOStdReq *io)
     }
     io->io_Actual = k;
 }
-static void q_run(struct NetBase *n)
+static void q_run(struct NUnit *n)
 {
     volatile struct an_unit *u = U(n);
     if (n->busy) {
         barrier();
         int done = u->cmd_done == n->busy_seq;
         /* the kernel may be busy starting the chip for some seconds before it reads a command */
-        int late = n->ticks - n->busy_t0 > (n->q[n->qhead % NQ].cmd == AN_CMD_SCAN ? 45u * 50 : 30u * 50);
+        int late = n->nb->ticks - n->busy_t0 > (n->q[n->qhead % NQ].cmd == AN_CMD_SCAN ? 45u * 50 : 30u * 50);
         if (!done && !late) return;
         barrier();                                  /* cmd_result and the scan table after cmd_done */
         struct kcmd *k = &n->q[n->qhead % NQ];
@@ -136,11 +143,11 @@ static void q_run(struct NetBase *n)
     n->busy_seq = u->cmd_seq + 1;
     u->cmd_seq = n->busy_seq;
     n->busy = 1;
-    n->busy_t0 = n->ticks;
+    n->busy_t0 = n->nb->ticks;
 }
 
 /* ---- receive ------------------------------------------------------------------ */
-static UBYTE *pool_get(struct NetBase *n)
+static UBYTE *pool_get(struct NUnit *n)
 {
     UBYTE *b = 0;
     Disable();
@@ -148,13 +155,13 @@ static UBYTE *pool_get(struct NetBase *n)
     Enable();
     return b;
 }
-static void pool_put(struct NetBase *n, UBYTE *b)
+static void pool_put(struct NUnit *n, UBYTE *b)
 {
     Disable();
     n->freelist[n->nfree++] = (UWORD)((ULONG)(b - n->pool) / BUFSZ);
     Enable();
 }
-static void rx_flush(struct NetBase *n)
+static void rx_flush(struct NUnit *n)
 {
     if (!n->nrxd) return;
     ULONG c = n->nrxd, took = 0;
@@ -162,12 +169,12 @@ static void rx_flush(struct NetBase *n)
     for (ULONG i = took; i < c; i++) pool_put(n, n->rxd[i].nrd_Cookie);
     n->nrxd = 0;
 }
-static void rx_all(struct NetBase *n)
+static void rx_all(struct NUnit *n)
 {
     volatile struct an_unit *u = U(n);
     while (u->rx_tail != u->rx_head) {
         barrier();
-        volatile struct an_slot *s = (volatile struct an_slot *)(n->b + AN_OFF_RX(0) + (u->rx_tail % AN_RX_SLOTS) * AN_SLOT_BYTES);
+        volatile struct an_slot *s = (volatile struct an_slot *)(n->nb->b + AN_OFF_RX(n->idx) + (u->rx_tail % AN_RX_SLOTS) * AN_SLOT_BYTES);
         ULONG len = s->len;
         UBYTE *buf = (n->attached && n->started && len <= BUFSZ) ? pool_get(n) : 0;
         if (buf) {
@@ -190,18 +197,18 @@ static void rx_all(struct NetBase *n)
 }
 
 /* ---- transmit ------------------------------------------------------------------ */
-static void tx_done_flush(struct NetBase *n)
+static void tx_done_flush(struct NUnit *n)
 {
     if (!n->ndone) return;
     if (n->attached && n->sops->nso_TxDone) n->sops->nso_TxDone(n->stackctx, n->done, n->ndone);
     n->ndone = 0;
 }
-static void tx_all(struct NetBase *n)
+static void tx_all(struct NUnit *n)
 {
     volatile struct an_unit *u = U(n);
     while (n->tx_tail != n->tx_head && u->tx_head - u->tx_tail < AN_TX_SLOTS) {
         struct txent *t = &n->tx[n->tx_tail % TXRING];
-        volatile struct an_slot *s = (volatile struct an_slot *)(n->b + AN_OFF_TX(0) + (u->tx_head % AN_TX_SLOTS) * AN_SLOT_BYTES);
+        volatile struct an_slot *s = (volatile struct an_slot *)(n->nb->b + AN_OFF_TX(n->idx) + (u->tx_head % AN_TX_SLOTS) * AN_SLOT_BYTES);
         ULONG len = 0;
         for (UWORD i = 0; i < t->nseg; i++) {
             const UBYTE *p = t->sg[i].nsg_Data;
@@ -222,7 +229,7 @@ static void tx_all(struct NetBase *n)
     }
     tx_done_flush(n);
 }
-static void tx_drop_all(struct NetBase *n)
+static void tx_drop_all(struct NUnit *n)
 {
     while (n->tx_tail != n->tx_head) {
         n->done[n->ndone++] = n->tx[n->tx_tail % TXRING].cookie;
@@ -236,7 +243,7 @@ static void tx_drop_all(struct NetBase *n)
 /* ---- netdev entries (the stack, any task) ------------------------------------------ */
 static LONG ndo_TxSubmit(APTR ctx, const struct NetDevTxDesc *d, ULONG count)
 {
-    struct NetBase *n = ctx;
+    struct NUnit *n = ctx;
     ULONG k = 0;
     Disable();
     while (k < count && n->tx_head - n->tx_tail < TXRING) {
@@ -251,7 +258,7 @@ static LONG ndo_TxSubmit(APTR ctx, const struct NetDevTxDesc *d, ULONG count)
     Enable();
     return (LONG)k;
 }
-static VOID ndo_TxKick(APTR ctx) { struct NetBase *n = ctx; Disable(); if (n->task) Signal(n->task, n->sig_kick); Enable(); }
+static VOID ndo_TxKick(APTR ctx) { struct NUnit *n = ctx; Disable(); if (n->nb->task) Signal(n->nb->task, n->nb->sig_kick); Enable(); }
 static VOID ndo_RxRelease(APTR ctx, APTR cookie) { pool_put(ctx, cookie); }
 static APTR ndo_DmaAlloc(APTR ctx, ULONG size, ULONG align)
 {
@@ -268,7 +275,7 @@ static APTR ndo_DmaAlloc(APTR ctx, ULONG size, ULONG align)
 static VOID ndo_DmaFree(APTR ctx, APTR p, ULONG size) { (void)ctx; (void)size; if (p) FreeMem((APTR)((ULONG *)p)[-1], ((ULONG *)p)[-2]); }
 static const struct NetDevDrvOps drv_ops = { ndo_TxSubmit, ndo_TxKick, ndo_RxRelease, ndo_DmaAlloc, ndo_DmaFree };
 
-static void link_check(struct NetBase *n)
+static void link_check(struct NUnit *n)
 {
     volatile struct an_unit *u = U(n);
     UBYTE up = u->link ? 1 : 0;
@@ -281,13 +288,13 @@ static void link_check(struct NetBase *n)
 }
 
 /* ---- netdev commands -------------------------------------------------------------- */
-static void pool_free(struct NetBase *n)
+static void pool_free(struct NUnit *n)
 {
     if (n->pool) FreeMem(n->pool, n->poolsize);
     n->pool = 0; n->freelist = 0; n->npool = n->nfree = 0;
 }
-static int mac_known(struct NetBase *n) { volatile UBYTE *m = U(n)->mac; return (m[0] | m[1] | m[2] | m[3] | m[4] | m[5]) != 0; }
-static LONG do_attach(struct NetBase *n, struct IOStdReq *io)
+static int mac_known(struct NUnit *n) { volatile UBYTE *m = U(n)->mac; return (m[0] | m[1] | m[2] | m[3] | m[4] | m[5]) != 0; }
+static LONG do_attach(struct NUnit *n, struct IOStdReq *io)
 {
     struct NetDevAttach *a = io->io_Data;
     if (!a || io->io_Length < sizeof *a) return NDERR_BADPARAMS;
@@ -326,7 +333,7 @@ static LONG do_attach(struct NetBase *n, struct IOStdReq *io)
     n->link = 0;
     return 0;
 }
-static void fill_status(struct NetBase *n, struct WifiStatus *s)
+static void fill_status(struct NUnit *n, struct WifiStatus *s)
 {
     volatile struct an_unit *u = U(n);
     memset(s, 0, sizeof *s);
@@ -349,24 +356,27 @@ static void fill_status(struct NetBase *n, struct WifiStatus *s)
     scpy(s->ws_FwVersion, u->fwver, sizeof s->ws_FwVersion);
     scpy(s->ws_Message, u->msg, sizeof s->ws_Message);
 }
-static void log_copy(struct NetBase *n, struct IOStdReq *io)
+static void log_copy(struct NUnit *n, struct IOStdReq *io)
 {
     char *d = io->io_Data;
-    ULONG wr = H(n)->log_wr, have = wr < AN_LOG_BYTES ? wr : AN_LOG_BYTES, max = io->io_Length;
+    ULONG wr = H(n->nb)->log_wr, have = wr < AN_LOG_BYTES ? wr : AN_LOG_BYTES, max = io->io_Length;
     if (have > max) have = max;
-    volatile const char *r = (volatile const char *)(n->b + AN_OFF_LOG);
+    volatile const char *r = (volatile const char *)(n->nb->b + AN_OFF_LOG);
     for (ULONG i = 0; i < have; i++) d[i] = r[(wr - have + i) % AN_LOG_BYTES];
     io->io_Actual = have;
 }
 
 /* 1: the request is kept (answered later) */
-static int command(struct NetBase *n, struct IOStdReq *io)
+static int command(struct NUnit *n, struct IOStdReq *io)
 {
     LONG err = 0;
     switch (io->io.io_Command) {
     case NETDEV_CMD_ATTACH:
         if (n->attach_io) { err = NDERR_BUSY; break; }
-        if (!mac_known(n)) { n->attach_io = io; n->attach_t0 = n->ticks; return 1; }   /* the chip is still starting */
+        if (!mac_known(n)) {                        /* the chip is still starting, or (Ethernet) off */
+            if (n->idx == 1 && (U(n)->state == AN_ST_OFF || U(n)->state == AN_ST_FAILED)) q_add(n, AN_CMD_START, 0, 0, 0);
+            n->attach_io = io; n->attach_t0 = n->nb->ticks; return 1;
+        }
         err = do_attach(n, io);
         break;
     case NETDEV_CMD_DETACH:
@@ -416,22 +426,25 @@ static int command(struct NetBase *n, struct IOStdReq *io)
         struct NetDevLinkState *l = io->io_Data;
         if (!l) { err = NDERR_BADPARAMS; break; }
         l->ndls_Flags = U(n)->link ? NDLF_UP | NDLF_FULL_DUPLEX : 0;
-        l->ndls_SpeedMbps = U(n)->link ? (U(n)->speed_mbps ? U(n)->speed_mbps : 54) : 0;
+        l->ndls_SpeedMbps = U(n)->link ? (U(n)->speed_mbps ? U(n)->speed_mbps : (n->idx ? 1000 : 54)) : 0;
         break;
     }
     case NETDEV_CMD_SET_MAC: err = NDERR_BADPARAMS; break;
     case WIFI_CMD_START: q_add(n, AN_CMD_START, 0, 0, io); return 1;
     case WIFI_CMD_JOIN:
+        if (n->idx != 0) { err = IOERR_NOCMD; break; }
         if (!io->io_Data || io->io_Length < sizeof(struct WifiJoin)) { err = NDERR_BADPARAMS; break; }
         q_add(n, AN_CMD_JOIN, io->io_Data, sizeof(struct WifiJoin), io);
         return 1;
     case WIFI_CMD_RECONNECT: {                      /* a JOIN without a name: the last network again */
+        if (n->idx != 0) { io->io.io_Error = IOERR_NOCMD; return 0; }
         struct WifiJoin j;
         memset(&j, 0, sizeof j);
         q_add(n, AN_CMD_JOIN, &j, sizeof j, io);
         return 1;
     }
     case WIFI_CMD_SCAN:
+        if (n->idx != 0) { err = IOERR_NOCMD; break; }
         if (!io->io_Data) { err = NDERR_BADPARAMS; break; }
         q_add(n, AN_CMD_SCAN, 0, 0, io);
         return 1;
@@ -451,9 +464,12 @@ void dev_irq(struct NetBase *n)
 {
     if (!n->b || !n->task) return;
     volatile struct an_hdr *h = H(n);
-    volatile struct an_unit *u = U(n);
     if (h->irq) { h->irq = 0; Signal(n->task, n->sig_irq); return; }
-    if (u->rx_head != u->rx_tail || (n->busy && u->cmd_done == n->busy_seq)) Signal(n->task, n->sig_irq);
+    for (int i = 0; i < AN_UNITS; i++) {
+        struct NUnit *nu = &n->u[i];
+        volatile struct an_unit *u = U(nu);
+        if ((nu->started && u->rx_head != u->rx_tail) || (nu->busy && u->cmd_done == nu->busy_seq)) { Signal(n->task, n->sig_irq); return; }
+    }
 }
 
 /* ---- the process -------------------------------------------------------------------- */
@@ -467,9 +483,9 @@ static void net_proc(void)
     struct timerequest *tr = tp ? CreateIORequest(tp, sizeof *tr) : 0;
     int timer_ok = tr && !OpenDevice("timer.device", 1, tr, 0);      /* UNIT_VBLANK */
     Forbid();
-    n->unit.unit_MsgPort.mp_SigBit = (UBYTE)sb_port;
-    n->unit.unit_MsgPort.mp_SigTask = n->task;
-    n->unit.unit_MsgPort.mp_Flags = PA_SIGNAL;
+    n->port.mp_SigBit = (UBYTE)sb_port;
+    n->port.mp_SigTask = n->task;
+    n->port.mp_Flags = PA_SIGNAL;
     n->running = 1;
     n->alive = 1;
     Signal(n->waiter, SIGF_SINGLE);
@@ -496,15 +512,21 @@ static void net_proc(void)
         Wait(n->sig_port | n->sig_irq | n->sig_kick | tmask);
         if (tout && CheckIO(tr)) { WaitIO(tr); tout = 0; n->ticks++; }
         struct IOStdReq *io;
-        while ((io = GetMsg(&n->unit.unit_MsgPort))) if (!command(n, io)) ReplyMsg(io);
-        if (n->attach_io) {
-            if (mac_known(n)) { io = n->attach_io; n->attach_io = 0; io->io.io_Error = (BYTE)do_attach(n, io); ReplyMsg(io); }
-            else if (n->ticks - n->attach_t0 > 30u * 50) { io = n->attach_io; n->attach_io = 0; io->io.io_Error = IOERR_OPENFAIL; ReplyMsg(io); }
+        while ((io = GetMsg(&n->port))) {
+            struct NUnit *nu = (struct NUnit *)io->io.io_Unit;
+            if (!command(nu, io)) ReplyMsg(io);
         }
-        q_run(n);
-        rx_all(n);
-        if (n->attached && n->started) tx_all(n);
-        link_check(n);
+        for (int i = 0; i < AN_UNITS; i++) {
+            struct NUnit *nu = &n->u[i];
+            if (nu->attach_io) {
+                if (mac_known(nu)) { io = nu->attach_io; nu->attach_io = 0; io->io.io_Error = (BYTE)do_attach(nu, io); ReplyMsg(io); }
+                else if (n->ticks - nu->attach_t0 > 30u * 50) { io = nu->attach_io; nu->attach_io = 0; io->io.io_Error = IOERR_OPENFAIL; ReplyMsg(io); }
+            }
+            q_run(nu);
+            if (nu->attached) rx_all(nu);
+            if (nu->attached && nu->started) tx_all(nu);
+            link_check(nu);
+        }
     }
 }
 
@@ -531,9 +553,16 @@ ULONG dev_init(struct NetBase *n, APTR seglist)
     n->lib.lib_Version = VERSION;
     n->lib.lib_Revision = REVISION;
     n->lib.lib_IdString = (APTR)IDSTRING;
-    n->unit.unit_MsgPort.mp_Node.ln_Type = NT_MSGPORT;
-    n->unit.unit_MsgPort.mp_Flags = PA_IGNORE;
-    NewList(&n->unit.unit_MsgPort.mp_MsgList);
+    n->port.mp_Node.ln_Type = NT_MSGPORT;
+    n->port.mp_Flags = PA_IGNORE;
+    NewList(&n->port.mp_MsgList);
+    for (int i = 0; i < AN_UNITS; i++) {
+        n->u[i].nb = n;
+        n->u[i].idx = (UWORD)i;
+        n->u[i].unit.unit_MsgPort.mp_Node.ln_Type = NT_MSGPORT;
+        n->u[i].unit.unit_MsgPort.mp_Flags = PA_IGNORE;
+        NewList(&n->u[i].unit.unit_MsgPort.mp_MsgList);
+    }
     InitSemaphore(n->sem);
     g_nb = n;
     return (ULONG)n;
@@ -544,8 +573,10 @@ LONG dev_open(struct NetBase *n, struct IOStdReq *io, ULONG unit, ULONG flags)
     (void)flags;
     io->io.io_Error = IOERR_OPENFAIL;
     find_board(n);
-    /* unit 1, the kernel's Ethernet: not there yet */
-    if (!n->b || unit != 0 || U(n)->kind == AN_KIND_NONE) return -1;
+    /* unit 0 WiFi, unit 1 Ethernet: there when the kernel serves them (eth=off: no unit 1) */
+    if (!n->b || unit >= AN_UNITS) return -1;
+    struct NUnit *nu = &n->u[unit];
+    if (U(nu)->kind == AN_KIND_NONE) return -1;
     n->lib.lib_OpenCnt++;
     ObtainSemaphore(n->sem);
     if (!n->running) {
@@ -563,18 +594,19 @@ LONG dev_open(struct NetBase *n, struct IOStdReq *io, ULONG unit, ULONG flags)
     }
     ReleaseSemaphore(n->sem);
     if (!n->running) { n->lib.lib_OpenCnt--; return -1; }
-    io->io.io_Unit = &n->unit;
+    io->io.io_Unit = &nu->unit;
     io->io.io_Error = 0;
-    n->unit.unit_OpenCnt++;
+    nu->unit.unit_OpenCnt++;
     n->lib.lib_Flags &= (UBYTE)~LIBF_DELEXP;
     return 0;
 }
 
 ULONG dev_close(struct NetBase *n, struct IOStdReq *io)
 {
+    struct NUnit *nu = (struct NUnit *)io->io.io_Unit;
     io->io.io_Unit = (struct Unit *)-1;
     io->io.io_Device = (APTR)-1;
-    if (n->unit.unit_OpenCnt) n->unit.unit_OpenCnt--;
+    if ((ULONG)nu != (ULONG)-1 && nu && nu->unit.unit_OpenCnt) nu->unit.unit_OpenCnt--;
     if (n->lib.lib_OpenCnt) n->lib.lib_OpenCnt--;
     return 0;                       /* the process stays: the network keeps running */
 }
@@ -583,6 +615,7 @@ ULONG dev_expunge(struct NetBase *n) { n->lib.lib_Flags |= LIBF_DELEXP; return 0
 
 void dev_beginio(struct NetBase *n, struct IOStdReq *io)
 {
+    struct NUnit *nu = (struct NUnit *)io->io.io_Unit;
     io->io.io_Message.mn_Node.ln_Type = NT_MESSAGE;
     io->io.io_Error = 0;
     UWORD c = io->io.io_Command;
@@ -604,19 +637,19 @@ void dev_beginio(struct NetBase *n, struct IOStdReq *io)
             }
         } else if (c == WIFI_CMD_STATUS) {
             if (io->io_Length < sizeof(struct WifiStatus)) io->io.io_Error = NDERR_BADPARAMS;
-            else { fill_status(n, io->io_Data); io->io_Actual = sizeof(struct WifiStatus); }
-        } else log_copy(n, io);
+            else { fill_status(nu, io->io_Data); io->io_Actual = sizeof(struct WifiStatus); }
+        } else log_copy(nu, io);
         if (!(io->io.io_Flags & IOF_QUICK)) ReplyMsg(io);
         return;
     }
     io->io.io_Flags &= (UBYTE)~IOF_QUICK;
-    PutMsg(&n->unit.unit_MsgPort, io);
+    PutMsg(&n->port, io);
 }
 
 ULONG dev_abortio(struct NetBase *n, struct IOStdReq *io)
 {
     Forbid();
-    for (struct Node *x = n->unit.unit_MsgPort.mp_MsgList.lh_Head; x->ln_Succ; x = x->ln_Succ)
+    for (struct Node *x = n->port.mp_MsgList.lh_Head; x->ln_Succ; x = x->ln_Succ)
         if (x == (struct Node *)io) {
             Remove(x);
             io->io.io_Error = IOERR_ABORTED;

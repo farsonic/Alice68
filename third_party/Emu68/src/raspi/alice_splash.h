@@ -20,6 +20,8 @@ struct al_status {
     int hdf_boot, hdf_other, hdf_left;  /* hardfiles: bootable, mounted not bootable, left out; -1 not known yet */
     const char *wifi;           /* the WiFi's state in a few words; 0 = no WiFi chip/driver (yet) */
     int wifi_col;               /* 0 waiting, 1 good, 2 failed */
+    const char *eth;            /* the kernel's Ethernet, as the WiFi; 0 or "" = not in use */
+    int eth_col;
 };
 
 void al_setup(uint16_t *fb, uint32_t pitch_bytes, uint32_t w, uint32_t h);
