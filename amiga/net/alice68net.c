@@ -18,10 +18,13 @@
 
 #define DEVNAME     "alice68net.device"
 #define VERSION     2
-#define REVISION    1
-#define IDSTRING    "alice68net 2.1 (07.11.2026)\r\n"
+#define REVISION    2
+#define IDSTRING    "alice68net 2.2 (07.11.2026)\r\n"
 
-#define BUFSZ       1536            /* one receive buffer */
+#define BUFSZ       2048            /* one receive buffer: HEADROOM, the frame, spare room after it */
+#define HEADROOM    64              /* bytes before the frame, as genet.device leaves (its status block):
+                                       a stack may build a reply in place and reach in front of it */
+#define FRAMEMAX    1536
 #define TXRING      64
 #define MAXSEGS     4
 #define RXBATCH     16
@@ -63,7 +66,7 @@ struct NUnit {                      /* one unit of the board: 0 WiFi, 1 Ethernet
     ULONG   ndone;
     struct NetDevRxDesc rxd[RXBATCH];
     ULONG   nrxd, rxbatch_max;
-    ULONG   tx_drop, rx_nobuf;
+    ULONG   tx_drop, rx_nobuf, bad_release, bad_tx;
 };
 
 struct NetBase {
@@ -87,6 +90,18 @@ static struct NetBase *g_nb;
 void *memcpy(void *d, const void *s, unsigned long n) { UBYTE *a = d; const UBYTE *b = s; while (n--) *a++ = *b++; return d; }
 void *memset(void *d, int c, unsigned long n) { UBYTE *a = d; while (n--) *a++ = (UBYTE)c; return d; }
 static void scpy(char *d, const volatile char *s, unsigned max) { unsigned i = 0; while (s[i] && i + 1 < max) { d[i] = s[i]; i++; } d[i] = 0; }
+
+/* one line to the kernel's log (aga_glue forwards "[alice68" serial lines): only for things
+   that should never happen, and only the first few */
+static void plog(const char *s, ULONG v)
+{
+    static const char hx[] = "0123456789abcdef";
+    for (const char *p = "[alice68net] "; *p; p++) RawPutChar(*p);
+    for (; *s; s++) RawPutChar(*s);
+    RawPutChar(' ');
+    for (int i = 28; i >= 0; i -= 4) RawPutChar(hx[(v >> i) & 15]);
+    RawPutChar('\n');
+}
 
 static inline volatile struct an_hdr *H(struct NetBase *n) { return (volatile struct an_hdr *)n->b; }
 static inline volatile struct an_unit *U(struct NUnit *n) { return (volatile struct an_unit *)(n->nb->b + AN_OFF_UNIT(n->idx)); }
@@ -151,15 +166,21 @@ static UBYTE *pool_get(struct NUnit *n)
 {
     UBYTE *b = 0;
     Disable();
-    if (n->nfree) b = n->pool + (ULONG)n->freelist[--n->nfree] * BUFSZ;
+    if (n->nfree && n->pool) b = n->pool + (ULONG)n->freelist[--n->nfree] * BUFSZ;
     Enable();
     return b;
 }
 static void pool_put(struct NUnit *n, UBYTE *b)
 {
+    /* a buffer that is not ours, or one given back twice, would push the free list past its end
+       (into whoever's memory follows the pool): refuse it, count it, say so */
+    ULONG off = (ULONG)(b - n->pool);
+    int bad = 0;
     Disable();
-    n->freelist[n->nfree++] = (UWORD)((ULONG)(b - n->pool) / BUFSZ);
+    if (!n->pool || off >= n->npool * BUFSZ || off % BUFSZ || n->nfree >= n->npool) bad = 1;
+    else n->freelist[n->nfree++] = (UWORD)(off / BUFSZ);
     Enable();
+    if (bad && ++n->bad_release <= 5) plog("RxRelease of a buffer that is not out:", (ULONG)b);
 }
 static void rx_flush(struct NUnit *n)
 {
@@ -176,13 +197,13 @@ static void rx_all(struct NUnit *n)
         barrier();
         volatile struct an_slot *s = (volatile struct an_slot *)(n->nb->b + AN_OFF_RX(n->idx) + (u->rx_tail % AN_RX_SLOTS) * AN_SLOT_BYTES);
         ULONG len = s->len;
-        UBYTE *buf = (n->attached && n->started && len <= BUFSZ) ? pool_get(n) : 0;
+        UBYTE *buf = (n->attached && n->started && len <= FRAMEMAX) ? pool_get(n) : 0;
         if (buf) {
             const volatile ULONG *src = (const volatile ULONG *)s->data;
-            ULONG *dst = (ULONG *)buf;
+            ULONG *dst = (ULONG *)(buf + HEADROOM);
             for (ULONG i = 0; i < (len + 3) / 4; i++) dst[i] = src[i];
             struct NetDevRxDesc *r = &n->rxd[n->nrxd++];
-            r->nrd_Data = buf;
+            r->nrd_Data = buf + HEADROOM;
             r->nrd_Len = len;
             r->nrd_Flags = s->flags & AN_SF_BCAST ? NDRF_BCAST : s->flags & AN_SF_MCAST ? NDRF_MCAST : 0;
             r->nrd_CsumRaw = 0;
@@ -247,11 +268,17 @@ static LONG ndo_TxSubmit(APTR ctx, const struct NetDevTxDesc *d, ULONG count)
     ULONG k = 0;
     Disable();
     while (k < count && n->tx_head - n->tx_tail < TXRING) {
-        if (d[k].ntd_NumSegs == 0 || d[k].ntd_NumSegs > MAXSEGS) break;
         struct txent *t = &n->tx[n->tx_head % TXRING];
         t->cookie = d[k].ntd_Cookie;
-        t->nseg = d[k].ntd_NumSegs;
-        for (UWORD i = 0; i < t->nseg; i++) t->sg[i] = d[k].ntd_Segs[i];
+        /* a descriptor we cannot send is taken and completed as dropped (nseg 0): a short
+           return would tell the stack to wait for a TxDone that never makes room for it */
+        UWORD ns = d[k].ntd_NumSegs;
+        if (ns == 0 || ns > MAXSEGS) { ns = 0; n->bad_tx++; }
+        for (UWORD i = 0; i < ns; i++) {
+            t->sg[i] = d[k].ntd_Segs[i];
+            if (!t->sg[i].nsg_Data || t->sg[i].nsg_Len > FRAMEMAX) { ns = 0; n->bad_tx++; break; }
+        }
+        t->nseg = ns;
         n->tx_head++;
         k++;
     }
