@@ -199,6 +199,8 @@ without asking for each step. Stop and ask only where noted.
    - Set `reviewed` in `tools/upstreams.tsv` to what you reviewed, whether taken in or
      skipped.
    - Update `docs/PROVENANCE.md` and the versions in `THIRD_PARTY_NOTICES.md`.
+   - Run `python3 tools/emu68-changes.py` and commit `docs/EMU68-CHANGES.md` (it stops if a
+     changed Emu68 file has no note: add one). Also after any change to an Emu68 file of its own.
    - Add an "Unreleased" section to `RELEASE-NOTES.md` saying what changed and what was
      skipped and why.
 6. **Push `next`.** Then report:

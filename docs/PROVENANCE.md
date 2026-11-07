@@ -42,3 +42,6 @@ Later Emu68 changes are taken on the `upstream` branch and merged into `next`:
 
 `git log -p` from commit 2 onwards shows every change made to the upstream
 files. `third_party/Emu68/AGA-PISTORM-SOURCE.txt` is AGA-PiStorm's own note.
+
+`docs/EMU68-CHANGES.md` (made by `tools/emu68-changes.py`) lists every Emu68 file that differs
+from upstream `0ba3a89`, layer by layer, with the reason for each.

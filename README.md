@@ -32,7 +32,8 @@ Emu68 runs. It is a Pi 4 build of three projects, plus a Pi 4 USB stack of its o
   - a boot splash with live logs.
 
 Credits and licences: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md),
-[LICENSE](LICENSE). Please report Alice68 problems here, not to the upstream projects.
+[LICENSE](LICENSE). Every Emu68 file that differs from upstream, who changed it and why:
+[docs/EMU68-CHANGES.md](docs/EMU68-CHANGES.md). Please report Alice68 problems here, not to the upstream projects.
 
 > **Status:** tested on a Raspberry Pi 4. It boots to Workbench at 1080p. A USB-A
 > keyboard and mouse work from power-on. A Realtek RTL8156 network adapter on Neptune
