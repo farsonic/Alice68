@@ -228,6 +228,11 @@ carries it out on the Pi's USB, WiFi or Ethernet hardware, writes the answer bac
 raises the Amiga's level-2 (PORTS) interrupt, as a real card would. The 68k never
 waits for the hardware.
 
+[![Alice68's expansion cards: the Pi 4's hardware driven by the kernel on CPU1, the virtual USB and network cards with their memory maps, and the AmigaOS drivers that use them](docs/images/alice68-cards.png)](docs/images/alice68-cards.png)
+
+<details>
+<summary>The same as text</summary>
+
 ```
        Raspberry Pi 4 hardware            Alice68 kernel             virtual Zorro II cards              AmigaOS (68k on CPU0)
      ---------------------------     ----------------------     ------------------------------     ------------------------------
@@ -251,6 +256,8 @@ waits for the hardware.
                                                             |                                         (netdev)
                                                             +---- level-2 (PORTS) interrupt ----> 68k: "a card has news"
 ```
+
+</details>
 
 | Card | Zorro II ID (manufacturer/product) | Size | AmigaOS driver | Done by the kernel | In |
 |---|---|---|---|---|---|

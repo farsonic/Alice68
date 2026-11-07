@@ -1,0 +1,341 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1360" viewBox="0 0 1800 1360">
+<defs>
+ <linearGradient id="pcb" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2f8f4e"/><stop offset="1" stop-color="#1b6236"/></linearGradient>
+ <linearGradient id="pcb2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1f6f8b"/><stop offset="1" stop-color="#134a5e"/></linearGradient>
+ <linearGradient id="pcb3" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6b4fa0"/><stop offset="1" stop-color="#43306a"/></linearGradient>
+ <linearGradient id="metal" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f1f3f5"/><stop offset=".5" stop-color="#ced4da"/><stop offset="1" stop-color="#adb5bd"/></linearGradient>
+ <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe08a"/><stop offset="1" stop-color="#c9971c"/></linearGradient>
+ <linearGradient id="chip" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3b3f45"/><stop offset="1" stop-color="#1c1e22"/></linearGradient>
+ <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f8f9fb"/><stop offset="1" stop-color="#eef1f5"/></linearGradient>
+ <linearGradient id="wbtitle" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6d8ac0"/><stop offset="1" stop-color="#4a6aa5"/></linearGradient>
+ <filter id="sh" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="2" dy="3" stdDeviation="3" flood-opacity=".28"/></filter>
+ <marker id="arO" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#e8590c"/></marker>
+ <marker id="arR" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#d6336c"/></marker>
+ <marker id="arB" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1c7ed6"/></marker>
+ <marker id="arG" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#495057"/></marker>
+ <pattern id="via" width="14" height="14" patternUnits="userSpaceOnUse"><circle cx="7" cy="7" r="1.1" fill="#ffffff" opacity=".18"/></pattern>
+</defs>
+<rect x="0" y="0" width="1800" height="1360" rx="0" fill="url(#bg)" stroke="none" stroke-width="1" />
+<text x="40" y="52" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="34" fill="#1d2433" text-anchor="start" font-weight="bold" >Alice68's expansion cards</text>
+<text x="40" y="82" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="17" fill="#495057" text-anchor="start" font-weight="normal" >How the Raspberry Pi 4's USB, WiFi and Ethernet reach AmigaOS: the Alice68 kernel builds two Zorro II cards that Kickstart finds like real ones.</text>
+<text x="30" y="116" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" fill="#868e96" text-anchor="start" font-weight="bold" letter-spacing="2">RASPBERRY PI 4 HARDWARE</text>
+<text x="30" y="135" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#868e96" text-anchor="start" font-weight="normal" >what is really there, driven by the Alice68 kernel</text>
+<text x="610" y="116" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" fill="#868e96" text-anchor="start" font-weight="bold" letter-spacing="2">VIRTUAL ZORRO II CARDS</text>
+<text x="610" y="135" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#868e96" text-anchor="start" font-weight="normal" >shared memory the kernel and the drivers both use</text>
+<text x="1270" y="116" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" fill="#868e96" text-anchor="start" font-weight="bold" letter-spacing="2">AMIGAOS</text>
+<text x="1270" y="135" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#868e96" text-anchor="start" font-weight="normal" >68k code, running on CPU0 (Emu68)</text>
+<rect x="30" y="165" width="540" height="690" rx="22" fill="url(#pcb)" stroke="#145028" stroke-width="2" filter="url(#sh)"/>
+<rect x="30" y="165" width="540" height="690" rx="22" fill="url(#via)" stroke="none" stroke-width="1" />
+<circle cx="56" cy="191" r="11" fill="#d4af37"/><circle cx="56" cy="191" r="6" fill="#eef1f5"/>
+<circle cx="544" cy="191" r="11" fill="#d4af37"/><circle cx="544" cy="191" r="6" fill="#eef1f5"/>
+<circle cx="56" cy="829" r="11" fill="#d4af37"/><circle cx="56" cy="829" r="6" fill="#eef1f5"/>
+<circle cx="544" cy="829" r="11" fill="#d4af37"/><circle cx="544" cy="829" r="6" fill="#eef1f5"/>
+<text x="90" y="207" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="20" fill="#e9f5ec" text-anchor="start" font-weight="bold" >Raspberry Pi 4</text>
+<text x="90" y="227" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#bfe3c9" text-anchor="start" font-weight="normal" >Pi 400 and CM4 alike (CM4: other WiFi chip)</text>
+<rect x="142" y="402" width="286" height="286" rx="8" fill="#20252b" stroke="none" stroke-width="1" filter="url(#sh)"/>
+<rect x="150" y="410" width="270" height="270" rx="6" fill="url(#metal)" stroke="#868e96" stroke-width="1" />
+<text x="285" y="432" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#343a40" text-anchor="middle" font-weight="bold" >BCM2711  -  4 ARM cores</text>
+<rect x="162" y="444" width="119" height="103" rx="6" fill="#adb5bd" stroke="#495057" stroke-width="1" />
+<text x="222" y="470" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="18" fill="#212529" text-anchor="middle" font-weight="bold" >CPU0</text>
+<text x="222" y="496" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#212529" text-anchor="middle" font-weight="bold" >Emu68: the 68k</text>
+<text x="222" y="514" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" fill="#212529" text-anchor="middle" font-weight="normal" >JIT - runs AmigaOS</text>
+<text x="222" y="534" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" fill="#212529" text-anchor="middle" font-weight="normal" >translated to ARM</text>
+<rect x="289" y="444" width="119" height="103" rx="6" fill="#e8590c" stroke="#495057" stroke-width="1" />
+<text x="349" y="470" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="18" fill="#ffffff" text-anchor="middle" font-weight="bold" >CPU1</text>
+<text x="349" y="496" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#ffffff" text-anchor="middle" font-weight="bold" >Alice68 I/O kernel</text>
+<text x="349" y="514" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" fill="#ffffff" text-anchor="middle" font-weight="normal" >USB, WiFi, Ethernet</text>
+<text x="349" y="534" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" fill="#ffffff" text-anchor="middle" font-weight="normal" >own core, never waits</text>
+<rect x="162" y="557" width="119" height="103" rx="6" fill="#adb5bd" stroke="#495057" stroke-width="1" />
+<text x="222" y="583" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="18" fill="#212529" text-anchor="middle" font-weight="bold" >CPU2</text>
+<text x="222" y="609" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#212529" text-anchor="middle" font-weight="bold" >Display</text>
+<text x="222" y="627" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" fill="#212529" text-anchor="middle" font-weight="normal" >HVS / HDMI</text>
+<rect x="289" y="557" width="119" height="103" rx="6" fill="#adb5bd" stroke="#495057" stroke-width="1" />
+<text x="349" y="583" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="18" fill="#212529" text-anchor="middle" font-weight="bold" >CPU3</text>
+<text x="349" y="609" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#212529" text-anchor="middle" font-weight="bold" >AGA chipset</text>
+<text x="349" y="627" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" fill="#212529" text-anchor="middle" font-weight="normal" >Alice Lisa Paula</text>
+<rect x="150" y="706" width="250" height="54" rx="4" fill="url(#chip)" stroke="none" stroke-width="1" filter="url(#sh)"/>
+<text x="275" y="729" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#f8f9fa" text-anchor="middle" font-weight="bold" >LPDDR4 RAM - one memory</text>
+<text x="275" y="747" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" fill="#ced4da" text-anchor="middle" font-weight="normal" >the kernel reads Amiga buffers in place</text>
+<rect x="70" y="265" width="150" height="92" rx="6" fill="url(#metal)" stroke="#868e96" stroke-width="1.5" filter="url(#sh)"/>
+<text x="145" y="295" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" fill="#343a40" text-anchor="middle" font-weight="bold" >CYW43455</text>
+<text x="145" y="315" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#495057" text-anchor="middle" font-weight="normal" >WiFi 2.4 / 5 GHz</text>
+<text x="145" y="333" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#495057" text-anchor="middle" font-weight="normal" >on SDIO</text>
+<path d="M85 259 q 20 -26 40 0 t 40 0 t 40 0" stroke="#d4af37" stroke-width="3" fill="none" />
+<rect x="500" y="257" width="84" height="62" rx="4" fill="url(#metal)" stroke="#6c757d" stroke-width="1.5" filter="url(#sh)"/>
+<rect x="512" y="265" width="60" height="18" rx="2" fill="#1f2328" stroke="none" stroke-width="1" />
+<rect x="518" y="269" width="48" height="8" rx="1" fill="#f1f3f5" stroke="none" stroke-width="1" />
+<rect x="512" y="292" width="60" height="18" rx="2" fill="#1f2328" stroke="none" stroke-width="1" />
+<rect x="518" y="296" width="48" height="8" rx="1" fill="#f1f3f5" stroke="none" stroke-width="1" />
+<rect x="500" y="331" width="84" height="62" rx="4" fill="url(#metal)" stroke="#6c757d" stroke-width="1.5" filter="url(#sh)"/>
+<rect x="512" y="339" width="60" height="18" rx="2" fill="#1f2328" stroke="none" stroke-width="1" />
+<rect x="518" y="343" width="48" height="8" rx="1" fill="#1c7ed6" stroke="none" stroke-width="1" />
+<rect x="512" y="366" width="60" height="18" rx="2" fill="#1f2328" stroke="none" stroke-width="1" />
+<rect x="518" y="370" width="48" height="8" rx="1" fill="#1c7ed6" stroke="none" stroke-width="1" />
+<text x="542" y="415" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#ffffff" text-anchor="middle" font-weight="bold" >USB-A x4</text>
+<text x="542" y="431" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" fill="#d3f9d8" text-anchor="middle" font-weight="normal" >2.0 + 3.0</text>
+<rect x="330" y="300" width="120" height="54" rx="4" fill="url(#chip)" stroke="none" stroke-width="1" filter="url(#sh)"/>
+<text x="390" y="324" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#fff" text-anchor="middle" font-weight="bold" >VL805</text>
+<text x="390" y="341" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" fill="#ced4da" text-anchor="middle" font-weight="normal" >USB 3 host</text>
+<line x1="500" y1="288" x2="450" y2="320" stroke="#d4af37" stroke-width="3" />
+<line x1="500" y1="362" x2="450" y2="338" stroke="#d4af37" stroke-width="3" />
+<rect x="500" y="635" width="84" height="76" rx="4" fill="url(#metal)" stroke="#6c757d" stroke-width="1.5" filter="url(#sh)"/>
+<rect x="514" y="649" width="56" height="48" rx="3" fill="#1f2328" stroke="none" stroke-width="1" />
+<rect x="526" y="687" width="32" height="10" rx="0" fill="#495057" stroke="none" stroke-width="1" />
+<circle cx="512" cy="643" r="4" fill="#51cf66"/><circle cx="572" cy="643" r="4" fill="#fcc419"/>
+<text x="542" y="731" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#fff" text-anchor="middle" font-weight="bold" >Gigabit</text>
+<text x="542" y="747" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#fff" text-anchor="middle" font-weight="bold" >Ethernet</text>
+<rect x="460" y="535" width="100" height="60" rx="4" fill="url(#chip)" stroke="none" stroke-width="1" filter="url(#sh)"/>
+<text x="510" y="558" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" fill="#fff" text-anchor="middle" font-weight="bold" >BCM54213PE</text>
+<text x="510" y="575" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" fill="#ced4da" text-anchor="middle" font-weight="normal" >Ethernet PHY</text>
+<line x1="520" y1="635" x2="530" y2="595" stroke="#d4af37" stroke-width="3" />
+<rect x="70" y="755" width="150" height="62" rx="6" fill="url(#metal)" stroke="#868e96" stroke-width="1.5" filter="url(#sh)"/>
+<rect x="84" y="764" width="100" height="44" rx="4" fill="#1f2328" stroke="none" stroke-width="1" />
+<text x="134" y="791" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#fff" text-anchor="middle" font-weight="bold" >SD card</text>
+<text x="235" y="773" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" fill="#e9f5ec" text-anchor="start" font-weight="normal" >kernel8.img, config.txt, ALICE68/</text>
+<text x="235" y="788" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" fill="#e9f5ec" text-anchor="start" font-weight="normal" >(drivers + installer), WIFI/ (WiFi</text>
+<text x="235" y="803" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" fill="#e9f5ec" text-anchor="start" font-weight="normal" >firmware), your *.hdf hardfiles</text>
+<path d="M220 311 C 310 311 309 364 319 444" stroke="#e8590c" stroke-width="4" fill="none" stroke-linecap="round" opacity=".9"/>
+<text x="245" y="303" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" fill="#ffd8a8" text-anchor="start" font-weight="bold" >SDIO</text>
+<path d="M390 354 C 390 420 359 384 364 444" stroke="#e8590c" stroke-width="4" fill="none" stroke-linecap="round" opacity=".9"/>
+<text x="402" y="380" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" fill="#ffd8a8" text-anchor="start" font-weight="bold" >PCIe</text>
+<path d="M460 565 C 440 565 438 514 428 504" stroke="#e8590c" stroke-width="4" fill="none" stroke-linecap="round" opacity=".9"/>
+<text x="448" y="587" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" fill="#ffd8a8" text-anchor="start" font-weight="bold" >GENET</text>
+<path d="M428 464 L 588 464 L 588 837 L 598 837" stroke="#e8590c" stroke-width="5" fill="none" marker-end="url(#arO)" stroke-linejoin="round"/>
+<text x="436" y="456" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#ffffff" text-anchor="start" font-weight="bold" >CPU1 serves both cards</text>
+<circle cx="588" cy="640" r="13" fill="#e8590c" stroke="#fff" stroke-width="2.5" filter="url(#sh)"/>
+<text x="588" y="645" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" fill="#fff" text-anchor="middle" font-weight="bold" >2</text>
+<path d="M408 533 L 436 533 L 436 878" stroke="#e8590c" stroke-width="3" fill="none" marker-end="url(#arO)" stroke-dasharray="6 5"/>
+<rect x="600" y="815" width="640" height="44" rx="6" fill="#343a40" stroke="none" stroke-width="1" filter="url(#sh)"/>
+<rect x="615" y="823" width="200" height="12" rx="2" fill="#111" stroke="none" stroke-width="1" />
+<rect x="825" y="823" width="200" height="12" rx="2" fill="#111" stroke="none" stroke-width="1" />
+<rect x="1035" y="823" width="200" height="12" rx="2" fill="#111" stroke="none" stroke-width="1" />
+<text x="920" y="852" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#f1f3f5" text-anchor="middle" font-weight="bold" >virtual Zorro II bus  -  Kickstart autoconfigures it at every boot</text>
+<rect x="610" y="184" width="300" height="645" rx="10" fill="url(#pcb)" stroke="#145028" stroke-width="2" filter="url(#sh)"/>
+<rect x="610" y="184" width="300" height="645" rx="10" fill="url(#via)" stroke="none" stroke-width="1" />
+<rect x="630" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="642" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="654" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="666" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="678" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="690" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="702" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="714" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="726" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="738" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="750" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="762" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="774" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="786" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="798" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="810" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="822" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="834" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="846" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="858" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="870" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="624" y="198" width="272" height="66" rx="6" fill="#f8f9fa" stroke="none" stroke-width="1" />
+<text x="760" y="222" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="17" fill="#1d2433" text-anchor="middle" font-weight="bold" >USB card</text>
+<text x="760" y="241" font-family="'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="12" fill="#495057" text-anchor="middle" font-weight="normal" >Zorro II 0x6d73 / 0x6a "USBP"</text>
+<text x="760" y="257" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" fill="#495057" text-anchor="middle" font-weight="normal" >64 KB  -  only in kernel8.img</text>
+<text x="628" y="288" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" fill="#e9ecef" text-anchor="start" font-weight="bold" letter-spacing="1">MEMORY MAP (offset on the card)</text>
+<rect x="624" y="298" width="272" height="44" rx="4" fill="#ffe8cc" stroke="none" stroke-width="1" />
+<text x="632" y="314" font-family="'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11" fill="#1d2433" text-anchor="start" font-weight="bold" >0x0000</text>
+<text x="696" y="314" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#1d2433" text-anchor="start" font-weight="bold" >header + 8 port states</text>
+<text x="696" y="329" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" fill="#343a40" text-anchor="start" font-weight="normal" >magic, interrupt flag, what is plugged in</text>
+<rect x="624" y="346" width="272" height="58" rx="4" fill="#ffd8a8" stroke="none" stroke-width="1" />
+<text x="632" y="362" font-family="'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11" fill="#1d2433" text-anchor="start" font-weight="bold" >0x0200</text>
+<text x="696" y="362" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#1d2433" text-anchor="start" font-weight="bold" >32 request slots, 64 bytes each</text>
+<text x="696" y="377" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" fill="#343a40" text-anchor="start" font-weight="normal" >port, endpoint, length, the 68k</text>
+<text x="696" y="390" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" fill="#343a40" text-anchor="start" font-weight="normal" >buffer address, then the result</text>
+<rect x="624" y="408" width="272" height="22" rx="4" fill="#e9ecef" stroke="none" stroke-width="1" />
+<text x="632" y="424" font-family="'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11" fill="#1d2433" text-anchor="start" font-weight="bold" >0x0C00</text>
+<text x="696" y="424" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#1d2433" text-anchor="start" font-weight="bold" >debug status</text>
+<rect x="624" y="434" width="272" height="44" rx="4" fill="#d0ebff" stroke="none" stroke-width="1" />
+<text x="632" y="450" font-family="'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11" fill="#1d2433" text-anchor="start" font-weight="bold" >0x1000</text>
+<text x="696" y="450" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#1d2433" text-anchor="start" font-weight="bold" >driver log ring  12 KB</text>
+<text x="696" y="465" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" fill="#343a40" text-anchor="start" font-weight="normal" >alice68-usb.device</text>
+<rect x="624" y="482" width="272" height="30" rx="4" fill="#e9ecef" stroke="none" stroke-width="1" />
+<text x="632" y="498" font-family="'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11" fill="#1d2433" text-anchor="start" font-weight="bold" >0x4000</text>
+<text x="696" y="498" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#1d2433" text-anchor="start" font-weight="bold" >debug log ring  12 KB</text>
+<rect x="624" y="516" width="272" height="22" rx="4" fill="#e9ecef" stroke="none" stroke-width="1" />
+<text x="632" y="532" font-family="'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11" fill="#1d2433" text-anchor="start" font-weight="bold" >0x7000</text>
+<text x="696" y="532" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#1d2433" text-anchor="start" font-weight="bold" >Alice68-Monitor snapshot</text>
+<rect x="624" y="542" width="272" height="72" rx="4" fill="#d0ebff" stroke="none" stroke-width="1" />
+<text x="632" y="558" font-family="'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11" fill="#1d2433" text-anchor="start" font-weight="bold" >0x8000</text>
+<text x="696" y="558" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#1d2433" text-anchor="start" font-weight="bold" >kernel log ring  32 KB</text>
+<text x="696" y="573" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" fill="#343a40" text-anchor="start" font-weight="normal" >every kernel log line, for</text>
+<text x="696" y="586" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" fill="#343a40" text-anchor="start" font-weight="normal" >Alice68-USBLog and the Monitor</text>
+<rect x="925" y="184" width="300" height="645" rx="10" fill="url(#pcb2)" stroke="#0b3a4a" stroke-width="2" filter="url(#sh)"/>
+<rect x="925" y="184" width="300" height="645" rx="10" fill="url(#via)" stroke="none" stroke-width="1" />
+<rect x="945" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="957" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="969" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="981" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="993" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="1005" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="1017" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="1029" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="1041" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="1053" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="1065" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="1077" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="1089" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="1101" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="1113" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="1125" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="1137" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="1149" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="1161" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="1173" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="1185" y="817" width="8" height="22" rx="1" fill="url(#gold)" stroke="none" stroke-width="1" />
+<rect x="939" y="198" width="272" height="66" rx="6" fill="#f8f9fa" stroke="none" stroke-width="1" />
+<text x="1075" y="222" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="17" fill="#1d2433" text-anchor="middle" font-weight="bold" >Network card</text>
+<text x="1075" y="241" font-family="'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="12" fill="#495057" text-anchor="middle" font-weight="normal" >Zorro II 0x6d73 / 0x6b</text>
+<text x="1075" y="257" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" fill="#495057" text-anchor="middle" font-weight="normal" >128 KB  -  in both kernels</text>
+<text x="943" y="288" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" fill="#e9ecef" text-anchor="start" font-weight="bold" letter-spacing="1">MEMORY MAP (offset on the card)</text>
+<rect x="939" y="298" width="272" height="42" rx="4" fill="#ffe8cc" stroke="none" stroke-width="1" />
+<text x="947" y="314" font-family="'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11" fill="#1d2433" text-anchor="start" font-weight="bold" >0x00000</text>
+<text x="1011" y="314" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#1d2433" text-anchor="start" font-weight="bold" >header</text>
+<text x="1011" y="329" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" fill="#343a40" text-anchor="start" font-weight="normal" >interrupt flag, firmware hand-over</text>
+<rect x="939" y="344" width="272" height="42" rx="4" fill="#ffd8a8" stroke="none" stroke-width="1" />
+<text x="947" y="360" font-family="'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11" fill="#1d2433" text-anchor="start" font-weight="bold" >0x00400</text>
+<text x="1011" y="360" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#1d2433" text-anchor="start" font-weight="bold" >unit 0 WiFi: state + commands</text>
+<text x="1011" y="375" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" fill="#343a40" text-anchor="start" font-weight="normal" >link, MAC, counters, join/scan</text>
+<rect x="939" y="390" width="272" height="42" rx="4" fill="#ffd8a8" stroke="none" stroke-width="1" />
+<text x="947" y="406" font-family="'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11" fill="#1d2433" text-anchor="start" font-weight="bold" >0x00C00</text>
+<text x="1011" y="406" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#1d2433" text-anchor="start" font-weight="bold" >unit 1 Ethernet: same</text>
+<text x="1011" y="421" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" fill="#343a40" text-anchor="start" font-weight="normal" >speed, duplex, flow control</text>
+<rect x="939" y="436" width="272" height="22" rx="4" fill="#e9ecef" stroke="none" stroke-width="1" />
+<text x="947" y="452" font-family="'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11" fill="#1d2433" text-anchor="start" font-weight="bold" >0x01400</text>
+<text x="1011" y="452" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#1d2433" text-anchor="start" font-weight="bold" >WiFi firmware table</text>
+<rect x="939" y="462" width="272" height="22" rx="4" fill="#e9ecef" stroke="none" stroke-width="1" />
+<text x="947" y="478" font-family="'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11" fill="#1d2433" text-anchor="start" font-weight="bold" >0x01800</text>
+<text x="1011" y="478" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#1d2433" text-anchor="start" font-weight="bold" >WiFi scan results</text>
+<rect x="939" y="488" width="272" height="22" rx="4" fill="#d0ebff" stroke="none" stroke-width="1" />
+<text x="947" y="504" font-family="'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11" fill="#1d2433" text-anchor="start" font-weight="bold" >0x02000</text>
+<text x="1011" y="504" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#1d2433" text-anchor="start" font-weight="bold" >network log ring  8 KB</text>
+<rect x="939" y="514" width="272" height="58" rx="4" fill="#c3fae8" stroke="none" stroke-width="1" />
+<text x="947" y="530" font-family="'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11" fill="#1d2433" text-anchor="start" font-weight="bold" >0x04000</text>
+<text x="1011" y="530" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#1d2433" text-anchor="start" font-weight="bold" >receive: 16 slots x 2 KB / unit</text>
+<text x="1011" y="545" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" fill="#343a40" text-anchor="start" font-weight="normal" >frames go to the stack in place</text>
+<text x="1011" y="558" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" fill="#343a40" text-anchor="start" font-weight="normal" >(zero-copy)</text>
+<rect x="939" y="576" width="272" height="42" rx="4" fill="#c3fae8" stroke="none" stroke-width="1" />
+<text x="947" y="592" font-family="'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11" fill="#1d2433" text-anchor="start" font-weight="bold" >0x14000</text>
+<text x="1011" y="592" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#1d2433" text-anchor="start" font-weight="bold" >send: 12 slots x 2 KB / unit</text>
+<text x="1011" y="607" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" fill="#343a40" text-anchor="start" font-weight="normal" >frames the stack sends</text>
+<rect x="1270" y="175" width="500" height="104" rx="3" fill="#f1f3f5" stroke="#495057" stroke-width="1.5" filter="url(#sh)"/>
+<rect x="1270" y="175" width="500" height="24" rx="3" fill="url(#wbtitle)" stroke="none" stroke-width="1" />
+<rect x="1276" y="181" width="12" height="12" rx="0" fill="#f1f3f5" stroke="#2b3a55" stroke-width="1" />
+<text x="1296" y="192" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#ffffff" text-anchor="start" font-weight="bold" >alice68-usb.device   (DEVS:USBHardware)</text>
+<text x="1282" y="219" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#1d2433" text-anchor="start" font-weight="normal" >A USB host-controller driver: Neptune sees an 8-port</text>
+<text x="1282" y="235" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#1d2433" text-anchor="start" font-weight="normal" >USB 2.0 root hub with every device the kernel offers.</text>
+<text x="1282" y="251" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#1d2433" text-anchor="start" font-weight="normal" >Started by  USBStart alice68-usb.device 0</text>
+<rect x="1270" y="292" width="500" height="74" rx="3" fill="#f1f3f5" stroke="#495057" stroke-width="1.5" filter="url(#sh)"/>
+<rect x="1270" y="292" width="500" height="24" rx="3" fill="#5c7cfa" stroke="none" stroke-width="1" />
+<rect x="1276" y="298" width="12" height="12" rx="0" fill="#f1f3f5" stroke="#2b3a55" stroke-width="1" />
+<text x="1296" y="309" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#ffffff" text-anchor="start" font-weight="bold" >Neptune USB stack   (rondoval)</text>
+<text x="1282" y="336" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#1d2433" text-anchor="start" font-weight="normal" >Class drivers: USB drives and sticks (DOS volumes),</text>
+<text x="1282" y="352" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#1d2433" text-anchor="start" font-weight="normal" >network adapters (SANA-II), and more.</text>
+<rect x="1270" y="395" width="500" height="114" rx="3" fill="#f1f3f5" stroke="#495057" stroke-width="1.5" filter="url(#sh)"/>
+<rect x="1270" y="395" width="500" height="24" rx="3" fill="url(#wbtitle)" stroke="none" stroke-width="1" />
+<rect x="1276" y="401" width="12" height="12" rx="0" fill="#f1f3f5" stroke="#2b3a55" stroke-width="1" />
+<text x="1296" y="412" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#ffffff" text-anchor="start" font-weight="bold" >alice68net.device   (DEVS:)</text>
+<text x="1282" y="439" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#1d2433" text-anchor="start" font-weight="normal" >unit 0 = WiFi        unit 1 = Ethernet</text>
+<text x="1282" y="455" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#1d2433" text-anchor="start" font-weight="normal" >netdev interface: the stack and the driver call each</text>
+<text x="1282" y="471" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#1d2433" text-anchor="start" font-weight="normal" >other directly; received frames are handed up in place.</text>
+<text x="1282" y="487" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#1d2433" text-anchor="start" font-weight="normal" >Settings: Alice68-Network (MUI) or Alice68-NetworkGT.</text>
+<rect x="1270" y="522" width="500" height="62" rx="3" fill="#f1f3f5" stroke="#495057" stroke-width="1.5" filter="url(#sh)"/>
+<rect x="1270" y="522" width="500" height="24" rx="3" fill="#5c7cfa" stroke="none" stroke-width="1" />
+<rect x="1276" y="528" width="12" height="12" rx="0" fill="#f1f3f5" stroke="#2b3a55" stroke-width="1" />
+<text x="1296" y="539" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#ffffff" text-anchor="start" font-weight="bold" >Riptide 0.38+  or  lwip-amiga   (TCP/IP)</text>
+<text x="1282" y="566" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#1d2433" text-anchor="start" font-weight="normal" >Browsers, FTP, AmiSSL, ... - everything on the network.</text>
+<rect x="1270" y="600" width="500" height="78" rx="3" fill="#f1f3f5" stroke="#495057" stroke-width="1.5" filter="url(#sh)"/>
+<rect x="1270" y="600" width="500" height="24" rx="3" fill="#868e96" stroke="none" stroke-width="1" />
+<rect x="1276" y="606" width="12" height="12" rx="0" fill="#f1f3f5" stroke="#2b3a55" stroke-width="1" />
+<text x="1296" y="617" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#ffffff" text-anchor="start" font-weight="bold" >alice68hdf.device   (on Emu68's ROM board)</text>
+<text x="1282" y="644" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#1d2433" text-anchor="start" font-weight="normal" >Hardfiles and SD-card folders. At boot it reads the</text>
+<text x="1282" y="660" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#1d2433" text-anchor="start" font-weight="normal" >WIFI folder and hands the firmware to the network card.</text>
+<rect x="1270" y="696" width="500" height="106" rx="3" fill="#f1f3f5" stroke="#495057" stroke-width="1.5" filter="url(#sh)"/>
+<rect x="1270" y="696" width="500" height="24" rx="3" fill="#c2255c" stroke="none" stroke-width="1" />
+<rect x="1276" y="702" width="12" height="12" rx="0" fill="#f1f3f5" stroke="#2b3a55" stroke-width="1" />
+<text x="1296" y="713" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#ffffff" text-anchor="start" font-weight="bold" >The 68k's level-2 interrupt   (PORTS)</text>
+<text x="1282" y="740" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#1d2433" text-anchor="start" font-weight="normal" >Both cards raise it when they have news: a finished</text>
+<text x="1282" y="756" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#1d2433" text-anchor="start" font-weight="normal" >request, a new frame, a device plugged in. The drivers'</text>
+<text x="1282" y="772" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#1d2433" text-anchor="start" font-weight="normal" >interrupt code takes it from there.</text>
+<line x1="1520" y1="292" x2="1520" y2="283" stroke="#495057" stroke-width="2" marker-end="url(#arG)"/>
+<line x1="1520" y1="522" x2="1520" y2="513" stroke="#495057" stroke-width="2" marker-end="url(#arG)"/>
+<circle cx="1752" cy="708" r="13" fill="#d6336c" stroke="#fff" stroke-width="2.5" filter="url(#sh)"/>
+<text x="1752" y="713" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" fill="#fff" text-anchor="middle" font-weight="bold" >4</text>
+<path d="M1268 205 L 1250 205 L 1250 168 L 780 168 L 780 176" stroke="#1c7ed6" stroke-width="4" fill="none" marker-end="url(#arB)" stroke-linejoin="round"/>
+<path d="M740 180 L 740 156 L 1240 156 L 1240 250 L 1266 250" stroke="#1c7ed6" stroke-width="4" fill="none" marker-end="url(#arB)" stroke-linejoin="round" stroke-dasharray="7 5"/>
+<circle cx="1080" cy="168" r="13" fill="#1c7ed6" stroke="#fff" stroke-width="2.5" filter="url(#sh)"/>
+<text x="1080" y="173" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" fill="#fff" text-anchor="middle" font-weight="bold" >1</text>
+<circle cx="980" cy="156" r="13" fill="#1c7ed6" stroke="#fff" stroke-width="2.5" filter="url(#sh)"/>
+<text x="980" y="161" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" fill="#fff" text-anchor="middle" font-weight="bold" >5</text>
+<path d="M1268 442 L 1231 442" stroke="#1c7ed6" stroke-width="4" fill="none" marker-end="url(#arB)"/>
+<path d="M1231 476 L 1266 476" stroke="#1c7ed6" stroke-width="4" fill="none" marker-end="url(#arB)" stroke-dasharray="7 5"/>
+<circle cx="1248" cy="442" r="13" fill="#1c7ed6" stroke="#fff" stroke-width="2.5" filter="url(#sh)"/>
+<text x="1248" y="447" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" fill="#fff" text-anchor="middle" font-weight="bold" >1</text>
+<circle cx="1248" cy="476" r="13" fill="#1c7ed6" stroke="#fff" stroke-width="2.5" filter="url(#sh)"/>
+<text x="1248" y="481" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" fill="#fff" text-anchor="middle" font-weight="bold" >5</text>
+<path d="M1240 837 C 1258 837 1250 760 1266 760" stroke="#d6336c" stroke-width="3.5" fill="none" marker-end="url(#arR)" stroke-dasharray="10 6"/>
+<circle cx="1252" cy="800" r="13" fill="#d6336c" stroke="#fff" stroke-width="2.5" filter="url(#sh)"/>
+<text x="1252" y="805" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" fill="#fff" text-anchor="middle" font-weight="bold" >3</text>
+<rect x="30" y="880" width="1740" height="62" rx="10" fill="#fff4e6" stroke="#ffc078" stroke-width="1.5" />
+<text x="50" y="905" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" fill="#9c4a0b" text-anchor="start" font-weight="bold" >Keyboards and mice never go through a card:</text>
+<text x="50" y="926" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#5f3b10" text-anchor="start" font-weight="normal" >the kernel keeps them on CPU1 and feeds them straight into the Amiga's own keyboard and mouse ports (virtual CIA) - from power-on, in Kickstart and WHDLoad, with no USB stack in AmigaOS.</text>
+<text x="30" y="972" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" fill="#868e96" text-anchor="start" font-weight="bold" letter-spacing="2">HOW ONE REQUEST TRAVELS  (a USB read, or a network frame being sent)</text>
+<rect x="30" y="986" width="340" height="98" rx="10" fill="#ffffff" stroke="#dee2e6" stroke-width="1.5" filter="url(#sh)"/>
+<circle cx="56" cy="1016" r="13" fill="#1c7ed6" stroke="#fff" stroke-width="2.5" filter="url(#sh)"/>
+<text x="56" y="1021" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" fill="#fff" text-anchor="middle" font-weight="bold" >1</text>
+<text x="78" y="1021" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" fill="#1d2433" text-anchor="start" font-weight="bold" >The Amiga driver writes the request</text>
+<text x="50" y="1048" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#495057" text-anchor="start" font-weight="normal" >into a free slot on the card: what to do,</text>
+<text x="50" y="1065" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#495057" text-anchor="start" font-weight="normal" >how much, where the 68k buffer is.</text>
+<line x1="371" y1="1035" x2="379" y2="1035" stroke="#adb5bd" stroke-width="3" />
+<rect x="380" y="986" width="340" height="98" rx="10" fill="#ffffff" stroke="#dee2e6" stroke-width="1.5" filter="url(#sh)"/>
+<circle cx="406" cy="1016" r="13" fill="#e8590c" stroke="#fff" stroke-width="2.5" filter="url(#sh)"/>
+<text x="406" y="1021" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" fill="#fff" text-anchor="middle" font-weight="bold" >2</text>
+<text x="428" y="1021" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" fill="#1d2433" text-anchor="start" font-weight="bold" >The kernel on CPU1 does it</text>
+<text x="400" y="1048" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#495057" text-anchor="start" font-weight="normal" >on the real hardware (xHCI, WiFi chip,</text>
+<text x="400" y="1065" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#495057" text-anchor="start" font-weight="normal" >GENET), reading the Amiga buffer in place.</text>
+<line x1="721" y1="1035" x2="729" y2="1035" stroke="#adb5bd" stroke-width="3" />
+<rect x="730" y="986" width="340" height="98" rx="10" fill="#ffffff" stroke="#dee2e6" stroke-width="1.5" filter="url(#sh)"/>
+<circle cx="756" cy="1016" r="13" fill="#d6336c" stroke="#fff" stroke-width="2.5" filter="url(#sh)"/>
+<text x="756" y="1021" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" fill="#fff" text-anchor="middle" font-weight="bold" >3</text>
+<text x="778" y="1021" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" fill="#1d2433" text-anchor="start" font-weight="bold" >It raises the Amiga's interrupt</text>
+<text x="750" y="1048" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#495057" text-anchor="start" font-weight="normal" >level 2 (PORTS), as a real Zorro card</text>
+<text x="750" y="1065" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#495057" text-anchor="start" font-weight="normal" >does when it has finished something.</text>
+<line x1="1071" y1="1035" x2="1079" y2="1035" stroke="#adb5bd" stroke-width="3" />
+<rect x="1080" y="986" width="340" height="98" rx="10" fill="#ffffff" stroke="#dee2e6" stroke-width="1.5" filter="url(#sh)"/>
+<circle cx="1106" cy="1016" r="13" fill="#d6336c" stroke="#fff" stroke-width="2.5" filter="url(#sh)"/>
+<text x="1106" y="1021" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" fill="#fff" text-anchor="middle" font-weight="bold" >4</text>
+<text x="1128" y="1021" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" fill="#1d2433" text-anchor="start" font-weight="bold" >The driver's interrupt code runs</text>
+<text x="1100" y="1048" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#495057" text-anchor="start" font-weight="normal" >it finds the finished slots and</text>
+<text x="1100" y="1065" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#495057" text-anchor="start" font-weight="normal" >replies to Neptune or the TCP/IP stack.</text>
+<line x1="1421" y1="1035" x2="1429" y2="1035" stroke="#adb5bd" stroke-width="3" />
+<rect x="1430" y="986" width="340" height="98" rx="10" fill="#ffffff" stroke="#dee2e6" stroke-width="1.5" filter="url(#sh)"/>
+<circle cx="1456" cy="1016" r="13" fill="#1c7ed6" stroke="#fff" stroke-width="2.5" filter="url(#sh)"/>
+<text x="1456" y="1021" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" fill="#fff" text-anchor="middle" font-weight="bold" >5</text>
+<text x="1478" y="1021" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" fill="#1d2433" text-anchor="start" font-weight="bold" >The program carries on</text>
+<text x="1450" y="1048" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#495057" text-anchor="start" font-weight="normal" >the 68k never waited for the</text>
+<text x="1450" y="1065" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#495057" text-anchor="start" font-weight="normal" >hardware, and nothing in AmigaOS polls it.</text>
+<rect x="30" y="1112" width="1740" height="220" rx="10" fill="#ffffff" stroke="#dee2e6" stroke-width="1.5" filter="url(#sh)"/>
+<text x="52" y="1144" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" fill="#868e96" text-anchor="start" font-weight="bold" letter-spacing="2">GOOD TO KNOW</text>
+<text x="52" y="1176" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="13.5" fill="#1d2433" text-anchor="start" font-weight="bold" >Alice68's own design.</text>
+<text x="209" y="1176" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="13.5" fill="#343a40" text-anchor="start" font-weight="normal" >No real card has these IDs (0x6d73 is Emu68's manufacturer number); only</text>
+<text x="70" y="1206" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="13.5" fill="#343a40" text-anchor="start" font-weight="normal" >the drivers in ALICE68: know them. They do nothing on a PiStorm or in an emulator.</text>
+<text x="52" y="1236" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="13.5" fill="#1d2433" text-anchor="start" font-weight="bold" >See them:</text>
+<text x="125" y="1236" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="13.5" fill="#343a40" text-anchor="start" font-weight="normal" >Workbench's ShowConfig lists both cards with Emu68's ROM board.</text>
+<text x="52" y="1266" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="13.5" fill="#1d2433" text-anchor="start" font-weight="bold" >Logs survive a 68k reset:</text>
+<text x="237" y="1266" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="13.5" fill="#343a40" text-anchor="start" font-weight="normal" >the cards keep the kernel's and the drivers' log rings, so</text>
+<text x="70" y="1296" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="13.5" fill="#343a40" text-anchor="start" font-weight="normal" >Alice68-USBLog, Alice68-WiFi LOG and Alice68-Monitor DUMP still read them after a hang.</text>
+<text x="920" y="1176" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="13.5" fill="#1d2433" text-anchor="start" font-weight="bold" >kernel8-nousb.img:</text>
+<text x="1056" y="1176" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="13.5" fill="#343a40" text-anchor="start" font-weight="normal" >no USB card; the network card's kernel side has CPU1 to itself.</text>
+<text x="920" y="1206" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="13.5" fill="#1d2433" text-anchor="start" font-weight="bold" >frf_usb=neptune:</text>
+<text x="1042" y="1206" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="13.5" fill="#343a40" text-anchor="start" font-weight="normal" >the USB card stays empty - the kernel leaves the USB-A ports to</text>
+<text x="938" y="1236" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="13.5" fill="#343a40" text-anchor="start" font-weight="normal" >rondoval's xhci.device. Never run xhci.device while the kernel owns them.</text>
+<text x="920" y="1266" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="13.5" fill="#1d2433" text-anchor="start" font-weight="bold" >eth=off:</text>
+<text x="986" y="1266" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="13.5" fill="#343a40" text-anchor="start" font-weight="normal" >the kernel leaves the Ethernet port alone, for rondoval's genet.device.</text>
+<text x="920" y="1296" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="13.5" fill="#1d2433" text-anchor="start" font-weight="bold" >Install:</text>
+<text x="986" y="1296" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="13.5" fill="#343a40" text-anchor="start" font-weight="normal" >double-click Install in ALICE68: - it puts both drivers and the tools in place.</text>
+</svg>
