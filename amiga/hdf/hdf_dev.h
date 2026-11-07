@@ -11,6 +11,8 @@
 struct FVol;
 struct FObj;
 struct SignalSemaphore { UWORD ss[23]; };   /* exec's 46 bytes, set up by InitSemaphore */
+/* the start of a folder volume (folders.c's struct FVol), which Alice68-ShowConfig reads */
+struct FVolHead { ULONG index; char path[128]; char vol[32]; char dev[8]; };
 
 #define HDF_MAGIC  0x41363848u              /* 'A68H', read by Alice68-HDF */
 #define LOG_SIZE   4096

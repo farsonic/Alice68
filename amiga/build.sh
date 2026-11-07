@@ -23,6 +23,7 @@ build Alice68-USBLog usblog_start.S usblog.c lvo.S
 build alice68hdf.device hdf/hdf_start.S hdf/alice68hdf.c hdf/folders.c hdf/hdf_core.c hdf/fatfs.c lvo.S
 build Alice68-HDF hdf/hdfinfo_start.S hdf/hdfinfo.c lvo.S
 build Alice68-NetCheck netcheck_start.S netcheck.c lvo.S
+build Alice68-ShowConfig showconfig_start.S showconfig.c lvo.S
 build alice68net.device device_start.S net/alice68net.c wifi/lvox.S lvo.S
 build Alice68-WiFi wifi/wifitool_start.S wifi/wifitool.c wifi/lvox.S lvo.S
 build Alice68-Monitor monitor_start.S monitor.c wifi/lvox.S lvo.S

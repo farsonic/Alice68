@@ -18,6 +18,7 @@ FILES = [                      # (built file in OUT_DIR, place in the system)
     ('Alice68-HDF', 'C'),
     ('Alice68-USBLog', 'C'),
     ('Alice68-NetCheck', 'C'),
+    ('Alice68-ShowConfig', 'C'),
     ('Alice68-WiFi', 'C'),
     ('Alice68-Network', 'C'),
     ('Alice68-NetworkGT', 'C'),
@@ -130,7 +131,7 @@ ins = [
     '  (abort %s))' % q("ALICE68: is not mounted.\n\nIs the folder ALICE68 on the SD card's\nFAT partition, next to kernel8.img?\n(and no alice68.folders=off in config.txt)"),
     '(welcome "Alice68 %s: the Amiga files")' % VER,
     '(message %s (all))' % q("This copies Alice68's Amiga files from\nALICE68: into your system:\n\n"
-                              "seven tools into C:,\nalice68net.device into DEVS:,\nalice68-usb.device into DEVS:USBHardware.\n\n"
+                              "eight tools into C:,\nalice68net.device into DEVS:,\nalice68-usb.device into DEVS:USBHardware.\n\n"
                               "What they replace is kept in\nAlice68-Backup, and Uninstall puts it back."),
     '(set #dest (askdir (prompt "Install into which system?") (help @askdir-help) (default @default-dest)))',
     '(set #bak (tackon #dest "Alice68-Backup"))',

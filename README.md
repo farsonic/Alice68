@@ -265,7 +265,15 @@ waits for the hardware.
 | **Network card** | `0x6d73` / `0x6b` (107) | 128 KB | `DEVS:alice68net.device`, units 0 and 1, for a netdev TCP/IP stack | WiFi (SDIO) and Gigabit Ethernet (GENET) | both kernels |
 | Emu68's ROM board | `0x6d73` / `2` | - | holds `alice68hdf.device` (hardfiles, folders) and Emu68's own drivers | - | both kernels |
 
-`0x6d73` is Emu68's manufacturer number. Workbench's `ShowConfig` lists the cards.
+`0x6d73` is Emu68's manufacturer number. Workbench's `ShowConfig` lists the cards;
+**`Alice68-ShowConfig`** (in `C:` after `ALICE68:Install`) says much more: the processor,
+Kickstart, chipset and every memory region; each board's Zorro type, address, size,
+serial, flags and driver, with names for Emu68's and Alice68's boards; and what is live on
+Alice68's cards - the USB devices passed through and the request slots, both network
+units' link, addresses, WiFi network, counters and queues, and `alice68hdf.device`'s
+hardfiles and folders. `Alice68-ShowConfig ALL` adds the libraries, devices and resources
+in memory and the end of the kernel's log; `SYS`, `MEM`, `BOARDS`, `CARDS`, `LIBS` and
+`LOG` pick parts.
 They are **Alice68's own design**: no real card has these IDs, and the drivers in
 `ALICE68:` are the only ones that know them. They do nothing on a PiStorm or an
 emulator.
@@ -551,8 +559,8 @@ alice68.folder=Amiga/Work:Work    # the folder Amiga/Work, as volume Work:
 
 **Installing Alice68's Amiga files.** The release's `ALICE68` folder (made by
 `amiga/build.sh` as `amiga/out/ALICE68`) holds `C/` (`Alice68-HDF`, `Alice68-USBLog`,
-`Alice68-NetCheck`, `Alice68-WiFi`, `Alice68-Network`, `Alice68-NetworkGT`,
-`Alice68-Monitor`), `DEVS/alice68net.device`, `DEVS/USBHardware/alice68-usb.device`, a
+`Alice68-NetCheck`, `Alice68-ShowConfig`, `Alice68-WiFi`, `Alice68-Network`,
+`Alice68-NetworkGT`, `Alice68-Monitor`), `DEVS/alice68net.device`, `DEVS/USBHardware/alice68-usb.device`, a
 `ReadMe.txt`, and an installer. `ALICE68:` shows an SD card icon on Workbench; open it
 and double-click **Install** (it runs the Amiga's Installer), or in a Shell:
 

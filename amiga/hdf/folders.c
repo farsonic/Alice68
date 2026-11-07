@@ -146,7 +146,7 @@ static LONG AddDosEntry(APTR dos, struct DosList *d) { return (LONG)lvo_d1(dos, 
 extern void folder_main(struct HdfBase *db);
 
 /* ---- the volumes ------------------------------------------------------------------ */
-struct FVol {
+struct FVol {                               /* starts as struct FVolHead (hdf_dev.h): Alice68-ShowConfig reads it */
     ULONG index;
     char  path[128];                        /* on the FAT partition */
     char  vol[32];                          /* volume name */
@@ -155,6 +155,10 @@ struct FVol {
     struct ffs_ent rent;                    /* its own entry, for its dates */
     struct DosList *dl;                     /* the volume node, once the handler runs */
 };
+
+ACHECK(AOFF(struct FVol, path) == AOFF(struct FVolHead, path));
+ACHECK(AOFF(struct FVol, vol) == AOFF(struct FVolHead, vol));
+ACHECK(AOFF(struct FVol, dev) == AOFF(struct FVolHead, dev));
 
 /* a lock or an open file */
 struct FObj {

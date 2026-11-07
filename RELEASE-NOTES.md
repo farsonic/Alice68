@@ -1,5 +1,16 @@
 # Alice68 release notes
 
+## Unreleased
+
+- **`C:Alice68-ShowConfig` (new): ShowConfig, and much more.** The processor, Kickstart,
+  chipset, clocks and every memory region; each expansion board's Zorro type, address,
+  size, serial, flags and driver, with names for Emu68's and Alice68's boards; and what is
+  live on Alice68's cards: the USB devices passed through and the request slots, both
+  network units (state, link, MAC addresses, WiFi network and signal, chip and firmware,
+  Ethernet duplex and what each side offers, counters, queues) and `alice68hdf.device`'s
+  hardfiles and folders. `ALL` adds the libraries, devices and resources in memory and the
+  end of the kernel's log. Installed by `ALICE68:Install`. Tested on a 68k emulator.
+
 ## 0.4.0 — network card, SD-card folders
 
 Download: `Alice68-0.4.0-Pi4.zip` from the

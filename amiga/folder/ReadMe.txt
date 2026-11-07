@@ -9,6 +9,7 @@ card from a PC.
   C/Alice68-HDF          the hardfiles and folders found, and why
   C/Alice68-USBLog       the USB pass-through's log
   C/Alice68-NetCheck     what the network driver reports
+  C/Alice68-ShowConfig   ShowConfig and more: boards, Alice68's cards, memory
   C/Alice68-WiFi         WiFi from the Shell
   C/Alice68-Network      the network settings window (MUI)
   C/Alice68-NetworkGT    the same without MUI (GadTools)
