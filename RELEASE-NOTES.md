@@ -1,6 +1,19 @@
 # Alice68 release notes
 
-## Unreleased
+## 0.4.0 — network card, SD-card folders
+
+Download: `Alice68-0.4.0-Pi4.zip` from the
+[v0.4.0 release](https://github.com/farsonic/Alice68/releases). Unzip it and copy
+everything in it to the root of the SD card's FAT partition: the card must already have
+the Raspberry Pi firmware (`start4.elf`, `fixup4.dat`, `bcm2711-rpi-4-b.dtb`) and your
+Kickstart (`Alice68-READ-ME-FIRST.txt` in the zip lists them). The source is
+`Alice68-0.4.0-src.zip`.
+
+- **The release is laid out as the card.** What was in `boot/` is now the top of the zip,
+  and the Amiga files, the read-mes and the licences are in the `ALICE68` folder (the
+  volume `ALICE68:`), so the whole zip goes onto the card as it is.
+- **`Alice68-Network` 2.2** no longer names a MAC address prefix's owner, on the About
+  page or next to the addresses.
 
 - **Folders of the SD card as Amiga volumes (new, not yet tested on a Pi).**
   `alice68.folder=Games` in `config.txt` mounts the FAT partition's folder `Games` as the

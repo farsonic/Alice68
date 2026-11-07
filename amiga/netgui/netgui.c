@@ -15,8 +15,7 @@
  * What it keeps: ENV:alice68wifi.prefs and ENVARC: (the WiFi network: SSID,
  * PASSWORD, COUNTRY - also read by "Alice68-WiFi RECONNECT") and
  * ENV:alice68net.prefs and ENVARC: (ETH= and WIFI=, which alice68net.device
- * applies when it starts). The MAC addresses are the kernel's business:
- * Commodore's OUI 00:80:10, unless net.oui=off is in cmdline.txt.
+ * applies when it starts). The MAC addresses are the kernel's business.
  *
  * Start: from the Shell or Workbench, no arguments.
  * SPDX-License-Identifier: GPL-2.0-only
@@ -32,7 +31,7 @@
 #include "alice_net.h"
 #include "wifi_api.h"
 
-#define A68N_VERSION "2.1"
+#define A68N_VERSION "2.2"
 #define A68N_DATE    "07.11.2026"
 #define A68N_TITLE   "Alice68 Network"
 static const char vers[] __attribute__((used)) = "$VER: Alice68-Network " A68N_VERSION " (" A68N_DATE ")";
@@ -192,7 +191,7 @@ static int mac_zero(const volatile UBYTE *m)
 	return !(m[0] | m[1] | m[2] | m[3] | m[4] | m[5]);
 }
 
-/* the MAC address, and whose it is */
+/* the MAC address */
 static void fmt_mac_full(char *buf, int len, volatile struct an_unit *x, const char *none)
 {
 	if (mac_zero(x->mac)) {
@@ -200,9 +199,6 @@ static void fmt_mac_full(char *buf, int len, volatile struct an_unit *x, const c
 		return;
 	}
 	fmt_mac(buf, len, x->mac);
-	if (x->mac[0] == (UBYTE)(AN_OUI_COMMODORE >> 16) && x->mac[1] == (UBYTE)(AN_OUI_COMMODORE >> 8) &&
-	    x->mac[2] == (UBYTE)AN_OUI_COMMODORE)
-		rt_strlcpy(buf + strlen(buf), "  Commodore", (size_t)len - strlen(buf));
 }
 
 /* what one side of an Ethernet link advertises: "10M half, 10M full, ..." */
@@ -409,10 +405,6 @@ static Object *about_page(void)
 	add(g, left(label("The settings and numbers of Alice68's network card:\n"
 	                  "the Raspberry Pi 4's WiFi and Gigabit Ethernet, run by\n"
 	                  "the kernel on CPU1, used through alice68net.device.", QL_TEXT)));
-	add(g, left(label("MAC addresses", QL_TITLE)));
-	add(g, left(label("Both units' addresses start with Commodore International's\n"
-	                  "00:80:10; the last three bytes are the Pi's own. net.oui=off\n"
-	                  "in cmdline.txt keeps the Pi's own addresses.", QL_TEXT)));
 	add(g, left(label("Licence and source", QL_TITLE)));
 	add(g, left(label("Free software under the GNU General Public License,\n"
 	                  "version 2. Its look and classes are Riptide's\n"

@@ -42,10 +42,12 @@ Credits and licences: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md),
 2. Copy the **Raspberry Pi firmware** onto it: `start4.elf`, `fixup4.dat` and
    `bcm2711-rpi-4-b.dtb` (`-400` for a Pi 400) from
    [raspberrypi/firmware](https://github.com/raspberrypi/firmware/tree/master/boot).
-3. Copy everything in the release's **`boot/`** folder onto it: `kernel8.img`,
-   `config.txt`, `cmdline.txt`, `floppy.txt`, the `overlays` folder and the `ALICE68`
-   folder (Alice68's Amiga files, which AmigaOS sees as the volume `ALICE68:`; see
-   [Folders](#folders-of-the-sd-card-as-amiga-volumes)).
+3. Unzip the release and copy **everything in it** onto the card's root: `kernel8.img`,
+   `kernel8-nousb.img`, `config.txt`, `cmdline.txt`, `floppy.txt`, the `overlays` folder
+   and the `ALICE68` folder (Alice68's Amiga files, their installer, the read-mes and the
+   licences, which AmigaOS sees as the volume `ALICE68:`; see
+   [Folders](#folders-of-the-sd-card-as-amiga-volumes)). It replaces `config.txt`,
+   `cmdline.txt` and `floppy.txt`: keep your own if you changed them.
 4. Copy **your own** 512 KB A1200 Kickstart 3.x ROM onto it as **`kick31.rom`**, or
    change the name in `floppy.txt`. Kickstart is not included.
 5. Plug a USB keyboard and mouse into the Pi's USB-A ports, connect HDMI0 (next to the
@@ -444,7 +446,7 @@ alice68.folder=Amiga/Work:Work    # the folder Amiga/Work, as volume Work:
   directories (every copy of the FAT is updated, and FAT32's free-space count too). Don't
   switch off in the middle of a copy, and check the card on a PC if you ever do.
 
-**Installing Alice68's Amiga files.** The release's `boot/ALICE68` folder (made by
+**Installing Alice68's Amiga files.** The release's `ALICE68` folder (made by
 `amiga/build.sh` as `amiga/out/ALICE68`) holds `C/` (`Alice68-HDF`, `Alice68-USBLog`,
 `Alice68-NetCheck`, `Alice68-WiFi`, `Alice68-Network`, `Alice68-NetworkGT`,
 `Alice68-Monitor`), `DEVS/alice68net.device`, `DEVS/USBHardware/alice68-usb.device`, a

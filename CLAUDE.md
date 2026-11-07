@@ -127,13 +127,14 @@ tools/splash-preview/build.sh > out.ppm  # the splash, drawn by the kernel's own
 - This environment can push branches but **cannot push tags or delete remote branches**:
   the user creates release tags on GitHub and attaches the zip.
 - Release: update `RELEASE-NOTES.md` (and `ALICE_VERSION` in `alice_splash.h`), commit,
-  build from a fresh clone of that commit, then zip `README.md`, `RELEASE-NOTES.md`,
-  `SHA256SUMS`, `boot/` (kernel8.img, kernel8-nousb.img, config.txt, cmdline.txt,
-  floppy.txt, overlays/, ALICE68/ = `amiga/out/ALICE68` from build.sh), `amiga/` (DEVS/USBHardware/alice68-usb.device,
-  DEVS/alice68net.device, C/Alice68-USBLog, C/Alice68-HDF, C/Alice68-NetCheck, C/Alice68-WiFi, C/Alice68-Monitor, C/Alice68-Network, C/Alice68-NetworkGT,
-  ReadMe-USB.txt), `Licenses/` (with amiga/wifi/LICENSE-netdev.txt) and `source/` (git archive
-  of the commit plus the three submodules, and SOURCE.txt). The kernels report
-  `git:<commit>`; the release must be that commit.
+  build from a fresh clone of that commit, then make two zips. `Alice68-X-Pi4.zip` is laid
+  out as the SD card's root, so users copy all of it there: kernel8.img, kernel8-nousb.img,
+  config.txt, cmdline.txt, floppy.txt, overlays/, Alice68-READ-ME-FIRST.txt (the firmware
+  and Kickstart the card must already have: they are not ours to ship), and ALICE68/
+  (`amiga/out/ALICE68` from build.sh, plus README.md, RELEASE-NOTES.md, ReadMe-USB.txt,
+  SHA256SUMS and Licenses/ with amiga/wifi/LICENSE-netdev.txt and SOURCE.txt).
+  `Alice68-X-src.zip`: git archive of the commit plus the three submodules, and SOURCE.txt.
+  The kernels report `git:<commit>`; the release must be that commit.
 
 ## "Bring everything up to date"
 
