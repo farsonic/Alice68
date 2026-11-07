@@ -21,10 +21,14 @@ Emu68 runs. It is a Pi 4 build of three projects, plus a Pi 4 USB stack of its o
   by Future Retro Fusion: the standalone layer (virtual CIAs, ROM and ADF boot,
   Zorro III RAM, a TinyUSB host on the USB-C port).
 - **Alice68's own additions:**
-  - a kernel xHCI driver for the Pi 4's USB-A ports;
-  - USB pass-through to the Neptune USB stack in AmigaOS;
-  - a "virtual eject" for USB network dongles that start in CD mode;
-  - Amiga hardfiles (`.hdf`) straight from the SD card, bootable and writable;
+  - two **virtual Zorro II expansion cards** that AmigaOS finds like real ones (see
+    [Alice68's expansion cards](#alice68s-expansion-cards)): a **USB card**, through which
+    the kernel's own Pi 4 USB driver hands devices to the Neptune USB stack, and a
+    **network card** for the Pi's built-in **WiFi** and **Gigabit Ethernet**;
+  - USB keyboards and mice on the Pi's USB-A ports from power-on, and a "virtual eject"
+    for USB network dongles that start in CD mode;
+  - Amiga hardfiles (`.hdf`) straight from the SD card, bootable and writable, and SD-card
+    folders as Amiga volumes;
   - a boot splash with live logs.
 
 Credits and licences: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md),
@@ -209,6 +213,74 @@ for a Workbench that opens straight on RTG), so nothing is drawn over AmigaOS's 
 `cmdline.txt` turns the log panels off. `tools/splash-preview/build.sh` renders the
 splash on a PC with the kernel's own drawing code.
 
+## Alice68's expansion cards
+
+A real Amiga gets USB or networking from a card in a Zorro slot. Alice68 has no slots,
+so its kernel **makes the cards up**: when the Amiga starts, Kickstart's expansion
+setup (autoconfig) finds them on a virtual Zorro II bus and gives each an address, as
+it would a real card. AmigaOS's drivers then talk to them the way drivers talk to any
+Zorro card, through the card's memory and its interrupt.
+
+What is on the card, though, is done by the **Raspberry Pi's own hardware**, driven by
+the Alice68 kernel on CPU1 (the second ARM core), not by the 68k. The card is the
+meeting point: the Amiga driver writes a request into the card's memory, the kernel
+carries it out on the Pi's USB, WiFi or Ethernet hardware, writes the answer back and
+raises the Amiga's level-2 (PORTS) interrupt, as a real card would. The 68k never
+waits for the hardware.
+
+```
+       Raspberry Pi 4 hardware            Alice68 kernel             virtual Zorro II cards              AmigaOS (68k on CPU0)
+     ---------------------------     ----------------------     ------------------------------     ------------------------------
+
+     USB-A ports  (VL805 xHCI) --+                                +----------------------------+
+                                 |                          +---> | USB card           64 KB   | <--> alice68-usb.device
+                                 +--> xHCI driver  (CPU1) --+     | Zorro II 0x6d73/0x6a "USBP"|      (DEVS:USBHardware)
+                                 |       |                  |     | requests, buffers, logs    |          ^
+     keyboards and mice <--------+       |                  |     +----------------------------+          |
+     go straight to the Amiga's          |                  |                                         Neptune USB stack:
+     keyboard and mouse  <---------------+                  |                                         storage, network
+     (virtual CIA, from power-on)                           |                                         adapters, ...
+                                                            |
+     WiFi (CYW43455, SDIO) ------+                          |     +----------------------------+
+                                 +--> network   (CPU1) -----+---> | Network card      128 KB   | <--> alice68net.device
+     Gigabit Ethernet (GENET) ---+    WiFi + Ethernet       |     | Zorro II 0x6d73/0x6b       |      unit 0 WiFi
+                                                            |     | frames, state, settings,   |      unit 1 Ethernet
+                                                            |     | scan results, logs         |          ^
+                                                            |     +----------------------------+          |
+                                                            |                                         Riptide or lwip-amiga
+                                                            |                                         (netdev)
+                                                            +---- level-2 (PORTS) interrupt ----> 68k: "a card has news"
+```
+
+| Card | Zorro II ID (manufacturer/product) | Size | AmigaOS driver | Done by the kernel | In |
+|---|---|---|---|---|---|
+| **USB card** | `0x6d73` / `0x6a` (106), serial "USBP" | 64 KB | `DEVS:USBHardware/alice68-usb.device`, for Neptune | the Pi 4's USB-A ports (xHCI on PCIe) | `kernel8.img` |
+| **Network card** | `0x6d73` / `0x6b` (107) | 128 KB | `DEVS:alice68net.device`, units 0 and 1, for a netdev TCP/IP stack | WiFi (SDIO) and Gigabit Ethernet (GENET) | both kernels |
+| Emu68's ROM board | `0x6d73` / `2` | - | holds `alice68hdf.device` (hardfiles, folders) and Emu68's own drivers | - | both kernels |
+
+`0x6d73` is Emu68's manufacturer number. Workbench's `ShowConfig` lists the cards.
+They are **Alice68's own design**: no real card has these IDs, and the drivers in
+`ALICE68:` are the only ones that know them. They do nothing on a PiStorm or an
+emulator.
+
+What this gives:
+
+- **No driver in AmigaOS touches the Pi's hardware**, so there's nothing for a 68k
+  driver to get wrong or slow down: the kernel's drivers run on their own ARM core,
+  beside the 68k, and keep running while AmigaOS reboots. Keyboards and mice are the
+  kernel's from power-on, inside WHDLoad too, without any USB stack in AmigaOS.
+- **The Amiga side is small and ordinary**: a USB host-controller driver Neptune
+  already knows how to use (the classic `IOUsbHWReq` interface), and a network driver
+  for the netdev interface. They are installed from `ALICE68:` like any other driver.
+- **The logs survive a 68k reset**: both cards keep the kernel's and the drivers' log
+  rings, which `Alice68-USBLog`, `Alice68-WiFi LOG` and `Alice68-Monitor` read even
+  after a hang and a Ctrl-Amiga-Amiga.
+
+The **no-USB kernel** (`kernel8-nousb.img`) has no USB card: the network card's
+kernel side then has CPU1 to itself. With `frf_usb=neptune` in `cmdline.txt` the USB
+card is still there but stays empty: the kernel leaves the USB-A ports to rondoval's
+`xhci.device`.
+
 ## USB
 
 | Port | Default | With `frf_usb=neptune` |
@@ -220,34 +292,29 @@ A CM4's USB port is the USB-C controller, so on a CM4 use `frf_usb=neptune` (unt
 
 ### Neptune on the USB-A ports (storage, network)
 
-1. Install [Neptune](https://github.com/rondoval/neptune-usb-stack) 6.3 **without**
-   `xhci.device`.
-2. Copy `amiga/DEVS/USBHardware/alice68-usb.device` to `DEVS:USBHardware/` and
-   `amiga/C/Alice68-USBLog` to `C:`.
-3. Run `USBStart alice68-usb.device 0`.
+The kernel keeps USB keyboards and mice for itself and offers every other device on the
+[USB card](#alice68s-expansion-cards). To use them in AmigaOS:
 
-Neptune sees an 8-port root hub, and every device the kernel doesn't keep for itself
-appears on it. `Alice68-USBLog FOLLOW` tails the kernel's and the driver's USB logs in a
-Shell.
+1. Install [Neptune](https://github.com/rondoval/neptune-usb-stack) 6.3 or later. It
+   needs no host-controller driver of its own here: **don't** use `xhci.device` while the
+   kernel owns the USB-A ports, as the two cannot share the controller.
+2. Install `alice68-usb.device` into `DEVS:USBHardware/`: double-click **Install** in
+   `ALICE68:` (it also puts `Alice68-USBLog` in `C:`), or copy them by hand.
+3. Start Neptune on it, from a Shell or at every boot in `S:User-Startup`:
+   ```
+   C:USBStart >NIL: alice68-usb.device 0
+   ```
+   or choose `alice68-usb.device`, unit 0, in **Neptune USB**. If Neptune's installer
+   added a `USBStart` line for `xhci.device`, change it to this.
+
+Neptune sees an 8-port USB 2.0 root hub, with every device the kernel doesn't keep for
+itself on it. USB 3 devices work as USB 2.0. `Alice68-USBLog FOLLOW` tails the kernel's and
+the driver's USB logs in a Shell.
 
 - **Network adapters:** the Neptune class is the SANA-II driver. For `cdceth.usbclass`,
   give your TCP/IP stack `usbcdceth.device`, unit 0, as a bare name.
 - **Virtual eject:** Realtek RTL815x adapters that start as a driver CD (`0bda:8151`)
   are switched to network mode by the kernel. `frf_usb.nomodeswitch` turns this off.
-- **Pi's own Ethernet:** Alice68's Emu68 has the dcache extensions (the `dcache-range-ops`
-  property), so take the **`-rangeops`** archive of rondoval's
-  [driver stack](https://github.com/rondoval/emu68-driver-stack/releases)
-  (`emu68-drivers-<ver>-rangeops.lha`). With Roadshow, AmiTCP, Miami or Riptide use its
-  SANA-II `genet.device` **3.x**, in `DEVS:Networks/`: give the stack the full path
-  `DEVS:Networks/genet.device`, unit 0. The 4.x `genet.device` is the netdev driver
-  and works only with the archive's own TCP/IP stack (lwip-amiga), which gets closest to
-  gigabit speed.
-  `C:Alice68-NetCheck` (in `amiga/C`) prints what the driver reports, as text, on any
-  AmigaOS: link rate, MAC address, packets and whether its interrupts reach AmigaOS.
-  `Alice68-NetCheck WATCH` repeats the counters every second; `Alice68-NetCheck TEST`
-  brings the interface up if no TCP/IP stack has, sends three broadcast test frames and
-  says whether the link, the hardware and its interrupts work. It never loads a second
-  copy of a driver a stack is using.
 - **Leaving the USB-A ports to AmigaOS:** `frf_usb=neptune` in `cmdline.txt` keeps the
   kernel off them, so rondoval's `xhci.device` can drive them instead.
 
@@ -290,22 +357,35 @@ new address.)
 ### WiFi
 
 1. **Firmware**, on the SD card's FAT partition (where `kick31.rom` is), in a folder
-   named **`WIFI`**. Alice68 does not include it. Take these from Raspberry Pi's
-   [firmware-nonfree](https://github.com/RPi-Distro/firmware-nonfree) repository
-   (`debian/added-firmware/`), or from `/lib/firmware/` on a Raspberry Pi OS card, names
-   unchanged:
-   - `cypress/cyfmac43455-sdio-standard.bin`
-   - `cypress/cyfmac43455-sdio.clm_blob`
-   - `brcm/brcmfmac43455-sdio.txt`
+   named **`WIFI`**. Alice68 can't include it (it isn't ours to distribute). The `.bin`
+   is the chip's firmware, the `.txt` the board's radio settings (both needed), the
+   `.clm_blob` the regulatory data (which channels each country may use):
 
-   (Compute Module 4: `brcm/brcmfmac43456-sdio.bin`, `.clm_blob` and `.txt` instead.)
+   | Board | Files |
+   |---|---|
+   | Pi 4 Model B, Pi 400 | `cyfmac43455-sdio-standard.bin`, `cyfmac43455-sdio.clm_blob`, `brcmfmac43455-sdio.txt` |
+   | Compute Module 4 | `brcmfmac43456-sdio.bin`, `brcmfmac43456-sdio.clm_blob`, `brcmfmac43456-sdio.txt` |
+
+   They are in Raspberry Pi's
+   [firmware-nonfree](https://github.com/RPi-Distro/firmware-nonfree/tree/bookworm/debian/config/brcm80211)
+   repository, branch `bookworm`, under `debian/config/brcm80211/` (`cypress/` and
+   `brcm/`), or in `/lib/firmware/cypress/` and `/lib/firmware/brcm/` on a Raspberry Pi
+   OS card (copy what links point to, under these names). Straight onto the card from a
+   Mac or Linux (change the card's path):
+   ```bash
+   mkdir -p /Volumes/EMU68/WIFI && cd /Volumes/EMU68/WIFI
+   B=https://github.com/RPi-Distro/firmware-nonfree/raw/bookworm/debian/config/brcm80211
+   curl -fLO $B/cypress/cyfmac43455-sdio-standard.bin
+   curl -fLO $B/cypress/cyfmac43455-sdio.clm_blob
+   curl -fLO $B/brcm/brcmfmac43455-sdio.txt
+   ```
    At boot `alice68hdf.device` reads them and hands them to the kernel, which starts the
    chip straight away: the splash's status strip shows **WIFI** and what it is doing.
 2. **The network**, either in `cmdline.txt` (it then joins at boot, before AmigaOS):
    ```
    aga.look=0 aga.scale=1 wifi.ssid="MyNetwork" wifi.psk="my password" wifi.country=GB
    ```
-   or from AmigaOS, after copying `amiga/C/Alice68-WiFi` to `C:`:
+   or from AmigaOS (`Alice68-WiFi` is installed into `C:` by `ALICE68:Install`):
    ```
    Alice68-WiFi JOIN "MyNetwork" "my password" GB
    ```
@@ -313,7 +393,9 @@ new address.)
    in `S:User-Startup` joins it at every boot. `wifi.country` (or the third word of JOIN)
    is your two-letter country code: the channels allowed. `wifi=off` in `cmdline.txt` keeps
    the chip off; `wifi.sdclock=` sets the SDIO clock (25000000 by default).
-3. **The TCP/IP stack:** copy `amiga/DEVS/alice68net.device` to `DEVS:` and make a file
+3. **The TCP/IP stack:** `ALICE68:Install` puts `alice68net.device` in `DEVS:`. For Riptide
+   (installed from `ALICE68:Riptide`), give RiptidePrefs the device `alice68net.device`,
+   unit 0 (see its ReadMe). For lwip-amiga, make a file
    `DEVS:NetInterfaces/wifi` with
    ```
    DEVICE=alice68net.device
@@ -339,6 +421,20 @@ in `DEVS:NetInterfaces/eth` for lwip-amiga. It then marks the port disabled in t
 tree for AmigaOS: **use either the kernel's Ethernet or rondoval's `genet.device`, not
 both**. `eth=off` in `cmdline.txt` keeps the kernel off the port entirely, for
 `genet.device`. It runs at 10, 100 or 1000 Mbit/s, as the link negotiates.
+
+**rondoval's `genet.device` instead** (for Roadshow, AmiTCP or Miami, which speak only
+SANA-II): put `eth=off` in `cmdline.txt`. Alice68's Emu68 has the dcache extensions (the
+`dcache-range-ops` property), so take the **`-rangeops`** archive of rondoval's
+[driver stack](https://github.com/rondoval/emu68-driver-stack/releases)
+(`emu68-drivers-<ver>-rangeops.lha`) and use its SANA-II `genet.device` **3.x**, in
+`DEVS:Networks/`: give the stack the full path `DEVS:Networks/genet.device`, unit 0. (Its
+4.x `genet.device` is a netdev driver like `alice68net.device` unit 1, which does the same
+job.) `C:Alice68-NetCheck` prints what a SANA-II driver reports, as text, on any AmigaOS:
+link rate, MAC address, packets and whether its interrupts reach AmigaOS.
+`Alice68-NetCheck WATCH` repeats the counters every second; `Alice68-NetCheck TEST` brings
+the interface up if no TCP/IP stack has, sends three broadcast test frames and says
+whether the link, the hardware and its interrupts work. It never loads a second copy of a
+driver a stack is using.
 
 **Remove any other WiFi driver from AmigaOS's start-up** (WiFiPi.device and the like, in
 `DEVS:NetInterfaces/`, `S:User-Startup` or a stack's own settings): the kernel drives the

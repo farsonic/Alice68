@@ -24,7 +24,7 @@ Kickstart (`Alice68-READ-ME-FIRST.txt` in the zip lists them). The source is
   volume `Games:` (`alice68.folder=Amiga/Work:Work` for a path and a volume name of your
   own). Folders are read and written with long names, and are never bootable; the DOS
   devices are `SDF0:`, `SDF1:` and so on. A folder `ALICE68` in the root is always mounted,
-  and the release puts Alice68's Amiga files there (`boot/ALICE68`), with
+  and the release puts Alice68's Amiga files there, with
   an Installer script, **Install** (icons for it, `Uninstall`, the ReadMe and the volume,
   drawn for Alice68), which copies them into `SYS:` and keeps what it replaces in
   `SYS:Alice68-Backup` for `Uninstall`; `Install-Shell` does the same without the Installer. `alice68.folders=off` turns them all off.
@@ -106,8 +106,6 @@ Kickstart (`Alice68-READ-ME-FIRST.txt` in the zip lists them). The source is
   barrier-wrapped operation per 32-byte line.
   The built-in `68040.library` is 2.0, which uses them too. `Alice68-NetCheck` 1.6 no
   longer calls genet.device 4.x wrong for Alice68: it is the driver for lwip-amiga.
-- **The boot splash stops drawing when the 68k starts**, instead of 20 s later, so
-  nothing is drawn over AmigaOS's or the RTG screen.
 - **`C:Alice68-NetCheck`** (new): what a SANA-II network driver reports, as text in a
   Shell, on any AmigaOS (rondoval's `genet-stats` needs 3.2's ReAction classes). For
   the Pi's own Ethernet (`genet.device` 3.x) it shows link rate, MAC address, packet and
