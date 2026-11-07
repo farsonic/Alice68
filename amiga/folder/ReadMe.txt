@@ -16,6 +16,9 @@ card from a PC.
   DEVS/USBHardware/alice68-usb.device   for Neptune or Poseidon
   DEVS/alice68net.device the network card (WiFi unit 0, Ethernet unit 1)
 
+Releases also carry Riptide, a TCP/IP stack that uses alice68net.device,
+in the Riptide drawer here: double-click Install_Riptide there.
+
 To put them into the system, double-click Install (it runs the Installer),
 or from a Shell:
 

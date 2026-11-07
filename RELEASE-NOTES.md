@@ -12,6 +12,10 @@ Kickstart (`Alice68-READ-ME-FIRST.txt` in the zip lists them). The source is
 - **The release is laid out as the card.** What was in `boot/` is now the top of the zip,
   and the Amiga files, the read-mes and the licences are in the `ALICE68` folder (the
   volume `ALICE68:`), so the whole zip goes onto the card as it is.
+- **Riptide 0.38 comes with it,** in `ALICE68/Riptide` (`ALICE68:Riptide` on the Amiga):
+  the TCP/IP stack that speaks `alice68net.device`'s netdev interface. Double-click
+  `Install_Riptide` there. Riptide is GPL-2.0; its source is
+  [github.com/farsonic/riptide](https://github.com/farsonic/riptide).
 - **`Alice68-Network` 2.2** no longer names a MAC address prefix's owner, on the About
   page or next to the addresses.
 

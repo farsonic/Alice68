@@ -133,6 +133,9 @@ tools/splash-preview/build.sh > out.ppm  # the splash, drawn by the kernel's own
   and Kickstart the card must already have: they are not ours to ship), and ALICE68/
   (`amiga/out/ALICE68` from build.sh, plus README.md, RELEASE-NOTES.md, ReadMe-USB.txt,
   SHA256SUMS and Licenses/ with amiga/wifi/LICENSE-netdev.txt and SOURCE.txt).
+  Riptide (the user's own TCP/IP stack, GPL-2.0, github.com/farsonic/riptide) goes into
+  ALICE68/Riptide unpacked from the user's riptide-X.lha (with Riptide.info), named in
+  SOURCE.txt; never commit its binaries here.
   `Alice68-X-src.zip`: git archive of the commit plus the three submodules, and SOURCE.txt.
   The kernels report `git:<commit>`; the release must be that commit.
 
