@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- **On/off switches for Ethernet and WiFi that work while a stack is attached.**
+  `Alice68-Network` 2.3 has a slider switch at the top of the Ethernet and WiFi settings
+  pages, in place of the two buttons, with a line beside it saying what it means now.
+  Off now really is off: before, `alice68net.device` refused to switch off a unit a TCP/IP
+  stack had open, and a stack attaching started the Ethernet again. Now the kernel keeps a
+  per-unit "switched off" flag (`AN_CMD_ENABLE`): the hardware goes off, the stack is told
+  the link is down, frames to send are dropped, and nothing switches the unit on but the
+  switch - not a stack attaching, not the WiFi's restart timer, not new firmware. On again,
+  the WiFi rejoins its network and the Ethernet starts if a stack uses it. Save keeps the
+  positions (`UNIT0=OFF` / `UNIT1=OFF` in `alice68net.prefs`), which `alice68net.device`
+  2.8 applies when it starts; a stack can attach to a switched-off unit (link down), since
+  the kernel now knows the Ethernet's MAC address from boot. `Alice68-WiFi OFF` now works
+  under a stack too. With `eth=off`, commands for unit 1 are answered (with an error)
+  instead of waiting for ever.
+- **Confirmed on a Pi:** the SD-card folders (mounting and writing) and the splash's
+  animation.
+
 - **`C:Alice68-ShowConfig` (new): ShowConfig, and much more.** The processor, Kickstart,
   chipset, clocks and every memory region; each expansion board's Zorro type, address,
   size, serial, flags and driver, with names for Emu68's and Alice68's boards; and what is

@@ -21,6 +21,9 @@
 #define NETMAC_FACTORY      2           /* the hardware's own again */
 #define NET_CMD_ETHCFG      0x8a49      /* unit 1. io_Data -> struct NetEthCfg; the link drops and comes back */
 #define NET_CMD_WIFICFG     0x8a4a      /* unit 0. io_Data -> ULONG: AN_WC_* (alice_net.h) */
+#define NET_CMD_ENABLE      0x8a4b      /* both units: the on/off switch. io_Length 1 on, 0 off. Off holds while a
+                                           stack is attached: the link goes down, frames to send are dropped,
+                                           and nothing switches it on again but NET_CMD_ENABLE 1 */
 struct NetEthCfg {
     ULONG ec_Adv;                       /* AN_LM_* speeds and duplexes to advertise (alice_net.h) */
     ULONG ec_Flags;                     /* AN_EC_*: autonegotiation, fixed full duplex, flow control */

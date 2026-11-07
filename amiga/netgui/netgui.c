@@ -14,8 +14,8 @@
  *
  * What it keeps: ENV:alice68wifi.prefs and ENVARC: (the WiFi network: SSID,
  * PASSWORD, COUNTRY - also read by "Alice68-WiFi RECONNECT") and
- * ENV:alice68net.prefs and ENVARC: (ETH= and WIFI=, which alice68net.device
- * applies when it starts). The MAC addresses are the kernel's business.
+ * ENV:alice68net.prefs and ENVARC: (ETH=, WIFI= and UNITn=OFF, which
+ * alice68net.device applies when it starts). The MAC addresses are the kernel's business.
  *
  * Start: from the Shell or Workbench, no arguments.
  * SPDX-License-Identifier: GPL-2.0-only
@@ -31,7 +31,7 @@
 #include "alice_net.h"
 #include "wifi_api.h"
 
-#define A68N_VERSION "2.2"
+#define A68N_VERSION "2.3"
 #define A68N_DATE    "07.11.2026"
 #define A68N_TITLE   "Alice68 Network"
 static const char vers[] __attribute__((used)) = "$VER: Alice68-Network " A68N_VERSION " (" A68N_DATE ")";
@@ -73,7 +73,7 @@ const char *const rp_nav_head[RP_NPAGES] = { NULL, NULL, "Networks", NULL, "Sett
 /* return IDs */
 enum {
 	ID_SAVE = 1, ID_APPLY, ID_CLOSE, ID_PAGE, ID_FRONT,
-	ID_ETH_ON, ID_ETH_OFF, ID_AUTONEG, ID_WIFI_ON, ID_WIFI_OFF,
+	ID_ETH_SW, ID_AUTONEG, ID_WIFI_SW,
 	ID_JOIN, ID_DISC, ID_SCAN, ID_PICK, ID_SHOWPW
 };
 
@@ -280,6 +280,59 @@ static Object *check_row(Object *cb, const char *text)
 	return cb ? mui_new(MUIC_Group, MUIA_Group_Horiz, TRUE, MUIA_Group_Spacing, 6, MUIA_Group_Child, (ULONG)cb,
 	                    MUIA_Group_Child, (ULONG)label(text, QL_LABEL), MUIA_Group_Child, (ULONG)rect(), TAGEND)
 	          : NULL;
+}
+
+/* the on/off switch of a unit, and the line beside it that says what that means now */
+static Object *sw_obj[2], *sw_text[2];
+static char sw_shown[2][96];                    /* the line the text shows now */
+
+static Object *switch_row(int u, ULONG id)
+{
+	sw_obj[u] = mui_newc(switch_mcc, MUIA_Switch_On, 1, TAGEND);
+	sw_shown[u][0] = 0;
+	sw_text[u] = mui_newc(stext_mcc, MUIA_SText_Text, (ULONG)"", MUIA_SText_Lines, 1, TAGEND);
+	if (!sw_obj[u] || !sw_text[u])
+		return NULL;
+	if (app)
+		mui_do(sw_obj[u], MUIM_Notify, MUIA_Switch_On, MUIV_EveryTime, (ULONG)app, 2, MUIM_Application_ReturnID, id);
+	mui_set(sw_obj[u], MUIA_ShortHelp, (ULONG)theme_bubble(u ? "Ethernet" : "WiFi",
+	        "Off switches the hardware off: TCP/IP stacks see the link go down and nothing is sent or received, "
+	        "also while a stack has the unit open. It stays off until switched on here. Save keeps it for the next start."));
+	return mui_new(MUIC_Group, MUIA_Group_Horiz, TRUE, MUIA_Group_Spacing, 10, MUIA_Group_Child, (ULONG)sw_obj[u],
+	               MUIA_Group_Child, (ULONG)sw_text[u], TAGEND);
+}
+
+/* the switches from the card (no notification: that would send the command again) */
+static void switch_refresh(void)
+{
+	static char t[2][96];
+	int u;
+
+	for (u = 0; u < 2 && nb; u++) {
+		volatile struct an_unit *x = U(u);
+		int on = !x->admin_off, busy = rbusy[u ? R_ETH : R_WIFI];
+		if (!sw_obj[u])
+			continue;
+		if (x->kind == AN_KIND_NONE) {
+			rt_strlcpy(t[u], u ? "not in use: eth=off in cmdline.txt" : "no WiFi", sizeof(t[u]));
+			mui_set(sw_obj[u], MUIA_Disabled, TRUE);
+		} else {
+			if (!busy && (int)mui_get(sw_obj[u], MUIA_Switch_On) != on)
+				mui_nnset(sw_obj[u], MUIA_Switch_On, on);
+			if (!on)
+				rt_strlcpy(t[u], "Off: stacks see the link down", sizeof(t[u]));
+			else if (x->link)
+				rt_snprintf(t[u], sizeof(t[u]), "On: link up, %lu Mbit/s", (unsigned long)x->speed_mbps);
+			else if (u && x->state == AN_ST_OFF)
+				rt_strlcpy(t[u], "On: starts when a TCP/IP stack uses unit 1", sizeof(t[u]));
+			else
+				rt_snprintf(t[u], sizeof(t[u]), "On: %s", x->msg[0] ? (const char *)x->msg : "no link");
+		}
+		if (strcmp(t[u], sw_shown[u])) {
+			rt_strlcpy(sw_shown[u], t[u], sizeof(sw_shown[u]));
+			mui_set(sw_text[u], MUIA_SText_Text, (ULONG)sw_shown[u]);
+		}
+	}
 }
 
 static Object *string(ULONG maxlen, int secret)
@@ -672,6 +725,8 @@ static Object *ethset_page(void)
 	}
 	add(modes, rect());
 	add(modes, rect());
+	add(g, left(label("Port", QL_TITLE)));
+	add(g, switch_row(1, ID_ETH_SW));
 	add(g, left(label("Link", QL_TITLE)));
 	add(g, check_row(e_auto, "Autonegotiate the speed and duplex"));
 	add(g, left(label("Offer these speeds (Mbit/s) and duplexes:", QL_NOTE)));
@@ -680,8 +735,6 @@ static Object *ethset_page(void)
 	add(g, row(e_speed, e_full, label("full duplex", QL_LABEL), NULL));
 	add(g, left(label("Flow control", QL_TITLE)));
 	add(g, check_row(e_pause, "Offer and honour pause frames (full duplex)"));
-	add(g, left(label("The port", QL_TITLE)));
-	add(g, row(button("_Ethernet on", ID_ETH_ON), button("Ethernet off", ID_ETH_OFF), NULL, NULL));
 	return page_box(g);
 }
 
@@ -761,12 +814,13 @@ static Object *wifiset_page(void)
 	mui_set(w_pw_page, MUIA_ShortHelp, (ULONG)theme_bubble("Password",
 	        "The network's passphrase, 8 to 63 characters (or 64 hex digits). Dots unless Show is ticked; "
 	        "it is saved in ENVARC:alice68wifi.prefs, which anyone at the machine can read."));
+	add(g, left(label("Radio", QL_TITLE)));
+	add(g, switch_row(0, ID_WIFI_SW));
 	add(g, left(label("Network", QL_TITLE)));
 	add(g, form);
 	add(g, row(button("_Join and save", ID_JOIN), button("_Disconnect", ID_DISC), NULL, NULL));
-	add(g, left(label("Radio", QL_TITLE)));
+	add(g, left(label("Power", QL_TITLE)));
 	add(g, check_row(w_ps, "Power saving (the chip dozes between beacons: slower to answer)"));
-	add(g, row(button("_WiFi on", ID_WIFI_ON), button("WiFi off", ID_WIFI_OFF), NULL, NULL));
 	return page_box(g);
 }
 
@@ -921,6 +975,10 @@ static int prefs_save(void)
 	ethset_read(&c);
 	rt_snprintf(t, sizeof(t), "ETH=%lu,%lu,%lu\nWIFI=%lu\n", (unsigned long)c.ec_Adv, (unsigned long)c.ec_Flags,
 	            (unsigned long)c.ec_Speed, (unsigned long)(mui_get(w_ps, MUIA_Selected) ? AN_WC_POWERSAVE : 0));
+	if (sw_obj[0] && !mui_get(sw_obj[0], MUIA_Switch_On))
+		rt_strlcpy(t + strlen(t), "UNIT0=OFF\n", sizeof(t) - strlen(t));
+	if (sw_obj[1] && !mui_get(sw_obj[1], MUIA_Switch_On))
+		rt_strlcpy(t + strlen(t), "UNIT1=OFF\n", sizeof(t) - strlen(t));
 	ok &= file_write("ENV:alice68net.prefs", t);
 	ok &= file_write("ENVARC:alice68net.prefs", t);
 	return ok;
@@ -1021,7 +1079,10 @@ static void dev_done(void)
 				rt_snprintf(note, sizeof(note), "%lu networks in range", (unsigned long)rq[i]->io_Actual);
 				say(note);
 			}
-		} else if (rq[i]->io_Error)
+		} else if (rq[i]->io_Error && rcmd[i] == NET_CMD_ENABLE)
+			say(rq[i]->io_Error == IOERR_NOCMD ? "alice68net.device is too old for the switch: install 2.8 from ALICE68:"
+			                                   : "the card did not switch");
+		else if (rq[i]->io_Error)
 			say(rcmd[i] == NET_CMD_ETHCFG ? "the Ethernet did not take those settings" : "the card said no");
 	}
 }
@@ -1043,6 +1104,7 @@ static void refresh(void)
 	traffic_sample(0, ms);
 	traffic_sample(1, ms);
 	rp_hist_push(&trf_all.hist, trf[0].rate_rxb + trf[1].rate_rxb, trf[0].rate_txb + trf[1].rate_txb);
+	switch_refresh();
 	switch (page) {
 	case P_STATUS: status_refresh(); break;
 	case P_ETH: eth_refresh(); break;
@@ -1171,18 +1233,19 @@ static int command(ULONG id)
 	case ID_AUTONEG:
 		ethset_disable();
 		break;
-	case ID_ETH_ON:
-		say(dev_send(R_ETH, WIFI_CMD_START, NULL, 0) ? "busy" : "starting the Ethernet");
+	case ID_ETH_SW:
+	case ID_WIFI_SW: {
+		int u = id == ID_ETH_SW, on = (int)mui_get(sw_obj[u], MUIA_Switch_On);
+		const char *what = u ? "Ethernet" : "WiFi";
+		if (dev_send(u ? R_ETH : R_WIFI, NET_CMD_ENABLE, NULL, (ULONG)on)) {
+			mui_nnset(sw_obj[u], MUIA_Switch_On, !on);
+			say("busy: try again in a moment");
+		} else {
+			rt_snprintf(note, sizeof(note), on ? "%s on (Save keeps it on)" : "%s off: stacks see the link down (Save keeps it off)", what);
+			say(note);
+		}
 		break;
-	case ID_ETH_OFF:
-		say(dev_send(R_ETH, WIFI_CMD_OFF, NULL, 0) ? "busy" : "Ethernet off (a stack using it keeps it on)");
-		break;
-	case ID_WIFI_ON:
-		say(dev_send(R_WIFI, WIFI_CMD_START, NULL, 0) ? "busy" : "starting the WiFi");
-		break;
-	case ID_WIFI_OFF:
-		say(dev_send(R_WIFI, WIFI_CMD_OFF, NULL, 0) ? "busy" : "WiFi off (a stack using it keeps it on)");
-		break;
+	}
 	case ID_JOIN:
 		do_join(1);
 		break;

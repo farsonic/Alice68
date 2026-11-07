@@ -18,8 +18,8 @@
 
 #define DEVNAME     "alice68net.device"
 #define VERSION     2
-#define REVISION    7
-#define IDSTRING    "alice68net 2.7 (07.11.2026)\r\n"
+#define REVISION    8
+#define IDSTRING    "alice68net 2.8 (07.11.2026)\r\n"
 
 #define BUFSZ       2048            /* one receive buffer: HEADROOM, the frame, spare room after it */
 #define HEADROOM    64              /* bytes before the frame, as genet.device leaves (its status block):
@@ -414,6 +414,14 @@ static void pool_free(struct NUnit *n)
     n->pool = 0; n->freelist = 0; n->npool = n->nfree = 0;
 }
 static int mac_known(struct NUnit *n) { volatile UBYTE *m = U(n)->mac; return (m[0] | m[1] | m[2] | m[3] | m[4] | m[5]) != 0; }
+/* a stack may attach: its MAC is known (one from the prefs first), nothing is queued, and the
+   Ethernet has started - or the unit is switched off, when it attaches with the link down */
+static int attach_ready(struct NUnit *n)
+{
+    if (n->busy || n->qhead != n->qtail) return 0;
+    if (U(n)->admin_off) return 1;
+    return mac_known(n) && (n->idx == 0 || U(n)->state == AN_ST_IDLE || U(n)->state == AN_ST_CONNECTED);
+}
 static LONG do_attach(struct NUnit *n, struct IOStdReq *io)
 {
     struct NetDevAttach *a = io->io_Data;
@@ -497,9 +505,9 @@ static int command(struct NUnit *n, struct IOStdReq *io)
     case NETDEV_CMD_ATTACH:
         if (n->attach_io) { err = NDERR_BUSY; break; }
         /* the Ethernet starts when a stack takes it (also after "Ethernet off", or a start that failed) */
-        if (n->idx == 1 && (U(n)->state == AN_ST_OFF || U(n)->state == AN_ST_FAILED)) q_add(n, AN_CMD_START, 0, 0, 0);
-        if (!mac_known(n) || n->busy || n->qhead != n->qtail ||
-            (n->idx == 1 && U(n)->state != AN_ST_IDLE && U(n)->state != AN_ST_CONNECTED)) {
+        /* ...unless the user switched it off: then it attaches at once, with the link down */
+        if (n->idx == 1 && !U(n)->admin_off && (U(n)->state == AN_ST_OFF || U(n)->state == AN_ST_FAILED)) q_add(n, AN_CMD_START, 0, 0, 0);
+        if (!attach_ready(n)) {
             n->attach_io = io; n->attach_t0 = n->nb->ticks; return 1;   /* still starting */
         }
         err = do_attach(n, io);
@@ -604,10 +612,15 @@ static int command(struct NUnit *n, struct IOStdReq *io)
         q_add(n, AN_CMD_SCAN, 0, 0, io);
         return 1;
     case WIFI_CMD_DISCONNECT: q_add(n, AN_CMD_DISCONNECT, 0, 0, io); return 1;
-    case WIFI_CMD_OFF:
-        if (n->attached) { err = NDERR_BUSY; break; }
-        q_add(n, AN_CMD_OFF, 0, 0, io);
+    case WIFI_CMD_OFF:                               /* switched off, also under a stack (as NET_CMD_ENABLE 0) */
+        { ULONG a = 0; q_add(n, AN_CMD_ENABLE, &a, 4, io); }
         return 1;
+    case NET_CMD_ENABLE: {
+        ULONG a = io->io_Length ? 1 : 0;
+        q_add(n, AN_CMD_ENABLE, &a, 4, io);
+        /* on again with a stack attached: the Ethernet starts now (the kernel sees rx_on) */
+        return 1;
+    }
     default: err = IOERR_NOCMD; break;
     }
     io->io.io_Error = (BYTE)err;
@@ -631,7 +644,9 @@ void dev_irq(struct NetBase *n)
    MAC0= and MAC1= (unit 0 WiFi, unit 1 Ethernet): COMMODORE (Commodore's OUI 00:80:10 on the
    hardware's own last three bytes), an address aa:bb:cc:dd:ee:ff, or nothing (the kernel's
    choice: Commodore's OUI unless net.oui=off). ETH=adv,flags,speed (NET_CMD_ETHCFG's numbers,
-   decimal) and WIFI=flags (AN_WC_*). Read once, when the process starts: before any stack can
+   decimal) and WIFI=flags (AN_WC_*). UNIT0=OFF / UNIT1=OFF: the unit is switched off; without
+   the line a unit switched off before (the kernel keeps it over a 68k reset) is switched on
+   again: the saved settings win. Read once, when the process starts: before any stack can
    attach. */
 static ULONG decv(const char **p)
 {
@@ -651,8 +666,17 @@ static void mac_prefs(struct NetBase *n)
     LONG len = fh ? DosRead(dos, fh, buf, sizeof buf - 1) : 0;
     if (fh) DosClose(dos, fh);
     CloseLibrary(dos);
-    if (len <= 0) return;
+    if (len < 0) len = 0;
     buf[len] = 0;
+    int off[AN_UNITS] = { 0, 0 };
+    for (char *l = buf; *l; ) {
+        char *e = l; while (*e && *e != '\n') e++;
+        if (l[0] == 'U' && l[1] == 'N' && l[2] == 'I' && l[3] == 'T' && (l[4] == '0' || l[4] == '1') && l[5] == '=' && l[6] == 'O' && l[7] == 'F' && l[8] == 'F')
+            off[l[4] - '0'] = 1;
+        l = *e ? e + 1 : e;
+    }
+    for (int i = 0; i < AN_UNITS; i++)
+        if (off[i] || U(&n->u[i])->admin_off) { ULONG a = off[i] ? 0 : 1; q_add(&n->u[i], AN_CMD_ENABLE, &a, 4, 0); }
     for (char *l = buf; *l; ) {
         char *e = l; while (*e && *e != '\n') e++;
         if (l[0] == 'M' && l[1] == 'A' && l[2] == 'C' && (l[3] == '0' || l[3] == '1') && l[4] == '=') {
@@ -733,14 +757,12 @@ static void net_proc(void)
         for (int i = 0; i < AN_UNITS; i++) {
             struct NUnit *nu = &n->u[i];
             if (nu->attach_io) {
-                int ready = mac_known(nu) && !nu->busy && nu->qhead == nu->qtail     /* a MAC from the prefs first */
-                         && (nu->idx == 0 || U(nu)->state == AN_ST_IDLE || U(nu)->state == AN_ST_CONNECTED);
-                if (ready) { io = nu->attach_io; nu->attach_io = 0; io->io.io_Error = (BYTE)do_attach(nu, io); ReplyMsg(io); }
+                if (attach_ready(nu)) { io = nu->attach_io; nu->attach_io = 0; io->io.io_Error = (BYTE)do_attach(nu, io); ReplyMsg(io); }
                 else if (n->ticks - nu->attach_t0 > 30u * 50) { io = nu->attach_io; nu->attach_io = 0; io->io.io_Error = IOERR_OPENFAIL; ReplyMsg(io); }
             }
             q_run(nu);
             if (nu->attached) rx_all(nu);
-            if (nu->attached && nu->started) tx_all(nu);
+            if (nu->attached && nu->started) { if (U(nu)->admin_off) tx_drop_all(nu); else tx_all(nu); }
             link_check(nu);
         }
     }
@@ -840,7 +862,7 @@ void dev_beginio(struct NetBase *n, struct IOStdReq *io)
             NSCMD_DEVICEQUERY, NETDEV_CMD_ATTACH, NETDEV_CMD_DETACH, NETDEV_CMD_START, NETDEV_CMD_STOP, NETDEV_CMD_SET_MAC, NET_CMD_SETMAC,
             NETDEV_CMD_SET_RXFILTER, NETDEV_CMD_SET_COALESCE, NETDEV_CMD_GET_STATS, NETDEV_CMD_GET_LINK,
             WIFI_CMD_STATUS, WIFI_CMD_SCAN, WIFI_CMD_LOG, WIFI_CMD_RECONNECT, WIFI_CMD_DISCONNECT, WIFI_CMD_OFF,
-            WIFI_CMD_START, WIFI_CMD_JOIN, NET_CMD_ETHCFG, NET_CMD_WIFICFG, 0 };
+            WIFI_CMD_START, WIFI_CMD_JOIN, NET_CMD_ETHCFG, NET_CMD_WIFICFG, NET_CMD_ENABLE, 0 };
         if (!io->io_Data) io->io.io_Error = NDERR_BADPARAMS;
         else if (c == NSCMD_DEVICEQUERY) {
             struct NSDeviceQueryResult *q = io->io_Data;

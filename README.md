@@ -37,7 +37,9 @@ Credits and licences: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md),
 > **Status:** tested on a Raspberry Pi 4. It boots to Workbench at 1080p. A USB-A
 > keyboard and mouse work from power-on. A Realtek RTL8156 network adapter on Neptune
 > passed traffic at about 108 Mbit/s. Hardfiles on the SD card mount, boot and take
-> writes. Treat everything else as experimental.
+> writes; SD-card folders mount and take writes; the kernel's Ethernet (unit 1 of the
+> network card) runs at about 92 Mbit/s on a 100 Mbit/s switch port; the splash's
+> animation runs. Treat everything else (WiFi included) as experimental.
 
 ## Quick start
 
@@ -333,7 +335,7 @@ the driver's USB logs in a Shell.
 - **Leaving the USB-A ports to AmigaOS:** `frf_usb=neptune` in `cmdline.txt` keeps the
   kernel off them, so rondoval's `xhci.device` can drive them instead.
 
-## WiFi and Ethernet: Alice68's network card (new, not yet tested on a Pi)
+## WiFi and Ethernet: Alice68's network card (Ethernet tested on a Pi, WiFi still being tested)
 
 The **kernel** runs the Pi 4's built-in WiFi (the Cypress CYW43455 chip) and its Gigabit
 Ethernet port (GENET) on CPU1, beside USB, and AmigaOS sees one network card with two
@@ -353,11 +355,20 @@ firmware supports it).
 - **Networks**: **Ethernet** (the link: rate, duplex, autonegotiation, what each side
   offers, flow control, link downs, time up, the MAC address) and **WiFi** (the connection,
   and the networks in range: Scan, then a click on one to join it);
-- **Settings**: **Ethernet** (autonegotiation and the speeds and duplexes to offer, or a
-  fixed speed and duplex; flow control; on/off) and **WiFi** (network name, password - dots
-  unless Show is ticked -, country, power saving, Join and save, Disconnect, on/off);
+- **Settings**: **Ethernet** (an on/off switch; autonegotiation and the speeds and duplexes
+  to offer, or a fixed speed and duplex; flow control) and **WiFi** (an on/off switch;
+  network name, password - dots unless Show is ticked -, country, Join and save,
+  Disconnect, power saving);
 - **Traffic**: **Ethernet** and **WiFi** (rates, bytes, packets, drops and errors in and out,
   and a graph of the last minute).
+
+**The on/off switches** at the top of the two Settings pages switch a unit's hardware off
+and on, also while a TCP/IP stack is using it: switched off, the stack sees the link go
+down, nothing is sent or received, and it stays off - a stack starting, the WiFi's
+automatic restart or new firmware do not switch it on again - until the switch is turned
+on. On again, the WiFi rejoins its network and the Ethernet starts if a stack uses it.
+The line beside each switch says what it means right now. **Save** keeps the switches'
+positions for the next start (`UNIT0=OFF` / `UNIT1=OFF` in `alice68net.prefs`).
 
 **Apply** gives the kernel the settings now; **Save** also keeps them for the next start
 (the WiFi network in `ENVARC:alice68wifi.prefs`, the Ethernet and WiFi settings in

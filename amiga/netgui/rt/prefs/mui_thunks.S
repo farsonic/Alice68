@@ -63,5 +63,6 @@ rp_bigstack:
 	DISPATCH tabs_dispatch
 	DISPATCH table_dispatch
 	DISPATCH stext_dispatch
+	DISPATCH switch_dispatch
 
 	.section .note.GNU-stack,"",@progbits

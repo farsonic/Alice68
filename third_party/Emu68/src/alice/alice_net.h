@@ -94,6 +94,11 @@ struct an_fw {
 #define AN_CMD_ETHCFG    10u        /* unit 1. arg[0..3] cfg_adv (AN_LM_*), arg[4..7] cfg_flags (AN_EC_*),
                                        arg[8..11] cfg_speed (10, 100, 1000: without autonegotiation) */
 #define AN_CMD_WIFICFG   11u        /* unit 0. arg[4..7] cfg_flags (AN_WC_*) */
+#define AN_CMD_ENABLE    12u        /* both units: the user's on/off switch. arg[0..3] 1 on, 0 off (admin_off).
+                                       Off: the hardware off, the link down, frames to send discarded, and it stays
+                                       off - a stack attaching, new firmware or the WiFi's restart timer do not
+                                       switch it on. On: WiFi starts; Ethernet starts now if a stack uses it, else
+                                       when one does. AN_CMD_OFF / AN_CMD_START also set / clear admin_off. */
 #define AN_EC_AUTONEG     0x01u     /* Ethernet: autonegotiate (else cfg_speed and AN_EC_FULL, fixed) */
 #define AN_EC_FULL        0x02u     /* fixed full duplex */
 #define AN_EC_PAUSE       0x04u     /* flow control: advertise pause and honour it */
@@ -156,7 +161,8 @@ struct an_unit {
     unsigned int link_downs;        /* times the link went down since the kernel started */
     unsigned int link_up_s;         /* seconds since the Pi started, when the link last came up */
     unsigned int cfg_adv, cfg_flags, cfg_speed;     /* the settings now (AN_CMD_ETHCFG / AN_CMD_WIFICFG) */
-    unsigned int pad[3];
+    unsigned int admin_off;         /* kernel: 1 = switched off by the user (AN_CMD_ENABLE 0, AN_CMD_OFF) */
+    unsigned int pad[2];
 };
 
 struct an_slot {

@@ -25,10 +25,11 @@
 #define MUIA_IfView_Update (RTAG + 0xa02)  /* (set) */
 #define MUIA_SText_Text    (RTAG + 0xb01)  /* (init, set) lines separated by '\n' (not copied) */
 #define MUIA_SText_Lines   (RTAG + 0xb02)  /* (init) the lines it has room for */
+#define MUIA_Switch_On     (RTAG + 0xc01)  /* (init, set, get, notify) the switch: 1 on, 0 off */
 
 enum { GK_BYTES, GK_CPU, GK_CONN };
 
-extern struct MUI_CustomClass *graph_mcc, *tabs_mcc, *table_mcc, *stext_mcc;
+extern struct MUI_CustomClass *graph_mcc, *tabs_mcc, *table_mcc, *stext_mcc, *switch_mcc;
 int  widgets_classes_make(void);
 void widgets_classes_free(void);
 /* called on every tick of a graph made with MUIA_Graph_Ticker (once a second) */

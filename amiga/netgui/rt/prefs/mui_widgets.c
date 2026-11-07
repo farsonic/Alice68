@@ -24,6 +24,7 @@
  *           which: a click shows the next ones (the cursor keys are the
  *           page list's)
  *   stext   a fixed number of lines of text that change
+ *   switch  (Alice68) an on/off slider
  * The total-traffic graph also owns the timer: it starts when the page is
  * shown and stops when it is hidden, so nothing is read on other pages.
  * Its period is the Update setting (1, 2 or 5 s, or paused), and at
@@ -46,7 +47,7 @@
 #define SELECTDOWN 0x68
 #endif
 
-struct MUI_CustomClass *graph_mcc, *tabs_mcc, *table_mcc, *stext_mcc;
+struct MUI_CustomClass *graph_mcc, *tabs_mcc, *table_mcc, *stext_mcc, *switch_mcc;
 
 /* ---- drawing helpers ---- */
 /* text cut to fit maxw pixels (the longest start that fits, found by
@@ -932,6 +933,153 @@ DISPATCHER(stext_dispatch)
 }
 
 /* ==================================================================
+ * Alice68-Network: switch - an on/off slider. A pill: in the accent
+ * colour with the knob on the right and "ON" when on, grey with the
+ * knob on the left and "OFF" when off. A click anywhere on it flips it
+ * and notifies MUIA_Switch_On.
+ * ================================================================== */
+struct switch_data {
+	struct MUI_EventHandlerNode ehn;
+	int on, hot, shown, disabled;
+};
+
+/* the half-width of a disc of radius r at row y (0 = top): for the round ends */
+static int disc_half(int r, int y)
+{
+	int dy = 2 * y + 1 - 2 * r, k = 0;     /* in half pixels */
+	while ((2 * (k + 1)) * (2 * (k + 1)) + dy * dy <= 4 * r * r)
+		k++;
+	return k;
+}
+
+static void pill(struct RastPort *rp, LONG x, LONG y, LONG w, LONG h, LONG pen)
+{
+	int r = (int)h / 2, i;
+	for (i = 0; i < h; i++) {
+		int k = disc_half(r, i);
+		theme_line(rp, x + r - k, y + i, x + w - 1 - r + k, y + i, pen);
+	}
+}
+
+static void switch_draw(struct switch_data *d, Object *obj)
+{
+	struct RastPort *rp = _rp(obj);
+	LONG h = theme_fh() + 6, w = h * 2 + 18;
+	LONG x = _mleft(obj), y = _mtop(obj) + (_mheight(obj) - h) / 2;
+	LONG track = d->disabled ? tpen(T_DISABLED) : d->on ? tpen(T_ACCENT) : tpen(T_LIGHT);
+	LONG kd = h - 4;                        /* the knob's diameter */
+	LONG kx = d->on ? x + w - 2 - kd : x + 2;
+	const char *t = d->on ? "ON" : "OFF";
+	LONG tw = theme_textlen_bold(rp, t);
+
+	theme_fill(rp, _mleft(obj), _mtop(obj), _mright(obj), _mbottom(obj), tpen(T_WINDOW));
+	pill(rp, x - 1, y - 1, w + 2, h + 2, d->hot ? tpen(T_HOVER) : tpen(T_BORDER));
+	pill(rp, x, y, w, h, track);
+	pill(rp, kx - 1, y + 1, kd + 2, kd + 2, tpen(T_BORDER));
+	pill(rp, kx, y + 2, kd, kd, tpen(T_WHITE));
+	if (d->on)
+		theme_text(rp, x + (w - kd - 2 - tw) / 2, y + (h - theme_fh()) / 2, t, tpen(T_WHITE), 1);
+	else
+		theme_text(rp, x + kd + 2 + (w - kd - 2 - tw) / 2, y + (h - theme_fh()) / 2, t, tpen(T_DIM), 1);
+}
+
+static void switch_set(Object *obj, int on)
+{
+	struct TagItem t[2];
+	t[0].ti_Tag = MUIA_Switch_On;
+	t[0].ti_Data = (ULONG)on;
+	t[1].ti_Tag = TAG_DONE;
+	t[1].ti_Data = 0;
+	SetAttrsA(obj, t);
+}
+
+DISPATCHER(switch_dispatch)
+{
+	struct switch_data *d;
+
+	switch (msg->MethodID) {
+	case OM_NEW:
+		if (!(obj = (Object *)DoSuperMethodA(cl, obj, msg)))
+			return 0;
+		d = INST_DATA(cl, obj);
+		memset(d, 0, sizeof(*d));
+		d->on = mc_tagval(msg, MUIA_Switch_On, 0) != 0;
+		return (ULONG)obj;
+	case OM_SET:
+		d = INST_DATA(cl, obj);
+		if (mc_has_tag(msg, MUIA_Switch_On)) {
+			int on = mc_tagval(msg, MUIA_Switch_On, 0) != 0;
+			if (on != d->on) {
+				d->on = on;
+				if (d->shown)
+					MUI_Redraw(obj, MADF_DRAWOBJECT);
+			}
+		}
+		if (mc_has_tag(msg, MUIA_Disabled)) {
+			d->disabled = mc_tagval(msg, MUIA_Disabled, 0) != 0;
+			if (d->shown)
+				MUI_Redraw(obj, MADF_DRAWOBJECT);
+		}
+		break;
+	case OM_GET:
+		if (((struct opGet *)msg)->opg_AttrID == MUIA_Switch_On) {
+			*((struct opGet *)msg)->opg_Storage = (ULONG)((struct switch_data *)INST_DATA(cl, obj))->on;
+			return TRUE;
+		}
+		break;
+	case MUIM_AskMinMax: {
+		LONG h = theme_fh() + 8, w = (theme_fh() + 6) * 2 + 22;
+		DoSuperMethodA(cl, obj, msg);
+		mc_minmax(msg, w, w, w, h, h, h);
+		return 0;
+	}
+	case MUIM_Setup:
+		if (!DoSuperMethodA(cl, obj, msg))
+			return FALSE;
+		theme_setup(obj);
+		d = INST_DATA(cl, obj);
+		mc_handler(obj, cl, &d->ehn, IDCMP_MOUSEBUTTONS | IDCMP_MOUSEMOVE, 1);
+		return TRUE;
+	case MUIM_Cleanup:
+		d = INST_DATA(cl, obj);
+		mc_handler(obj, cl, &d->ehn, 0, 0);
+		theme_cleanup(obj);
+		break;
+	case MUIM_Show:
+		((struct switch_data *)INST_DATA(cl, obj))->shown = 1;
+		break;
+	case MUIM_Hide:
+		((struct switch_data *)INST_DATA(cl, obj))->shown = 0;
+		break;
+	case MUIM_Draw:
+		DoSuperMethodA(cl, obj, msg);
+		if (((struct MUIP_Draw *)msg)->flags & (MADF_DRAWOBJECT | MADF_DRAWUPDATE))
+			switch_draw(INST_DATA(cl, obj), obj);
+		return 0;
+	case MUIM_HandleEvent: {
+		struct IntuiMessage *im = ((struct MUIP_HandleEvent *)msg)->imsg;
+		d = INST_DATA(cl, obj);
+		if (!im || !d->shown || d->disabled)
+			return 0;
+		if (im->Class == IDCMP_MOUSEMOVE) {
+			int h = mc_inside(obj, im);
+			if (h != d->hot) {
+				d->hot = h;
+				MUI_Redraw(obj, MADF_DRAWUPDATE);
+			}
+			return 0;
+		}
+		if (im->Class == IDCMP_MOUSEBUTTONS && im->Code == SELECTDOWN && mc_inside(obj, im)) {
+			switch_set(obj, !d->on);
+			return MUI_EventHandlerRC_Eat;
+		}
+		return 0;
+	}
+	}
+	return DoSuperMethodA(cl, obj, msg);
+}
+
+/* ==================================================================
  * Alice68-Network: making the classes, and the timer's work
  * ================================================================== */
 void widgets_set_tick(void (*fn)(void))
@@ -950,12 +1098,13 @@ int widgets_classes_make(void)
 	tabs_mcc = wmk(sizeof(struct tabs_data), DISPATCHER_REF(tabs_dispatch));
 	table_mcc = wmk(sizeof(struct table_data), DISPATCHER_REF(table_dispatch));
 	stext_mcc = wmk(sizeof(struct stext_data), DISPATCHER_REF(stext_dispatch));
-	return graph_mcc && tabs_mcc && table_mcc && stext_mcc ? 0 : -1;
+	switch_mcc = wmk(sizeof(struct switch_data), DISPATCHER_REF(switch_dispatch));
+	return graph_mcc && tabs_mcc && table_mcc && stext_mcc && switch_mcc ? 0 : -1;
 }
 
 void widgets_classes_free(void)
 {
-	struct MUI_CustomClass **c[] = { &graph_mcc, &tabs_mcc, &table_mcc, &stext_mcc };
+	struct MUI_CustomClass **c[] = { &graph_mcc, &tabs_mcc, &table_mcc, &stext_mcc, &switch_mcc };
 	int i;
 
 	for (i = 0; i < (int)(sizeof(c) / sizeof(c[0])); i++)

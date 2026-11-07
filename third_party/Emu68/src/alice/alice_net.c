@@ -1116,6 +1116,19 @@ static void conn_tick(void)
 }
 
 /* ---- the Amiga's commands ---- */
+/* the user's off switch: the chip goes off at the next turn of wifi_main's loop and stays off
+   (start_req is ignored while off_req is set); what was waiting to be sent is dropped */
+static void wifi_switch_off(volatile struct an_unit *u)
+{
+    u->admin_off = 1;
+    W.off_req = 1;
+    W.want = 0;
+    W.scan_for_join = 0;
+    link_set(0);
+    while (u->tx_tail != u->tx_head) { u->tx_tail++; u->tx_err++; }
+    wifi_log("switched off\n");
+}
+
 static void commands(void)
 {
     volatile struct an_unit *u = U(0);
@@ -1125,7 +1138,18 @@ static void commands(void)
     uint32_t c = u->cmd;
     switch (c) {
     case AN_CMD_START:
+        u->admin_off = 0;
         W.start_req = 1; W.off_req = 0; W.restarts = 0;
+        cmd_finish(seq, 0);
+        break;
+    case AN_CMD_ENABLE:
+        if (arg32(u, 0)) {
+            u->admin_off = 0;
+            W.start_req = 1; W.off_req = 0; W.restarts = 0;
+            W.want = W.ssid[0] != 0; W.backoff = 0;    /* back on the network it was on */
+            wifi_log("switched on\n");
+        } else wifi_switch_off(u);
+        u->state_seq++;
         cmd_finish(seq, 0);
         break;
     case AN_CMD_JOIN: {
@@ -1140,6 +1164,7 @@ static void commands(void)
         if (!W.ssid[0]) { cmd_finish(seq, -2); break; }
         if (j->country[0]) { W.country[0] = j->country[0]; W.country[1] = j->country[1]; W.country[2] = 0; }
         W.want = 1; W.backoff = 0; W.start_req = 1; W.off_req = 0;
+        u->admin_off = 0;                           /* joining is asking for it on */
         W.scan_for_join = 0;
         if (W.chip_up) {
             if (u->state == AN_ST_CONNECTED || u->state == AN_ST_JOINING) cmd_int(WLC_DISASSOC, 0);
@@ -1164,9 +1189,7 @@ static void commands(void)
         cmd_finish(seq, 0);
         break;
     case AN_CMD_OFF:
-        W.off_req = 1;
-        W.want = 0;
-        W.scan_for_join = 0;
+        wifi_switch_off(u);
         cmd_finish(seq, 0);
         break;
     case AN_CMD_RXON:                               /* the Amiga skips what is in the slots itself */
@@ -1438,6 +1461,17 @@ static uintptr_t scb_virt(uint32_t bus)
     }
     return 0;
 }
+/* the addresses alone, at boot: so that a stack can attach to a port that is switched off
+   (it is told the address then). The port is not claimed here: eth_find does that, when it starts. */
+static void eth_learn_mac(volatile struct an_unit *u)
+{
+    of_node_t *g = genet_node();
+    of_property_t *m = g ? dt_find_property(g, "local-mac-address") : 0;
+    if (!m || m->op_length < 6) return;
+    memcpy(E.fmac, m->op_value, 6);
+    mac_wanted(E.want_mac, E.want_oui, E.fmac, E.mac);
+    for (int i = 0; i < 6; i++) { u->mac[i] = E.mac[i]; u->factory_mac[i] = E.fmac[i]; }
+}
 static int eth_find(void)
 {
     if (E.regs) return 0;
@@ -1701,6 +1735,10 @@ static void eth_stop(void)
     E.state = E_OFF;
     estate(AN_ST_OFF, "switched off");
 }
+static void eth_discard_tx(volatile struct an_unit *u)
+{
+    while (u->tx_tail != u->tx_head) { u->tx_tail++; u->tx_err++; }
+}
 static void eth_commands(void)
 {
     volatile struct an_unit *u = U(1);
@@ -1709,8 +1747,23 @@ static void eth_commands(void)
     __asm__ volatile("dmb ish" ::: "memory");
     int r = 0;
     switch (u->cmd) {
-    case AN_CMD_START: if (E.state == E_OFF || E.state == E_FAILED) eth_start(); break;
-    case AN_CMD_OFF:   eth_stop(); break;
+    case AN_CMD_START: u->admin_off = 0; if (E.state == E_OFF || E.state == E_FAILED) eth_start(); break;
+    case AN_CMD_OFF:   u->admin_off = 1; eth_stop(); eth_discard_tx(u); break;
+    case AN_CMD_ENABLE:
+        if (arg32(u, 0)) {
+            u->admin_off = 0;
+            if (u->rx_on && (E.state == E_OFF || E.state == E_FAILED)) eth_start();     /* a stack is using it */
+            else if (E.state == E_OFF) estate(AN_ST_OFF, "on: starts when a TCP/IP stack uses unit 1");
+            eth_log("switched on\n");
+        } else {
+            u->admin_off = 1;
+            eth_stop();
+            eth_discard_tx(u);
+            estate(AN_ST_OFF, "switched off");
+            eth_log("switched off\n");
+        }
+        u->state_seq++;
+        break;
     case AN_CMD_RXON:  u->rx_on = 1; break;
     case AN_CMD_RXOFF: u->rx_on = 0; break;
     case AN_CMD_ETHCFG: {
@@ -1766,10 +1819,19 @@ static void eth_poll(void)
         u->cfg_speed = 1000;
         E.want_oui = oui_default(E.want_mac);
         E.state = E_OFF;
+        eth_learn_mac(u);
         estate(AN_ST_OFF, "starts when a TCP/IP stack uses unit 1, or eth=on in cmdline.txt");
         if (bootarg_word("eth=on")) eth_start();
     }
-    if (E.disabled) return;
+    if (E.disabled) {                                   /* eth=off: no Ethernet, but no command waits for ever */
+        if (u->cmd_seq != u->cmd_done) {
+            u->cmd_result = -1;
+            __asm__ volatile("dmb ish" ::: "memory");
+            u->cmd_done = u->cmd_seq;
+            an_irq();
+        }
+        return;
+    }
     eth_commands();
     uint32_t now = now_ms();
     switch (E.state) {

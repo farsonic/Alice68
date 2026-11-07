@@ -28,7 +28,8 @@ Riptide (https://github.com/farsonic/riptide), commit 4e5f73c
   prefs/mui_thunks.S     src/amiga/prefs/         (the dispatchers not taken left out)
   prefs/mui_widgets.c    src/amiga/prefs/mui_status.c: the graph, tabs, table and
                          stext classes only (no interface view, no Status page);
-                         its tags in prefs/mui_widgets.h; class making added
+                         its tags in prefs/mui_widgets.h; class making added;
+                         an on/off switch class of Alice68's own
   prefs/stat_util.c/.h   src/amiga/prefs/prefs_status.c/.h: the graph history and
                          the number wording only
 
