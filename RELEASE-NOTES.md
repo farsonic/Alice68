@@ -8,8 +8,9 @@
   own). Folders are read and written with long names, and are never bootable; the DOS
   devices are `SDF0:`, `SDF1:` and so on. A folder `ALICE68` in the root is always mounted,
   and the release puts Alice68's Amiga files there (`boot/ALICE68`), with
-  `Execute ALICE68:Install`, which copies them into `SYS:` and keeps what it replaces in
-  `SYS:Alice68-Backup` for `Uninstall`. `alice68.folders=off` turns them all off.
+  an Installer script, **Install** (icons for it, `Uninstall`, the ReadMe and the volume,
+  drawn for Alice68), which copies them into `SYS:` and keeps what it replaces in
+  `SYS:Alice68-Backup` for `Uninstall`; `Install-Shell` does the same without the Installer. `alice68.folders=off` turns them all off.
   `alice68hdf.device` 0.5 has the DOS handler (from the ROM, like the rest of it) and a
   FAT16/FAT32 read-write engine. Hardfiles that are mounted stay read-only through a folder.
   Tested on a PC (`mkfs.fat` images checked with `fsck.fat` and mtools) and on a 68k

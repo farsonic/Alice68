@@ -16,18 +16,20 @@ card from a PC.
   DEVS/USBHardware/alice68-usb.device   for Neptune or Poseidon
   DEVS/alice68net.device the network card (WiFi unit 0, Ethernet unit 1)
 
-To put them into the system, open a Shell and type
+To put them into the system, double-click Install (it runs the Installer),
+or from a Shell:
 
-  Execute ALICE68:Install
+  Installer ALICE68:Install
 
-It copies each file to SYS: (or TO=<somewhere>:) and keeps what it replaces
-in SYS:Alice68-Backup, the first time only, so that
+It copies each file to SYS: (Expert users can choose another place) and
+keeps what it replaces in Alice68-Backup there, the first time only, so that
+Uninstall puts the system back as it was before Alice68's first install.
+Run Install again after copying a newer ALICE68 folder onto the card, and
+reboot afterwards so that the new devices are loaded.
 
-  Execute ALICE68:Uninstall
-
-puts the system back as it was before Alice68's first install. Run Install
-again after copying a newer ALICE68 folder onto the card; reboot afterwards
-so that the new devices are loaded.
+Without the Installer (it is on AmigaOS 3.1's Install disk, and in 3.2 and
+3.1.4): Execute ALICE68:Install-Shell, and Execute ALICE68:Uninstall-Shell.
+Workbench shows the C and DEVS drawers with Window > Show > All Files.
 
 Other folders of the card can be mounted too, in config.txt:
 

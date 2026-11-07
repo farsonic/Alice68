@@ -448,16 +448,18 @@ alice68.folder=Amiga/Work:Work    # the folder Amiga/Work, as volume Work:
 `amiga/build.sh` as `amiga/out/ALICE68`) holds `C/` (`Alice68-HDF`, `Alice68-USBLog`,
 `Alice68-NetCheck`, `Alice68-WiFi`, `Alice68-Network`, `Alice68-NetworkGT`,
 `Alice68-Monitor`), `DEVS/alice68net.device`, `DEVS/USBHardware/alice68-usb.device`, a
-`ReadMe.txt`, and two scripts. In a Shell:
+`ReadMe.txt`, and an installer. `ALICE68:` shows an SD card icon on Workbench; open it
+and double-click **Install** (it runs the Amiga's Installer), or in a Shell:
 
 ```
-Execute ALICE68:Install
+Installer ALICE68:Install
 ```
 
-This copies each file to `SYS:` (or `TO=<volume or drawer>`). The first time, it keeps
-whatever it replaces in `SYS:Alice68-Backup`, and `Execute ALICE68:Uninstall` puts that
-back. To update, copy a newer `ALICE68` folder onto the card, run `Install` again and
-reboot.
+This copies each file to `SYS:` (in Expert mode you can choose another place). The
+first time, it keeps whatever it replaces in `SYS:Alice68-Backup`, and **Uninstall**
+puts that back. Without the Installer program, use `Execute ALICE68:Install-Shell`
+(and `Uninstall-Shell`). To update, copy a newer `ALICE68` folder onto the card, run
+`Install` again and reboot.
 
 `tools/hdf-test/run.sh` also tests the folders: the FAT engine on a PC against
 `mkfs.fat` images (checked afterwards with `fsck.fat` and mtools), and the DOS handler on
