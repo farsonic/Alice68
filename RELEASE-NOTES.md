@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **The kernel calls itself Alice68.** Its version string is now
+  `Alice68 0.4.0 (date) git:<commit>, based on Emu68 1.1.0-beta.1` (shown by `version`
+  tools and in the device tree's `idstring`); the splash's second line reads "based on
+  Emu68 1.1.0-beta.1 - AGA core 1.120". The `/emu68` device-tree node and its numeric
+  `version` stay as they were, because Amiga drivers written for Emu68 (the `-rangeops`
+  archives among them) look for them. The build script is now
+  `tools/build-alice68-pi4.sh` (build directory `/tmp/alice68-pi4-build`). README says
+  plainly that Alice68 is independent of Emu68 and that its problems are reported here.
+
 - **`alice68net.device` 2.9: a unit the kernel does not serve is refused cleanly.** With
   `eth=off` (or no network card), opening unit 1 fails at once with `IOERR_OPENFAIL`, leaves
   `io_Unit` NULL, keeps nothing and starts nothing, and logs one line saying why. A

@@ -60,7 +60,7 @@ Then, in the repository, `git submodule update --init`.
 ```bash
 export ARM_GNU_TOOLCHAIN=$HOME/toolchains/arm-gnu-toolchain-15.2.rel1-x86_64-aarch64_be-none-linux-gnu
 bash amiga/build.sh                      # 68k parts -> amiga/out/; regenerates src/boards/alice68hdf.device.h
-bash tools/build-emu68aga-pi4.sh         # -> dist/pi4/kernel8.img   (FRF_USB=OFF for the no-USB kernel)
+bash tools/build-alice68-pi4.sh         # -> dist/pi4/kernel8.img   (FRF_USB=OFF for the no-USB kernel)
 tools/hdf-test/run.sh                    # hardfile, folder and CD image tests: cores on the PC + driver on a 68k emulator (expect all "ALL OK")
 python3 amiga/test/harness.py amiga/out/alice68-usb.device   # USB pass-through driver on the 68k emulator
 python3 amiga/test/harness_netcheck.py amiga/out/Alice68-NetCheck   # the network check tool against a fake SANA-II driver
@@ -78,7 +78,7 @@ tools/splash-preview/build.sh > out.ppm  # the splash, drawn by the kernel's own
   `machine68k`, Pillow.
 - After changing anything in `amiga/hdf/`, run `amiga/build.sh` and **commit the regenerated
   `third_party/Emu68/src/boards/alice68hdf.device.h`**: the kernel embeds it.
-- The kernel build dir is fixed (`/tmp/emu68aga-pi4-build`); builds overwrite each other.
+- The kernel build dir is fixed (`/tmp/alice68-pi4-build`); builds overwrite each other.
 - Before declaring something done: fresh clone → submodules → `amiga/build.sh` (git status
   must stay clean) → tests → both kernels build. Nothing here can boot a Pi: say what was
   tested where (PC, emulator) and what only hardware can confirm.

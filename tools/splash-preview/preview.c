@@ -63,7 +63,7 @@ int main(int argc, char **argv)
     al_setup(fb, w * 2, w, h);
     al_clear();
     char l2[96], l3[64];
-    snprintf(l2, sizeof l2, "Emu68 1.1.0-beta.1 - AGA core 1.120");
+    snprintf(l2, sizeof l2, "based on Emu68 1.1.0-beta.1 - AGA core 1.120");
     snprintf(l3, sizeof l3, "Raspberry Pi 4 - display %ux%u", w, h);
     al_header(ALICE_NAME " " ALICE_VERSION, l2, l3);
     struct al_status s = { 0x7fe, 1, 1, 0, 1, 2, 0, "connected MyNetwork", 1, "1000 Mbit/s", 1 };

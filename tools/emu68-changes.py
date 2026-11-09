@@ -47,7 +47,7 @@ AGA_WHY = {
 }
 WHY = {   # files changed since the import: (layer, what and why)
     'AGA-PISTORM-SOURCE.txt': [('frf', 'AGA-PiStorm\'s note about where its Emu68 came from; removed in the merge (it describes AGA-PiStorm\'s package, not this tree; `docs/PROVENANCE.md` says the same)')],
-    'build-scripts/README.md': [('frf', 'Emu68\'s Docker build scripts, removed in the merge (Alice68 builds with `tools/build-emu68aga-pi4.sh`)')],
+    'build-scripts/README.md': [('frf', 'Emu68\'s Docker build scripts, removed in the merge (Alice68 builds with `tools/build-alice68-pi4.sh`)')],
     'build-scripts/build-aarch64': [('frf', 'as above')],
     'build-scripts/build-m68k-amigaos': [('frf', 'as above')],
     'build-scripts/build-with-docker': [('frf', 'as above')],
@@ -57,6 +57,7 @@ WHY = {   # files changed since the import: (layer, what and why)
     'include/mmu.h': [('frf', 'declares `mmu_unmap()`')],
     'src/ExecutionLoop.c': [('frf', 'standalone: no physical interrupt lines, only the virtual chipset\'s')],
     'src/M68k_LINE4.c': [('frf', 'the 68k RESET instruction resets the virtual machine (and re-runs autoconfig) instead of pulsing the PiStorm\'s reset line')],
+    'cmake/verstring.cmake': [('alice', 'the version string names the kernel Alice68 (`ALICE_VERSION`), "based on Emu68" and its version; the `/emu68` device-tree node stays')],
     'src/M68k_LINEF.c': [('emu68', 'private LINE-F opcodes for data-cache maintenance over an address range (Emu68 `582253e`, Lukasz Winczura, from Emu68\'s `1_1_wip`), which rondoval\'s `-rangeops` drivers use')],
     'src/M68k_SR.c': [('emu68', 'as above: the supervisor check for those opcodes')],
     'src/aarch64/mmu.c': [('frf', 'mapping for the standalone machine'),
@@ -72,7 +73,7 @@ WHY = {   # files changed since the import: (layer, what and why)
     'src/overlays/emu68.dts': [('frf', 'joystick button mapping options')],
     'src/pistorm/ps_classic_protocol.c': [('alice', 'no PiStorm on the header: the serial log goes out on GPIO 14 (header pin 8)')],
     'src/raspi/start_rpi64.c': [('frf', 'the standalone start: no PiStorm probe, the virtual machine set up'),
-                                ('alice', 'the Pi 4 boot: the splash (status strip, log panels, animation), the boot log, starting the xHCI driver and the network card')],
+                                ('alice', 'the Pi 4 boot: the splash (status strip, log panels, animation; "based on Emu68" from the version string), the boot log, starting the xHCI driver and the network card')],
     'src/raspi/support_rpi.c': [('frf', 'the boot log on screen'),
                                 ('alice', 'every kernel log line also into the USB card\'s log ring (for `Alice68-USBLog` and `Alice68-Monitor`)')],
 }

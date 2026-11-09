@@ -33,7 +33,15 @@ Emu68 runs. It is a Pi 4 build of three projects, plus a Pi 4 USB stack of its o
 
 Credits and licences: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md),
 [LICENSE](LICENSE). Every Emu68 file that differs from upstream, who changed it and why:
-[docs/EMU68-CHANGES.md](docs/EMU68-CHANGES.md). Please report Alice68 problems here, not to the upstream projects.
+[docs/EMU68-CHANGES.md](docs/EMU68-CHANGES.md).
+
+**Alice68 is an independent project.** It is not part of Emu68, and it is not endorsed
+by Emu68's author. Joining Emu68 to a virtual AGA chipset on a bare Pi 4 is the work of
+AGA-PiStorm, FRF and Alice68, and the Pi 4 USB and network drivers and the Amiga drivers
+are Alice68's; Emu68's author has no part in any of it. The kernel calls itself Alice68, "based on Emu68"; it
+keeps Emu68's `/emu68` device-tree entry only because Amiga drivers written for Emu68
+look for it. **Report Alice68 problems here, not to Emu68 or the other upstream
+projects.**
 
 > **Status:** tested on a Raspberry Pi 4. It boots to Workbench at 1080p. A USB-A
 > keyboard and mouse work from power-on. A Realtek RTL8156 network adapter on Neptune
@@ -662,7 +670,7 @@ Build the kernel (output: `dist/pi4/kernel8.img`):
 
 ```bash
 ARM_GNU_TOOLCHAIN=$HOME/toolchains/arm-gnu-toolchain-15.2.rel1-x86_64-aarch64_be-none-linux-gnu \
-  bash tools/build-emu68aga-pi4.sh
+  bash tools/build-alice68-pi4.sh
 ```
 
 Build the 68k parts, `alice68-usb.device`, `Alice68-USBLog`, `alice68hdf.device` and

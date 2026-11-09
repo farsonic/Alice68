@@ -1308,12 +1308,13 @@ void display_logo()
 #if defined(ALICE_SPLASH)
     {
         static char l2[64], l3[48];
-        const char *v = VERSION_STRING;
-        if (v[0] == '$') v += 6;                              /* "$VER: " */
+        /* "$VER: Alice68 0.4.0 (date) git:hash, based on Emu68 1.1.0-beta.1": the Emu68 part */
+        const char *v = VERSION_STRING, *b = v;
+        for (const char *q = v; *q; q++) if (q[0] == 'b' && q[1] == 'a' && q[2] == 's' && q[3] == 'e' && q[4] == 'd' && q[5] == ' ') { b = q; break; }
+        if (b == v && v[0] == '$') b += 6;                    /* no "based on": "$VER: Emu68 1.1..." */
         unsigned k = 0;
-        while (v[k] && v[k] != ' ' && k < 30) { l2[k] = v[k]; k++; }      /* "Emu68" */
-        if (v[k] == ' ') { l2[k] = v[k]; k++; }
-        while (v[k] && v[k] != ' ' && k < 40) { l2[k] = v[k]; k++; }      /* its version */
+        while (b[k] && k < 44) { l2[k] = b[k]; k++; }
+        while (k && l2[k - 1] == ' ') k--;
         const char *core = " - AGA core 1.120";
         for (unsigned j = 0; core[j] && k < sizeof l2 - 1; j++) l2[k++] = core[j];
         l2[k] = 0;

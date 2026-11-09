@@ -116,5 +116,5 @@ supply these.
   `amiga/monitor.c` – `Alice68-Monitor`.
 * `tools/hdf-test/` – test SD card images and the hardfile tests; `tools/wifi-test/` –
   the WiFi protocol tests.
-* `tools/build-emu68aga-pi4.sh` and the Pi 4 changes to the files above
+* `tools/build-alice68-pi4.sh` and the Pi 4 changes to the files above
   (changes inside Emu68's MPL-2.0 files are MPL-2.0).

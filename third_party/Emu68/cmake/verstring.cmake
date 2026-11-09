@@ -7,7 +7,16 @@ function(get_verstring OUTPUT)
     if (NOT GIT_PORCELAIN STREQUAL "")
         set(GIT_PORCELAIN ",dirty")
     endif()
-    set(${OUTPUT} "$VER: ${PROJECT_NAME} ${PROJECT_VERSION} ${PROJECT_DATE} git:${GIT_HASH}${GIT_PORCELAIN}" PARENT_SCOPE)
+    # Alice68: the kernel names itself Alice68 (ALICE_VERSION in alice_splash.h), based on
+    # Emu68 ${PROJECT_VERSION}. The /emu68 device-tree node and its numeric "version" stay
+    # Emu68's: the 68k drivers written for Emu68 look for them.
+    file(STRINGS ${PROJECT_SOURCE_DIR}/src/raspi/alice_splash.h ALICE_V REGEX "^#define ALICE_VERSION ")
+    if (ALICE_V)
+        string(REGEX REPLACE "^[^\"]*\"([^\"]*)\".*$" "\\1" ALICE_V "${ALICE_V}")
+        set(${OUTPUT} "$VER: Alice68 ${ALICE_V} ${PROJECT_DATE} git:${GIT_HASH}${GIT_PORCELAIN}, based on Emu68 ${PROJECT_VERSION}" PARENT_SCOPE)
+    else()
+        set(${OUTPUT} "$VER: ${PROJECT_NAME} ${PROJECT_VERSION} ${PROJECT_DATE} git:${GIT_HASH}${GIT_PORCELAIN}" PARENT_SCOPE)
+    endif()
 endfunction(get_verstring)
 
 function(get_git_sha OUTPUT)
