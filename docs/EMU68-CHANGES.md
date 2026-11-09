@@ -2,7 +2,7 @@
 
 Alice68's kernel is [Emu68](https://github.com/michalsc/Emu68) by Michal Schulz (MPL-2.0), at upstream commit `0ba3a89` (1.1.0-beta.1), changed in four layers. This page lists every Emu68 file that is not as it is upstream, who changed it and why. Emu68's files keep their MPL-2.0 headers and the changes to them are MPL-2.0; new files say their own licence.
 
-Made by `tools/emu68-changes.py` from git, at Alice68 `ea1cc45`. To see any change itself:
+Made by `tools/emu68-changes.py` from git, at Alice68 `55dd4f5`. To see any change itself:
 
 - AGA-PiStorm's layer: `arm/emu68-aga.patch` (its patch against Emu68 `0ba3a89`, as released);
 - the other layers: `git diff 2b56a31 HEAD -- third_party/Emu68/<file>`, or `git log 2b56a31..HEAD -- third_party/Emu68/<file>` for each commit.
@@ -53,7 +53,7 @@ Lines per layer (added / removed), from each commit; a file changed by AGA-PiSto
 | `build-scripts/build-aarch64` (removed) | +0 -6 |  |  | **FRF:** as above |
 | `build-scripts/build-m68k-amigaos` (removed) | +0 -6 |  |  | **FRF:** as above |
 | `build-scripts/build-with-docker` (removed) | +0 -69 |  |  | **FRF:** as above |
-| `cmake/verstring.cmake` |  |  | +17 -2 | **Alice68:** the version string names the kernel Alice68 (`ALICE_VERSION`), "based on Emu68" and its version; the `/emu68` device-tree node stays |
+| `cmake/verstring.cmake` |  |  | +19 -4 | **Alice68:** the version string names the kernel Alice68 (`ALICE_VERSION`), "based on Emu68" and its version; the `/emu68` device-tree node stays |
 | `include/logo/logo_aga_rgb.h` * | +6270 -8943 |  |  | **FRF:** FRF's boot picture in place of AGA-PiStorm's (generated) |
 | `include/mmu.h` | +1 -0 |  |  | **FRF:** declares `mmu_unmap()` |
 | `src/ExecutionLoop.c` * | +9 -2 |  |  | **FRF:** standalone: no physical interrupt lines, only the virtual chipset's |
