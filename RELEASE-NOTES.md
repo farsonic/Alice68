@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **`alice68net.device` 2.9: a unit the kernel does not serve is refused cleanly.** With
+  `eth=off` (or no network card), opening unit 1 fails at once with `IOERR_OPENFAIL`, leaves
+  `io_Unit` NULL, keeps nothing and starts nothing, and logs one line saying why. A
+  `CloseDevice` after a refused open now changes nothing: before, the driver trusted
+  whatever `io_Unit` the caller had left and decremented a counter there. Found from a
+  Riptide report (a machine that stopped responding after unit 1 was refused). The device
+  starts no task for a refused unit, so that hang is not confirmed to be this; tested on a
+  68k emulator (`amiga/test/harness_alice68net.py`), not yet on a Pi.
+
 - **Icons for mounted volumes.** Folders and CD images without a `Disk.info` of their own
   now show Alice68's icons on Workbench: an SD folder and a CD (`alice68hdf.device` 0.7
   supplies the `Disk.info`; a real one on the volume wins, and Workbench's Snapshot on a

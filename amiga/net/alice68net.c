@@ -18,8 +18,8 @@
 
 #define DEVNAME     "alice68net.device"
 #define VERSION     2
-#define REVISION    8
-#define IDSTRING    "alice68net 2.8 (07.11.2026)\r\n"
+#define REVISION    9
+#define IDSTRING    "alice68net 2.9 (09.11.2026)\r\n"
 
 #define BUFSZ       2048            /* one receive buffer: HEADROOM, the frame, spare room after it */
 #define HEADROOM    64              /* bytes before the frame, as genet.device leaves (its status block):
@@ -806,15 +806,28 @@ ULONG dev_init(struct NetBase *n, APTR seglist)
     return (ULONG)n;
 }
 
+/* a refused open: one line in the log (the splash and the serial log), nothing kept */
+static int refuse(struct IOStdReq *io, ULONG unit, const char *why)
+{
+    pstr("[alice68net] unit "); pdec(unit); pstr(": "); pstr(why); pstr(": open refused\n");
+    io->io.io_Error = IOERR_OPENFAIL;
+    io->io.io_Unit = 0;
+    return -1;
+}
+
 LONG dev_open(struct NetBase *n, struct IOStdReq *io, ULONG unit, ULONG flags)
 {
     (void)flags;
     io->io.io_Error = IOERR_OPENFAIL;
+    io->io.io_Unit = 0;
     find_board(n);
-    /* unit 0 WiFi, unit 1 Ethernet: there when the kernel serves them (eth=off: no unit 1) */
-    if (!n->b || unit >= AN_UNITS) return -1;
+    /* unit 0 WiFi, unit 1 Ethernet: there when the kernel serves them (eth=off: no unit 1).
+       Decided here, at once, from the board: nothing is started or kept for a refused open */
+    if (!n->b) return refuse(io, unit, "no Alice68 network card (not an Alice68 kernel)");
+    if (unit >= AN_UNITS) return refuse(io, unit, "no such unit (0 WiFi, 1 Ethernet)");
     struct NUnit *nu = &n->u[unit];
-    if (U(nu)->kind == AN_KIND_NONE) return -1;
+    if (U(nu)->kind == AN_KIND_NONE)
+        return refuse(io, unit, unit == 1 ? "Ethernet is off in the kernel (eth=off in cmdline.txt)" : "WiFi is not there in the kernel");
     n->lib.lib_OpenCnt++;
     ObtainSemaphore(n->sem);
     if (!n->running) {
@@ -831,7 +844,7 @@ LONG dev_open(struct NetBase *n, struct IOStdReq *io, ULONG unit, ULONG flags)
         }
     }
     ReleaseSemaphore(n->sem);
-    if (!n->running) { n->lib.lib_OpenCnt--; return -1; }
+    if (!n->running) { n->lib.lib_OpenCnt--; return refuse(io, unit, "the driver's process could not start"); }
     io->io.io_Unit = &nu->unit;
     io->io.io_Error = 0;
     nu->unit.unit_OpenCnt++;
@@ -844,7 +857,12 @@ ULONG dev_close(struct NetBase *n, struct IOStdReq *io)
     struct NUnit *nu = (struct NUnit *)io->io.io_Unit;
     io->io.io_Unit = (struct Unit *)-1;
     io->io.io_Device = (APTR)-1;
-    if ((ULONG)nu != (ULONG)-1 && nu && nu->unit.unit_OpenCnt) nu->unit.unit_OpenCnt--;
+    /* only one of our units counts: a close after a refused open (io_Unit NULL, or whatever
+       the caller left there) changes nothing */
+    int ours = 0;
+    for (int i = 0; i < AN_UNITS; i++) if (nu == &n->u[i]) ours = 1;
+    if (!ours) return 0;
+    if (nu->unit.unit_OpenCnt) nu->unit.unit_OpenCnt--;
     if (n->lib.lib_OpenCnt) n->lib.lib_OpenCnt--;
     return 0;                       /* the process stays: the network keeps running */
 }

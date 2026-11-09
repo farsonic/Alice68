@@ -448,7 +448,10 @@ ADDRESS=DHCP
 in `DEVS:NetInterfaces/eth` for lwip-amiga. It then marks the port disabled in the device
 tree for AmigaOS: **use either the kernel's Ethernet or rondoval's `genet.device`, not
 both**. `eth=off` in `cmdline.txt` keeps the kernel off the port entirely, for
-`genet.device`. It runs at 10, 100 or 1000 Mbit/s, as the link negotiates.
+`genet.device`: `alice68net.device` then refuses unit 1 at once, and the log says why
+(`[alice68net] unit 1: Ethernet is off in the kernel (eth=off in cmdline.txt): open
+refused`). Remove `eth=off` to use unit 1 again. It runs at 10, 100 or 1000 Mbit/s, as
+the link negotiates.
 
 **rondoval's `genet.device` instead** (for Roadshow, AmiTCP or Miami, which speak only
 SANA-II): put `eth=off` in `cmdline.txt`. Alice68's Emu68 has the dcache extensions (the

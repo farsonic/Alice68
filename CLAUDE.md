@@ -69,6 +69,7 @@ python3 amiga/test/harness_wifitool.py amiga/out/Alice68-WiFi   # the WiFi tool 
 python3 amiga/test/harness_monitor.py amiga/out/Alice68-Monitor  # Alice68-Monitor DUMP against a fake board
 python3 amiga/test/harness_netprefs.py amiga/out/Alice68-NetworkGT # the GadTools network window against fake libraries
 python3 amiga/test/harness_showconfig.py amiga/out/Alice68-ShowConfig # boards, memory and Alice68's cards, faked
+python3 amiga/test/harness_alice68net.py amiga/out/alice68net.device # opens of units the kernel does not serve, and close
 tools/splash-preview/build.sh > out.ppm  # the splash, drawn by the kernel's own code
 ```
 
