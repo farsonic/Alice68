@@ -170,6 +170,7 @@ aga.look=0 aga.scale=1
 | `hdf.boot=NAME` | Boot from the hardfile `NAME` (see [Hardfiles](#hardfiles-hdf-on-the-sd-card)) |
 | `hdf.readonly` | Hardfiles read-only |
 | `hdf=off` | No hardfiles |
+| `iso=off` | No CD images (see [CD images](#cd-images-iso-on-the-sd-card)) |
 | `frf_usb=neptune` | Leave the USB-A ports to AmigaOS (rondoval's `xhci.device` + Neptune) instead of the kernel; the USB-C port then takes keyboard, mouse and pads (untested on a Pi 4) |
 | `frf_usb.nomodeswitch` | Don't switch Realtek USB network dongles out of driver-CD mode |
 | `wifi.ssid="NAME"` `wifi.psk="PASSWORD"` | Join this WiFi network at boot (see [WiFi](#wifi-new-not-yet-tested-on-a-pi)) |
@@ -561,10 +562,10 @@ alice68.folder=Amiga/Work:Work    # the folder Amiga/Work, as volume Work:
 - **What FAT can't keep:** comments (they are accepted and dropped, so that `Copy CLONE`
   works), and protection bits other than write/delete protection (FAT's read-only flag)
   and the archive bit. Every file shows as executable.
-- **Hardfiles in a folder:** a hardfile that is mounted (from the root or the `HDF`
-  folder) can be read through a folder, but not changed, deleted or replaced: its
-  clusters belong to its unit. New `.hdf` files can be copied in; they are mounted at the
-  next boot.
+- **Hardfiles and CD images in a folder:** a hardfile or CD image that is mounted (from
+  the root, the `HDF` or the `ISO` folder) can be read through a folder, but not changed,
+  deleted or replaced: its clusters belong to its unit or volume. New `.hdf` and `.iso`
+  files can be copied in; they are mounted at the next boot.
 - **Writing goes to the FAT.** Unlike hardfiles, folders change the FAT and the
   directories (every copy of the FAT is updated, and FAT32's free-space count too). Don't
   switch off in the middle of a copy, and check the card on a PC if you ever do.
@@ -589,6 +590,33 @@ puts that back. Without the Installer program, use `Execute ALICE68:Install-Shel
 `tools/hdf-test/run.sh` also tests the folders: the FAT engine on a PC against
 `mkfs.fat` images (checked afterwards with `fsck.fat` and mtools), and the DOS handler on
 a 68k emulator.
+
+## CD images (`.iso`) on the SD card
+
+Copy CD images onto the SD card's FAT boot partition, in the root folder or in a folder
+named `ISO`. At start, `alice68hdf.device` finds every `*.iso` there and mounts it as a
+**read-only** volume, the way a CD would be. No CD filesystem has to be installed: the
+driver reads the images itself.
+
+- **The volume name** is the disc's own label (`Workbench3.2:`, say). If a mounted
+  volume already has that name, the image gets a digit (`Game Disc2`); an image without a
+  label is named after its file.
+- **The DOS devices** are `CD0:`, `CD1:` and so on (a name that is already mounted is
+  skipped). CD images are **never bootable**. Up to 8 are mounted.
+- **Names:** Rock Ridge long names if the image has them, else Joliet's, else ISO 9660's
+  own (without the `;1`). Folders deeper than eight levels on Rock Ridge images are found
+  where they belong. Latin-1 on the Amiga side: other characters show as `?`.
+- **Read-only:** writing, deleting, renaming and making folders are refused with "disk is
+  write-protected". The image file on the card is never changed.
+- `iso=off` in `cmdline.txt` mounts none of them.
+- Plain data CDs only: no audio tracks, no multi-session images (only the first session),
+  and not other formats such as `.bin`/`.cue`, `.nrg` or `.cdi`. Like hardfiles, an image
+  must lie in the card's first 4 GB unless the card driver handles 64-bit offsets.
+
+`C:Alice68-ShowConfig` lists the images mounted and their volumes, and the driver's log
+(the splash's SYSTEM panel, `C:Alice68-HDF`) says why an image was left out.
+`tools/hdf-test/run.sh` tests the ISO reader on a PC against images made by
+`genisoimage` (Rock Ridge, Joliet and plain), and the volumes on a 68k emulator.
 
 ## Serial log
 

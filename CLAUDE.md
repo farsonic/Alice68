@@ -17,6 +17,9 @@ User-facing docs: README.md. History of where code came from: docs/PROVENANCE.md
   SYSTEM/USB log panels). Wired in from `start_rpi64.c` under `ALICE_SPLASH`.
 - `amiga/` — 68k side: `alice68-usb.device`, `Alice68-USBLog`, `amiga/hdf/` (`alice68hdf.device`,
   `hdf_core.[ch]`, `Alice68-HDF`), `amiga.h` (minimal NDK types with offset asserts), `lvo.S`.
+  `alice68hdf.device` also mounts SD-card folders (`folders.c` + `fatfs.c`) and CD images
+  (`isos.c` + `iso9660.c`, `*.iso` in the root and `ISO/`, read-only, `CD0:`...); the two DOS
+  handlers share `dosdefs.h`.
 - `third_party/Emu68/src/alice/` — the kernel's network: `alice_net.h` (the 128 KB Zorro II network
   board, shared with the 68k: 32-bit fields only), `alice_net.c` (board, CPU1 coroutine, commands,
   frame slots, WiFi connection manager, firmware taken from the board, `wifi.*` cmdline options),
@@ -43,7 +46,7 @@ User-facing docs: README.md. History of where code came from: docs/PROVENANCE.md
 sudo apt-get update
 sudo apt-get install -y build-essential cmake ninja-build device-tree-compiler xxd \
     gcc-14-powerpc-linux-gnu g++-14-powerpc-linux-gnu gcc-m68k-linux-gnu \
-    dosfstools mtools fdisk python3-pil python3-numpy
+    dosfstools mtools fdisk genisoimage python3-pil python3-numpy
 pip install machine68k==0.3.0          # the 68k emulator the driver tests run on
 mkdir -p ~/toolchains && cd ~/toolchains
 curl -LO https://developer.arm.com/-/media/Files/downloads/gnu/15.2.rel1/binrel/arm-gnu-toolchain-15.2.rel1-x86_64-aarch64_be-none-linux-gnu.tar.xz
@@ -58,7 +61,7 @@ Then, in the repository, `git submodule update --init`.
 export ARM_GNU_TOOLCHAIN=$HOME/toolchains/arm-gnu-toolchain-15.2.rel1-x86_64-aarch64_be-none-linux-gnu
 bash amiga/build.sh                      # 68k parts -> amiga/out/; regenerates src/boards/alice68hdf.device.h
 bash tools/build-emu68aga-pi4.sh         # -> dist/pi4/kernel8.img   (FRF_USB=OFF for the no-USB kernel)
-tools/hdf-test/run.sh                    # hardfile tests: core on the PC + driver on a 68k emulator (expect all "ALL OK")
+tools/hdf-test/run.sh                    # hardfile, folder and CD image tests: cores on the PC + driver on a 68k emulator (expect all "ALL OK")
 python3 amiga/test/harness.py amiga/out/alice68-usb.device   # USB pass-through driver on the 68k emulator
 python3 amiga/test/harness_netcheck.py amiga/out/Alice68-NetCheck   # the network check tool against a fake SANA-II driver
 tools/wifi-test/run.sh                   # WiFi protocol layer on the PC (expect "ALL OK")
@@ -70,7 +73,7 @@ tools/splash-preview/build.sh > out.ppm  # the splash, drawn by the kernel's own
 ```
 
 - Kernel needs the **Arm GNU 15.x big-endian** toolchain (GCC 14 miscompiles vector code).
-  68k parts need `gcc-m68k-linux-gnu`; tests need `mkfs.fat`, `mtools`, `sfdisk`, Python
+  68k parts need `gcc-m68k-linux-gnu`; tests need `mkfs.fat`, `mtools`, `sfdisk`, `genisoimage`, Python
   `machine68k`, Pillow.
 - After changing anything in `amiga/hdf/`, run `amiga/build.sh` and **commit the regenerated
   `third_party/Emu68/src/boards/alice68hdf.device.h`**: the kernel embeds it.
@@ -109,6 +112,9 @@ tools/splash-preview/build.sh > out.ppm  # the splash, drawn by the kernel's own
 - Folders (`amiga/hdf/folders.c` + `fatfs.c`, `alice68.folder=` in config.txt, `ALICE68`
   always): the only code that writes the FAT; mounted hardfiles stay read-only through them.
   Tests: `tools/hdf-test/fatfs.sh` (PC, fsck.fat + mtools), `amiga/test/harness_folders.py`.
+- CD images (`amiga/hdf/isos.c` + `iso9660.c`): read-only, never written; a mounted image is
+  read-only through the folders too. Tests: `tools/hdf-test/iso.sh` (PC, genisoimage),
+  `amiga/test/harness_isos.py`.
 
 ## Licensing — keep it clean
 

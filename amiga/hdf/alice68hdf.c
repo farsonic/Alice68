@@ -27,14 +27,18 @@
  * are mounted as read-write volumes: folders.c, with the FAT engine fatfs.c.
  * Through them the FAT is written; hardfiles that are mounted stay read-only.
  *
+ * CD images (*.iso in the root and in a root folder ISO) are mounted as
+ * read-only volumes CD0:, CD1:, ...: isos.c, with iso9660.c. cmdline.txt
+ * iso=off turns them off.
+ *
  * Everything writable lives in the device base: the code runs from the ROM
  * board, which is mapped read-only.
  */
 
 #define VERSION   0
-#define REVISION  5
+#define REVISION  6
 const char hdf_devname[] = "alice68hdf.device";
-const char hdf_idstring[] = "alice68hdf.device 0.5 (07.11.2026) Alice68 hardfiles and folders";
+const char hdf_idstring[] = "alice68hdf.device 0.6 (09.11.2026) Alice68 hardfiles, folders and CD images";
 
 #include "hdf_dev.h"
 
@@ -710,12 +714,15 @@ APTR dev_init(struct HdfBase *db, APTR seglist)
 
     struct fat f;
     struct hdf_file *files = AllocMem(sizeof(struct hdf_file) * HDF_MAX_FILES, MEMF_PUBLIC | MEMF_CLEAR);
+    struct hdf_file *isos = AllocMem(sizeof(struct hdf_file) * ISO_MAX, MEMF_PUBLIC | MEMF_CLEAR);
+    int ni = 0;
     char *cmdline = AllocMem(1024, MEMF_PUBLIC | MEMF_CLEAR);
     char *config = AllocMem(CONFIG_MAX, MEMF_PUBLIC | MEMF_CLEAR);
     int n = 0, have_fat = 0;
     if (files && cmdline && fat_open(&f, &io) == 0) {
         have_fat = 1;
         n = fat_find_hdfs(&f, files, HDF_MAX_FILES);
+        if (isos) ni = fat_find_isos(&f, isos, ISO_MAX);
         if (fat_read_cmdline(&f, cmdline, 1024) < 0) cmdline[0] = 0;
         if (config && fat_read_config(&f, config, CONFIG_MAX) < 0) config[0] = 0;
         offer_wifi(&f, &io);
@@ -724,9 +731,9 @@ APTR dev_init(struct HdfBase *db, APTR seglist)
     hdf_parse_opts(cmdline ? cmdline : "", &db->opts);
     if (cmdline) FreeMem(cmdline, 1024);
     db->readonly = db->opts.readonly || card_ro;
-    if (db->opts.off || db->opts.readonly || db->opts.noboot || db->opts.boot[0])
-        hdf_log(&io, "cmdline.txt:%s%s%s%s%s", db->opts.off ? " hdf=off" : "", db->opts.readonly ? " hdf.readonly" : "",
-                db->opts.noboot ? " hdf.noboot" : "", db->opts.boot[0] ? " hdf.boot=" : "", db->opts.boot);
+    if (db->opts.off || db->opts.readonly || db->opts.noboot || db->opts.boot[0] || db->opts.iso_off)
+        hdf_log(&io, "cmdline.txt:%s%s%s%s%s%s", db->opts.off ? " hdf=off" : "", db->opts.readonly ? " hdf.readonly" : "",
+                db->opts.noboot ? " hdf.noboot" : "", db->opts.iso_off ? " iso=off" : "", db->opts.boot[0] ? " hdf.boot=" : "", db->opts.boot);
     if (db->opts.off) {
         hdf_log(&io, "hardfiles turned off (hdf=off)");
         for (int i = 0; i < n; i++) hdf_file_free(&io, &files[i]);
@@ -782,6 +789,11 @@ APTR dev_init(struct HdfBase *db, APTR seglist)
     }
     /* folders of the FAT partition as volumes (folders.c) */
     if (have_fat && eb) folders_mount(db, &io, eb, cd, config ? config : "");
+    /* CD images as read-only volumes (isos.c) */
+    if (ni && db->opts.iso_off) hdf_log(&io, "CD images turned off (iso=off)");
+    else if (ni && eb) isos_mount(db, &io, eb, cd, isos, ni);
+    for (int i = 0; i < ni; i++) hdf_file_free(&io, &isos[i]);      /* those not mounted */
+    if (isos) FreeMem(isos, sizeof(struct hdf_file) * ISO_MAX);
     if (config) FreeMem(config, CONFIG_MAX);
     if (eb) CloseLibrary(eb);
     if (files) FreeMem(files, sizeof(struct hdf_file) * HDF_MAX_FILES);

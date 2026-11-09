@@ -20,7 +20,7 @@ build() {   # name, sources...
 }
 build alice68-usb.device device_start.S alice68-usb.c lvo.S
 build Alice68-USBLog usblog_start.S usblog.c lvo.S
-build alice68hdf.device hdf/hdf_start.S hdf/alice68hdf.c hdf/folders.c hdf/hdf_core.c hdf/fatfs.c lvo.S
+build alice68hdf.device hdf/hdf_start.S hdf/alice68hdf.c hdf/folders.c hdf/isos.c hdf/hdf_core.c hdf/fatfs.c hdf/iso9660.c lvo.S
 build Alice68-HDF hdf/hdfinfo_start.S hdf/hdfinfo.c lvo.S
 build Alice68-NetCheck netcheck_start.S netcheck.c lvo.S
 build Alice68-ShowConfig showconfig_start.S showconfig.c lvo.S
@@ -34,7 +34,7 @@ make -s -C netgui OUT="$(pwd)/out"
 python3 -I folder/mkfolder.py out
 # alice68hdf.device runs from Emu68's ROM board, which is mapped read-only:
 # it must not have writable static data
-python3 -I - out/alice68hdf.c.o out/folders.c.o out/hdf_core.c.o out/fatfs.c.o out/hdf_start.S.o <<'PY'
+python3 -I - out/alice68hdf.c.o out/folders.c.o out/isos.c.o out/hdf_core.c.o out/fatfs.c.o out/iso9660.c.o out/hdf_start.S.o <<'PY'
 import subprocess, sys
 bad = 0
 for o in sys.argv[1:]:

@@ -16,7 +16,8 @@ AMIGA = os.path.dirname(HERE)
 
 # ---- structure offsets, from the 68k compiler (char arrays sized offset+1, read back with nm) ----
 FIELDS = {
-    'HdfBase': ['magic', 'nunits', 'unit', 'card_dev', 'cmd64', 'readonly', 'reads', 'read_errors', 'writes', 'write_errors', 'nfvols', 'fvol'],
+    'HdfBase': ['magic', 'nunits', 'unit', 'card_dev', 'cmd64', 'readonly', 'reads', 'read_errors', 'writes', 'write_errors', 'nfvols', 'fvol', 'nivols', 'ivol'],
+    'IVolHead': ['path', 'vol', 'dev', 'f'],
     'HUnit': ['f', 'single', 'chosen'],
     'hdf_file': ['name', 'size', 'next'],
     'pt_hdr': ['magic', 'version', 'nports', 'nreqs', 'klog_wr', 'alog_wr', 'amiga_ver', 'port'],
@@ -172,6 +173,10 @@ def run(args, alice68=True):
         mem.w32(db + O['HdfBase_reads'], 4321); mem.w32(db + O['HdfBase_writes'], 12)
         fv = alloc(176); mem.w_block(fv + 4, b'ALICE68\0'); mem.w_block(fv + 132, b'ALICE68\0'); mem.w_block(fv + 164, b'SDF0\0')
         mem.w32(db + O['HdfBase_nfvols'], 1); mem.w32(db + O['HdfBase_fvol'], fv)
+        iv = alloc(OFF['z_IVolHead'])
+        mem.w_block(iv + O['IVolHead_path'], b'Workbench 3.2.iso\0'); mem.w_block(iv + O['IVolHead_vol'], b'AmigaOS3.2\0')
+        mem.w_block(iv + O['IVolHead_dev'], b'CD0\0'); mem.w32(iv + O['IVolHead_f'] + O['hdf_file_size'], 600 << 20)
+        mem.w32(db + O['HdfBase_nivols'], 1); mem.w32(db + O['HdfBase_ivol'], iv)
     # load and run
     h = open(hunk, 'rb').read(); w = lambda o: struct.unpack('>I', h[o:o + 4])[0]
     n = w(28) * 4; code = bytearray(h[32:32 + n]); p = 32 + n
@@ -218,6 +223,7 @@ want('default', t, [
     'link went down once; up since 12 s after power-on', '2 dropped',
     'alice68hdf.device 0.5 (on Emu68\'s ROM board): card brcm-emmc.device (64-bit), read-write',
     '1 hardfile unit, 4321 card reads, 12 writes', 'unit 0: Workbench.hdf, 500 MB in 2 pieces, single partition', 'folder ALICE68: volume ALICE68: (SDF0:)',
+    'CD image Workbench 3.2.iso: volume AmigaOS3.2: (CD0:), 600 MB, read-only',
 ], ['LIBRARIES', 'KERNEL LOG'])
 a = run('ALL')
 want('ALL', a, ['LIBRARIES (5)', 'graphics.library', ' 40.42', 'icon.library', 'DEVICES (2)', 'alice68hdf.device', 'timer.device',

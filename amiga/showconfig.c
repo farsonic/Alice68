@@ -387,6 +387,10 @@ static void show_hdf(void)
         struct FVolHead *f = (struct FVolHead *)db->fvol[i];
         if (f) pf("     folder %s: volume %s: (%s:)\n", f->path, f->vol, f->dev);
     }
+    for (ULONG i = 0; i < db->nivols && i < ISO_MAX; i++) {
+        struct IVolHead *c = (struct IVolHead *)db->ivol[i];
+        if (c) pf("     CD image %s: volume %s: (%s:), %u MB, read-only\n", c->path, c->vol, c->dev, c->f.size >> 20);
+    }
 }
 
 static void show_cards(void)

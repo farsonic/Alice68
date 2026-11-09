@@ -68,6 +68,7 @@ struct hdf_part {
 /* options from cmdline.txt */
 struct hdf_opts {
     int  off;                       /* hdf=off */
+    int  iso_off;                   /* iso=off: no CD images */
     int  readonly;                  /* hdf.readonly */
     int  noboot;                    /* hdf.noboot: mount every hardfile, boot from none (but hdf.boot) */
     char boot[HDF_NAME];            /* hdf.boot=NAME: this hardfile boots and wins name clashes */
@@ -88,6 +89,8 @@ void fat_close(struct fat *f);
 /* every *.hdf in the root directory and in a root directory named HDF;
    returns how many were put in files[] (each with its extents) */
 int  fat_find_hdfs(struct fat *f, struct hdf_file *files, int max);
+/* every *.iso in the root directory and in a root directory named ISO */
+int  fat_find_isos(struct fat *f, struct hdf_file *files, int max);
 /* the WiFi firmware files: everything in a WIFI folder, and cyfmac4345x* / brcmfmac4345x* in the root */
 int  fat_find_wifi(struct fat *f, struct hdf_file *files, int max);
 void hdf_file_free(struct hdf_io *io, struct hdf_file *h);

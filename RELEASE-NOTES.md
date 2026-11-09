@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **CD images (`.iso`) on the SD card as read-only volumes.** Every `*.iso` in the FAT
+  partition's root or in an `ISO` folder is mounted at boot, the way `.hdf` files and
+  folders are: volume name from the disc's label, DOS devices `CD0:`, `CD1:` and so on,
+  never bootable, up to 8. `alice68hdf.device` 0.6 reads ISO 9660 itself, with Rock
+  Ridge and Joliet long names, so no CD filesystem has to be installed. Writes are
+  refused; a mounted image can't be changed through a folder either. `iso=off` in
+  `cmdline.txt` turns them off. `Alice68-ShowConfig` lists them. Tested on a PC (images
+  made by genisoimage) and on a 68k emulator; not yet on a Pi.
+
 - **On/off switches for Ethernet and WiFi that work while a stack is attached.**
   `Alice68-Network` 2.3 has a slider switch at the top of the Ethernet and WiFi settings
   pages, in place of the two buttons, with a line beside it saying what it means now.

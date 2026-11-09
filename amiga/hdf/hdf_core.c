@@ -188,11 +188,11 @@ static uint8_t lfn_sum(const uint8_t *e)
 }
 
 /* walk one directory; dir_clus 0 = the FAT16 root. found(): 1 = stop */
-struct scan { struct hdf_file *files; int max, n; uint32_t hdf_dir; int wifi; };
+struct scan { struct hdf_file *files; int max, n; uint32_t hdf_dir; int wifi, iso; };
 
 static void take(struct fat *f, struct scan *sc, const uint8_t *e, const char *lname)
 {
-    if (sc->n >= sc->max) { hdf_log(f->io, "more than %d hardfiles: the rest are ignored", sc->max); return; }
+    if (sc->n >= sc->max) { hdf_log(f->io, "more than %d %s: the rest are ignored", sc->max, sc->iso ? "CD images" : "hardfiles"); return; }
     struct hdf_file *h = &sc->files[sc->n];
     zero(h, sizeof *h);
     unsigned k = 0;
@@ -295,6 +295,13 @@ static void scan_dir(struct fat *f, struct scan *sc, uint32_t dir_clus, int top)
                     if (top && !sc->hdf_dir && e[0] == 'W' && e[1] == 'I' && e[2] == 'F' && e[3] == 'I' && e[4] == ' ' && e[8] == ' ')
                         sc->hdf_dir = le16(e + 26) | (f->fat32 ? le16(e + 20) << 16 : 0);
                 } else take_any(f, sc, e, ln, top);
+            } else if (sc->iso && !(e[11] & 0x08)) {          /* CD images: *.iso in the root and in ISO */
+                if (e[11] & 0x10) {
+                    if (top && !sc->hdf_dir && e[0] == 'I' && e[1] == 'S' && e[2] == 'O' && e[3] == ' ' && e[8] == ' ')
+                        sc->hdf_dir = le16(e + 26) | (f->fat32 ? le16(e + 20) << 16 : 0);
+                } else if ((e[8] == 'I' || e[8] == 'i') && (e[9] == 'S' || e[9] == 's') && (e[10] == 'O' || e[10] == 'o')) {
+                    if (ln[0] != '.') take(f, sc, e, ln);   /* not macOS's "._x.iso" */
+                }
             } else if (!(e[11] & 0x08)) {                     /* not a volume label */
                 if (e[11] & 0x10) {
                     if (top && !sc->hdf_dir && e[0] == 'H' && e[1] == 'D' && e[2] == 'F' && e[3] == ' ' && e[8] == ' ')
@@ -325,7 +332,7 @@ static void scan_dir(struct fat *f, struct scan *sc, uint32_t dir_clus, int top)
 
 int fat_find_wifi(struct fat *f, struct hdf_file *files, int max)
 {
-    struct scan sc = { files, max, 0, 0, 1 };
+    struct scan sc = { files, max, 0, 0, 1, 0 };
     scan_dir(f, &sc, f->fat32 ? f->root_clus : 0, 1);
     if (sc.hdf_dir) scan_dir(f, &sc, sc.hdf_dir, 0);
     return sc.n;
@@ -333,7 +340,15 @@ int fat_find_wifi(struct fat *f, struct hdf_file *files, int max)
 
 int fat_find_hdfs(struct fat *f, struct hdf_file *files, int max)
 {
-    struct scan sc = { files, max, 0, 0, 0 };
+    struct scan sc = { files, max, 0, 0, 0, 0 };
+    scan_dir(f, &sc, f->fat32 ? f->root_clus : 0, 1);
+    if (sc.hdf_dir) scan_dir(f, &sc, sc.hdf_dir, 0);
+    return sc.n;
+}
+
+int fat_find_isos(struct fat *f, struct hdf_file *files, int max)
+{
+    struct scan sc = { files, max, 0, 0, 0, 1 };
     scan_dir(f, &sc, f->fat32 ? f->root_clus : 0, 1);
     if (sc.hdf_dir) scan_dir(f, &sc, sc.hdf_dir, 0);
     return sc.n;
@@ -377,6 +392,7 @@ void hdf_parse_opts(const char *c, struct hdf_opts *o)
         while (*c && !is_space(*c)) c++;
         unsigned n = (unsigned)(c - t);
         if (tok_eq(t, n, "hdf=off")) o->off = 1;
+        else if (tok_eq(t, n, "iso=off")) o->iso_off = 1;
         else if (tok_eq(t, n, "hdf.readonly") || tok_eq(t, n, "hdf.ro")) o->readonly = 1;
         else if (tok_eq(t, n, "hdf.noboot")) o->noboot = 1;
         else if (n > 9 && tok_eq(t, 9, "hdf.boot=")) {

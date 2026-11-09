@@ -14,6 +14,12 @@ struct SignalSemaphore { UWORD ss[23]; };   /* exec's 46 bytes, set up by InitSe
 /* the start of a folder volume (folders.c's struct FVol), which Alice68-ShowConfig reads */
 struct FVolHead { ULONG index; char path[128]; char vol[32]; char dev[8]; };
 
+#define ISO_MAX      8                      /* CD images mounted as volumes */
+#define ISO_UNIT0    0x5000                 /* their FileSysStartupMsg units */
+struct IVol;
+/* the start of a CD image volume (isos.c's struct IVol): Alice68-ShowConfig and folders.c read it */
+struct IVolHead { ULONG index; char path[128]; char vol[32]; char dev[8]; struct hdf_file f; };
+
 #define HDF_MAGIC  0x41363848u              /* 'A68H', read by Alice68-HDF */
 #define LOG_SIZE   4096
 #define TASK_STACK 8192
@@ -122,6 +128,10 @@ struct HdfBase {
     ULONG nfvols;
     struct FObj *objs;                      /* every lock and open file, all volumes */
     APTR fseg;                              /* the handlers' seglist (RAM: a jump into this ROM) */
+    /* CD images (*.iso) as read-only volumes (isos.c) */
+    struct IVol *ivol[ISO_MAX];
+    ULONG nivols;
+    APTR iseg;                              /* their handlers' seglist */
 };
 ACHECK(AOFF(struct HdfBase, magic) == 36);
 ACHECK(AOFF(struct HdfBase, unit) == 44);
@@ -149,4 +159,8 @@ struct BootNode *find_drive(APTR eb, const char *name);
 
 /* folders.c */
 void folders_mount(struct HdfBase *db, struct hdf_io *io, APTR eb, APTR cd, const char *config);
+/* isos.c: takes over the files' extents */
+void isos_mount(struct HdfBase *db, struct hdf_io *io, APTR eb, APTR cd, struct hdf_file *files, int n);
+/* the RAM seglist dos.library starts a handler from: a call of entry(db) in the ROM */
+APTR handler_seglist(struct HdfBase *db, void (*entry)(struct HdfBase *));
 #endif
