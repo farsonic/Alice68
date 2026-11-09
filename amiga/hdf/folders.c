@@ -16,10 +16,13 @@
  * engine (fatfs.c) and its caches, behind a semaphore; each process does its
  * own card I/O. Hardfiles that are mounted (alice68hdf.device units) are
  * read-only through a folder: their clusters are in use by the unit.
+ * A folder without a Disk.info of its own shows Alice68's SD folder icon
+ * (disk_icons.h): read-only, until a real one is written (a Workbench Snapshot).
  */
 #include "hdf_dev.h"
 
 #include "dosdefs.h"
+#include "disk_icons.h"
 
 #define FOLDER_STACK 16384
 extern void folder_main(struct HdfBase *db);
@@ -47,6 +50,7 @@ struct FObj {
     ULONG isfile;                           /* an open file (else a lock) */
     ULONG isroot;                           /* the volume's root */
     ULONG hdf;                              /* a mounted hardfile: never written */
+    ULONG virt;                             /* the built-in Disk.info (no entry on the card) */
     struct ffs_file h;                      /* the object's entry; files: the open file */
     ULONG pos;
 };
@@ -92,7 +96,23 @@ struct where {
     uint32_t dir;                           /* the directory it is (to be) in */
     const char *leaf;                       /* the last name, if it was not found */
     uint32_t leaflen;
+    int virt;                               /* the built-in Disk.info (leaf and dir are set too) */
 };
+
+/* the built-in Disk.info, in the volume's root while it has none of its own */
+#define VIRT_SEC 0xffffffffu                /* no card sector: never the same as a real entry */
+#define VIRT_POS 0xfffffff0u                /* ExNext: it was the last entry */
+static void virt_ent(struct FCtx *x, struct ffs_ent *e)
+{
+    memset(e, 0, sizeof *e);
+    e->dir = x->fv->root;
+    e->sec = VIRT_SEC;
+    e->attr = FFS_A_RO | FFS_A_ARCH;
+    e->size = disk_icon_folder_len;
+    e->date = x->fv->rent.date; e->time = x->fv->rent.time;
+    scpy(e->name, DISK_ICON_NAME, sizeof e->name);
+    scpy(e->sfn, "DISK.INF", sizeof e->sfn);
+}
 
 static int same(int adir, uint32_t akey, const struct ffs_ent *ae, const struct FObj *b)
 {
@@ -143,6 +163,7 @@ static struct FObj *new_obj(struct FCtx *x, const struct where *w, LONG access, 
     if (w->isroot) o->h.e = x->fv->rent;
     ffs_open(&o->h, w->isroot ? &x->fv->rent : &w->e);
     o->hdf = (ULONG)hdf_mounted(x, &o->h.e);
+    o->virt = (ULONG)w->virt;
     o->fl.fl_Key = (LONG)(is_dir(o) ? dir_key(o) : o->h.e.sec * 16 + o->h.e.slot);
     o->fl.fl_Access = access == EXCLUSIVE_LOCK ? EXCLUSIVE_LOCK : SHARED_LOCK;
     o->fl.fl_Task = x->port;
@@ -180,10 +201,12 @@ static void share(struct FCtx *x, struct FObj *o)
 static int start_at(struct FCtx *x, LONG lock, struct where *w)
 {
     w->leaf = 0;
+    w->virt = 0;
     if (!lock) { w->isroot = 1; w->e = x->fv->rent; return 0; }
     struct FObj *o = lock_obj(x, lock);
     if (!o) return -ERROR_INVALID_LOCK;
     w->isroot = (int)o->isroot;
+    w->virt = (int)o->virt;
     w->e = o->h.e;
     return 0;
 }
@@ -220,10 +243,16 @@ static int resolve(struct FCtx *x, LONG lock, ULONG bname, struct where *w)
         if (r == FFS_END) {
             if (j < len) return -ERROR_DIR_NOT_FOUND;
             w->dir = d; w->leaf = s + i; w->leaflen = j - i;
+            if (d == x->fv->root && ffs_name_eq(DISK_ICON_NAME, s + i, j - i)) {   /* the built-in one */
+                w->isroot = 0; w->virt = 1;
+                virt_ent(x, &w->e);
+                return 0;
+            }
             return 1;
         }
         if (r) return -dos_err(r);
         w->isroot = 0;
+        w->virt = 0;
         w->e = e;
         i = j < len ? j + 1 : j;
     }
@@ -290,7 +319,7 @@ static LONG do_packet(struct FCtx *x, struct DosPacket *p, LONG *res2)
 
     case ACTION_COPY_DIR:
     case ACTION_COPY_DIR_FH:
-        if (p->dp_Type == ACTION_COPY_DIR_FH) { o = (struct FObj *)p->dp_Arg1; w.isroot = (int)o->isroot; w.e = o->h.e; }
+        if (p->dp_Type == ACTION_COPY_DIR_FH) { o = (struct FObj *)p->dp_Arg1; w.isroot = (int)o->isroot; w.e = o->h.e; w.virt = (int)o->virt; }
         else if ((r = start_at(x, p->dp_Arg1, &w))) FAIL(-r);
         if ((e = conflict(x, &w, 0, 0))) FAIL(e);
         if (!(o = new_obj(x, &w, SHARED_LOCK, 0))) FAIL(ERROR_NO_FREE_STORE);
@@ -332,8 +361,16 @@ static LONG do_packet(struct FCtx *x, struct DosPacket *p, LONG *res2)
         if (!w_isdir(x, &w)) FAIL(ERROR_OBJECT_WRONG_TYPE);
         uint32_t pos = (uint32_t)fib->fib_DiskKey;
         struct ffs_ent n;
+        if (pos == VIRT_POS) FAIL(ERROR_NO_MORE_ENTRIES);
         r = ffs_next(v, w_key(x, &w), &pos, &n);
-        if (r == FFS_END) FAIL(ERROR_NO_MORE_ENTRIES);
+        if (r == FFS_END) {                            /* the root without a Disk.info: the built-in one last */
+            if (w_key(x, &w) != x->fv->root || ffs_find(v, x->fv->root, DISK_ICON_NAME, sizeof DISK_ICON_NAME - 1, &n) != FFS_END)
+                FAIL(ERROR_NO_MORE_ENTRIES);
+            virt_ent(x, &n);
+            fill_fib(x, fib, 0, &n);
+            fib->fib_DiskKey = (LONG)VIRT_POS;
+            return DOSTRUE;
+        }
         if (r) FAIL(dos_err(r));
         fill_fib(x, fib, 0, &n);
         fib->fib_DiskKey = (LONG)pos;
@@ -354,6 +391,7 @@ static LONG do_packet(struct FCtx *x, struct DosPacket *p, LONG *res2)
         struct FileHandle *fh = BADDR(p->dp_Arg1);
         int excl = p->dp_Type == ACTION_FINDOUTPUT;
         RESOLVE(p->dp_Arg2, p->dp_Arg3, &w);
+        if (r == 0 && w.virt && p->dp_Type != ACTION_FINDINPUT) r = 1;     /* writing Disk.info: a real one */
         if (r == 0) {
             if (w_isdir(x, &w)) FAIL(ERROR_OBJECT_WRONG_TYPE);
             if ((e = conflict(x, &w, excl, 0))) FAIL(e);
@@ -387,12 +425,19 @@ static LONG do_packet(struct FCtx *x, struct DosPacket *p, LONG *res2)
 
     case ACTION_END:
         o = (struct FObj *)p->dp_Arg1;
-        ffs_flush_file(v, &o->h);
+        if (!o->virt) ffs_flush_file(v, &o->h);
         free_obj(x, o);
         return DOSTRUE;
 
     case ACTION_READ: {
         o = (struct FObj *)p->dp_Arg1;
+        if (o->virt) {                                 /* the built-in Disk.info */
+            ULONG k = o->pos < disk_icon_folder_len ? disk_icon_folder_len - o->pos : 0;
+            if (k > (ULONG)p->dp_Arg3) k = (ULONG)p->dp_Arg3;
+            memcpy((APTR)p->dp_Arg2, disk_icon_folder + o->pos, k);
+            o->pos += k;
+            return (LONG)k;
+        }
         int32_t n = ffs_read(v, &o->h, o->pos, (APTR)p->dp_Arg2, (ULONG)p->dp_Arg3);
         if (n < 0) { *res2 = dos_err(n); return -1; }
         o->pos += (ULONG)n;
@@ -427,6 +472,7 @@ static LONG do_packet(struct FCtx *x, struct DosPacket *p, LONG *res2)
         o = (struct FObj *)p->dp_Arg1;
         if (db->readonly) { *res2 = ERROR_DISK_WRITE_PROTECTED; return -1; }
         if (o->hdf) { *res2 = ERROR_OBJECT_IN_USE; return -1; }
+        if (o->virt) { *res2 = ERROR_WRITE_PROTECTED; return -1; }
         LONG base = p->dp_Arg3 == OFFSET_BEGINNING ? 0 : p->dp_Arg3 == OFFSET_END ? (LONG)o->h.e.size : (LONG)o->pos;
         LONG ns = base + p->dp_Arg2;
         if (ns < 0) { *res2 = ERROR_SEEK_ERROR; return -1; }
@@ -440,6 +486,7 @@ static LONG do_packet(struct FCtx *x, struct DosPacket *p, LONG *res2)
         WRITABLE();
         RESOLVE(p->dp_Arg1, p->dp_Arg2, &w);
         if (r) FAIL(ERROR_OBJECT_NOT_FOUND);
+        if (w.virt) FAIL(ERROR_DELETE_PROTECTED);
         if (w.isroot || in_use(x, &w) || hdf_mounted(x, &w.e)) FAIL(ERROR_OBJECT_IN_USE);
         if (w.e.attr & FFS_A_RO) FAIL(ERROR_DELETE_PROTECTED);
         if ((r = ffs_delete(v, &w.e))) FAIL(dos_err(r));
@@ -450,8 +497,10 @@ static LONG do_packet(struct FCtx *x, struct DosPacket *p, LONG *res2)
         RESOLVE(p->dp_Arg1, p->dp_Arg2, &w);
         if (r) FAIL(ERROR_OBJECT_NOT_FOUND);
         if (w.isroot) FAIL(ERROR_OBJECT_IN_USE);
+        if (w.virt) FAIL(ERROR_WRITE_PROTECTED);
         if (p->dp_Arg3 && !lock_obj(x, p->dp_Arg3)) FAIL(ERROR_INVALID_LOCK);
         RESOLVE(p->dp_Arg3, p->dp_Arg4, &w2);
+        if (r == 0 && w2.virt) r = 1;                 /* renaming a file to Disk.info: it becomes the real one */
         if (r == 0) {                                 /* there already: fine only for a new spelling of the same name */
             if (w2.isroot || w2.e.sec != w.e.sec || w2.e.slot != w.e.slot) FAIL(ERROR_OBJECT_EXISTS);
             const UBYTE *b = BADDR(p->dp_Arg4);       /* its last name, as given */
@@ -471,7 +520,7 @@ static LONG do_packet(struct FCtx *x, struct DosPacket *p, LONG *res2)
     case ACTION_CREATE_DIR:
         WRITABLE();
         RESOLVE(p->dp_Arg1, p->dp_Arg2, &w);
-        if (r == 0) FAIL(ERROR_OBJECT_EXISTS);
+        if (r == 0 && !w.virt) FAIL(ERROR_OBJECT_EXISTS);
         if ((r = ffs_create(v, w.dir, w.leaf, w.leaflen, 1, &w.e))) FAIL(dos_err(r));
         w.isroot = 0;
         if (!(o = new_obj(x, &w, EXCLUSIVE_LOCK, 0))) FAIL(ERROR_NO_FREE_STORE);
@@ -482,7 +531,7 @@ static LONG do_packet(struct FCtx *x, struct DosPacket *p, LONG *res2)
         WRITABLE();
         RESOLVE(p->dp_Arg2, p->dp_Arg3, &w);
         if (r) FAIL(ERROR_OBJECT_NOT_FOUND);
-        if (w.isroot) return DOSTRUE;                 /* the folder's own entry is not the volume's to change */
+        if (w.isroot || w.virt) return DOSTRUE;       /* the folder's own entry is not the volume's to change */
         if (p->dp_Type == ACTION_SET_PROTECT) {
             ULONG m = (ULONG)p->dp_Arg4;
             uint8_t a = (uint8_t)((w.e.attr & (FFS_A_HIDDEN | FFS_A_SYSTEM)) | ((m & FIBF_WRITE) ? FFS_A_RO : 0) | ((m & FIBF_ARCHIVE) ? 0 : FFS_A_ARCH));

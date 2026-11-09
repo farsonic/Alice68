@@ -217,6 +217,13 @@ for name, (kind, draw, tool, tts, stack, pos) in mkinfo.ICONS.items():
     k, pic, t, tt, st = mkinfo.read_icon(data)
     if (k, t, tuple(tt), st) != (kind, tool, tuple(tts), stack) or pic.p != draw().p: sys.exit('%s.info does not read back' % name)
 
+# ---- volume icons to copy onto drives (not installed): a hardfile's drive, a CD, an SD folder ----
+import mkdiskicons
+os.makedirs(os.path.join(folder, 'Icons'), exist_ok=True)
+for name, label in (('hardfile', 'Hardfile'), ('cd', 'CD'), ('folder', 'Folder')):
+    with open(os.path.join(folder, 'Icons', label + '.icon'), 'wb') as f:
+        f.write(mkdiskicons.disk_icon(mkdiskicons.ICONS[name]))
+
 for fn, lines in (('Install-Shell', inst), ('Uninstall-Shell', uninst)):
     # the Shell's rules: LF only, plain ASCII, Ifs closed, lines it can take
     depth = 0

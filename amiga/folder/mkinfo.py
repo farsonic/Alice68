@@ -19,7 +19,9 @@ W, H = 56, 26                    # a Workbench screen's pixels are twice as tall
 FONT = {                         # 3x5
     'A': ['.#.', '#.#', '###', '#.#', '#.#'], '6': ['.##', '#..', '###', '#.#', '###'],
     '8': ['###', '#.#', '###', '#.#', '###'], 'S': ['.##', '#..', '.#.', '..#', '##.'],
-    'D': ['##.', '#.#', '#.#', '#.#', '##.'],
+    'D': ['##.', '#.#', '#.#', '#.#', '##.'], 'I': ['###', '.#.', '.#.', '.#.', '###'],
+    'O': ['.#.', '#.#', '#.#', '#.#', '.#.'], 'H': ['#.#', '#.#', '###', '#.#', '#.#'],
+    'F': ['###', '#..', '##.', '#..', '#..'],
 }
 
 class Pic:
@@ -103,6 +105,62 @@ def icon_disk():
     p.rect(x1 + 1, y0 + 8, x1 + 1, y1 + 1, 1); p.rect(x0 + 2, y1 + 1, x1 + 1, y1 + 1, 1)   # shadow
     return p
 
+def _in_ellipse(x, y, cx, cy, rx, ry):
+    return ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 <= 1.0
+
+def icon_cdrom():
+    """a CD, for the CD images alice68hdf.device mounts"""
+    p = Pic()
+    cx, cy, rx, ry = 26.0, 11.5, 21.0, 10.4              # a circle on Workbench's tall pixels
+    inside = lambda x, y: _in_ellipse(x, y, cx, cy, rx, ry)
+    for y in range(H):                                    # shadow, down and to the right
+        for x in range(W):
+            if not inside(x, y) and inside(x - 2, y - 1): p.px(x, y, 1)
+    for y in range(H):
+        for x in range(W):
+            if not inside(x, y): continue
+            edge = not (inside(x - 1, y) and inside(x + 1, y) and inside(x, y - 1) and inside(x, y + 1))
+            band = _in_ellipse(x, y, cx, cy, rx - 3, ry - 1.5) and not _in_ellipse(x, y, cx, cy, rx - 5.5, ry - 2.8)
+            c = 1 if edge else 3 if band and x > cx + 2 and y < cy - 1 else 2
+            if _in_ellipse(x, y, cx, cy, 6.6, 3.2): c = 3                       # the hub
+            if _in_ellipse(x, y, cx, cy, 3.8, 1.9): c = 1                       # the hole's rim
+            if _in_ellipse(x, y, cx, cy, 2.6, 1.1): c = 0                       # the hole
+            p.px(x, y, c)
+    p.text(20, 16, 'ISO', 3)
+    return p
+
+def icon_sdfolder():
+    """a folder with an SD label, for the SD card's folders mounted as volumes"""
+    p = Pic()
+    x0, y0, x1, y1 = 8, 5, 45, 23
+    p.rect(x0, y0 - 3, x0 + 13, y0, 3); p.frame(x0, y0 - 3, x0 + 13, y0, 1)        # the tab
+    p.rect(x0 + 3, y0 - 1, x1 - 4, y0 + 3, 2); p.frame(x0 + 3, y0 - 1, x1 - 4, y0 + 3, 1)   # a sheet inside
+    p.rect(x0, y0 + 2, x1, y1, 3); p.frame(x0, y0 + 2, x1, y1, 1)                  # the front
+    p.rect(x0 + 1, y0 + 3, x1 - 1, y0 + 3, 2)                                      # its top edge, lit
+    p.rect(x0 + 13, y0 + 8, x0 + 25, y0 + 15, 2); p.frame(x0 + 13, y0 + 8, x0 + 25, y0 + 15, 1)   # the label
+    p.text(x0 + 16, y0 + 10, 'SD', 1)
+    p.rect(x1 + 1, y0 + 4, x1 + 1, y1 + 1, 1); p.rect(x0 + 2, y1 + 1, x1 + 1, y1 + 1, 1)   # shadow
+    return p
+
+def icon_hardfile():
+    """a hard drive marked HDF, to copy onto a hardfile's volume as its Disk.info"""
+    p = Pic()
+    x0, y0, x1, y1 = 6, 6, 47, 21
+    t = 4
+    for i in range(t):                                   # the top, seen from above
+        p.rect(x0 + t - i, y0 + i, x1 - i, y0 + i, 2)
+        p.px(x0 + t - i, y0 + i, 1); p.px(x1 - i, y0 + i, 1)
+    p.rect(x0 + t, y0, x1, y0, 1)
+    p.rect(x0, y0 + t, x1 - t, y1, 3); p.frame(x0, y0 + t, x1 - t, y1, 1)          # front
+    p.rect(x1 - t + 1, y0 + t, x1, y1 - t + 1, 1)                                  # side, in shadow
+    for i in range(t): p.px(x1 - t + 1 + i, y1 - i, 1)
+    p.rect(x0 + 2, y0 + t + 2, x0 + 18, y0 + t + 10, 2); p.frame(x0 + 2, y0 + t + 2, x0 + 18, y0 + t + 10, 1)   # the label
+    p.text(x0 + 5, y0 + t + 5, 'HDF', 1)
+    p.rect(x1 - t - 6, y1 - 3, x1 - t - 4, y1 - 2, 2)                              # the activity light
+    p.rect(x0 + 21, y0 + t + 5, x1 - t - 3, y0 + t + 5, 1)                         # grille
+    p.rect(x0 + 21, y0 + t + 7, x1 - t - 3, y0 + t + 7, 1)
+    return p
+
 # ---- the file -------------------------------------------------------------------------
 def _image(p):
     rowbytes = (p.w + 15) // 16 * 2
@@ -139,7 +197,7 @@ def write_icon(path, kind, pic, tool=None, tooltypes=(), stack=0, pos=None, wind
     if tooltypes:
         out += struct.pack('>I', (len(tooltypes) + 1) * 4)
         for t in tooltypes: out += _str(t)
-    open(path, 'wb').write(out)
+    if path: open(path, 'wb').write(out)
     return out
 
 def read_icon(data):

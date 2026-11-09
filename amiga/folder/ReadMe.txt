@@ -17,6 +17,11 @@ card from a PC.
   DEVS/USBHardware/alice68-usb.device   for Neptune or Poseidon
   DEVS/alice68net.device the network card (WiFi unit 0, Ethernet unit 1)
 
+Icons/ holds volume icons: copy one onto a drive as its Disk.info. Folders
+and CD images show theirs by themselves; for a hardfile's partition:
+
+  Copy ALICE68:Icons/Hardfile.icon DH0:Disk.info
+
 Releases also carry Riptide, a TCP/IP stack that uses alice68net.device,
 in the Riptide drawer here: double-click Install_Riptide there.
 

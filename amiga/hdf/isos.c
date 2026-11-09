@@ -12,11 +12,13 @@
  * Like the folders (folders.c), each is a DOS handler process started by
  * dos.library at boot, its code here in the ROM. Each process reads the card
  * itself; nothing is shared between them. A mounted image is read-only
- * through a folder too.
+ * through a folder too. An image without a Disk.info of its own shows Alice68's
+ * CD icon (disk_icons.h).
  */
 #include "hdf_dev.h"
 #include "dosdefs.h"
 #include "iso9660.h"
+#include "disk_icons.h"
 
 #define ISO_STACK  8192
 extern void iso_main(struct HdfBase *db);
@@ -61,6 +63,21 @@ static LONG dos_err(int r)
     default:          return ERROR_SEEK_ERROR;
     }
 }
+
+/* ---- the built-in Disk.info, in the root of an image that has none ---------------------- */
+#define VIRT_EXT 0xffffffffu                /* no sector: never the same as a real entry */
+#define VIRT_POS 0xfffffff0u                /* ExNext: it was the last entry */
+static void virt_ent(struct ICtx *x, struct iso_ent *e)
+{
+    memset(e, 0, sizeof *e);
+    e->extent = VIRT_EXT;
+    e->pos = VIRT_EXT;
+    e->dir = x->iv->iso.root.extent;
+    e->size = disk_icon_cd_len;
+    memcpy(e->date, x->iv->iso.root.date, 7);
+    scpy(e->name, DISK_ICON_NAME, sizeof e->name);
+}
+static int is_virt(const struct iso_ent *e) { return !e->isdir && e->extent == VIRT_EXT; }
 
 /* ---- objects ------------------------------------------------------------------------ */
 static int is_root(const struct ICtx *x, const struct iso_ent *e) { return e->isdir && e->extent == x->iv->iso.root.extent; }
@@ -127,6 +144,7 @@ static int resolve(struct ICtx *x, LONG lock, ULONG bname, struct iso_ent *e)
         if (!e->isdir) return -ERROR_OBJECT_WRONG_TYPE;
         struct iso_ent n;
         r = iso_find(v, e, s + i, j - i, &n);
+        if (r == ISO_END && j == len && is_root(x, e) && iso_name_eq(DISK_ICON_NAME, s + i, j - i)) { virt_ent(x, e); return 0; }
         if (r == ISO_END) return j < len ? -ERROR_DIR_NOT_FOUND : -ERROR_OBJECT_NOT_FOUND;
         if (r) return -dos_err(r);
         *e = n;
@@ -231,8 +249,16 @@ static LONG do_packet(struct ICtx *x, struct DosPacket *p, LONG *res2)
         if (!e.isdir) FAIL(ERROR_OBJECT_WRONG_TYPE);
         uint32_t pos = (uint32_t)fib->fib_DiskKey;
         struct iso_ent n;
+        if (pos == VIRT_POS) FAIL(ERROR_NO_MORE_ENTRIES);
         r = iso_next(v, &e, &pos, &n);
-        if (r == ISO_END) FAIL(ERROR_NO_MORE_ENTRIES);
+        if (r == ISO_END) {                            /* the root without a Disk.info: the built-in one last */
+            if (!is_root(x, &e) || iso_find(v, &e, DISK_ICON_NAME, sizeof DISK_ICON_NAME - 1, &n) != ISO_END)
+                FAIL(ERROR_NO_MORE_ENTRIES);
+            virt_ent(x, &n);
+            fill_fib(x, fib, &n);
+            fib->fib_DiskKey = (LONG)VIRT_POS;
+            return DOSTRUE;
+        }
         if (r) FAIL(dos_err(r));
         fill_fib(x, fib, &n);
         fib->fib_DiskKey = (LONG)pos;
@@ -273,6 +299,13 @@ static LONG do_packet(struct ICtx *x, struct DosPacket *p, LONG *res2)
 
     case ACTION_READ: {
         o = (struct IObj *)p->dp_Arg1;
+        if (is_virt(&o->e)) {                          /* the built-in Disk.info */
+            ULONG k = o->pos < disk_icon_cd_len ? disk_icon_cd_len - o->pos : 0;
+            if (k > (ULONG)p->dp_Arg3) k = (ULONG)p->dp_Arg3;
+            memcpy((APTR)p->dp_Arg2, disk_icon_cd + o->pos, k);
+            o->pos += k;
+            return (LONG)k;
+        }
         int32_t n = iso_read(v, &o->e, o->pos, (APTR)p->dp_Arg2, (ULONG)p->dp_Arg3);
         if (n < 0) { *res2 = dos_err(n); return -1; }
         o->pos += (ULONG)n;

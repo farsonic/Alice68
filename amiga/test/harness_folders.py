@@ -14,6 +14,10 @@ fsck.fat must find nothing wrong with the card.
 SPDX-License-Identifier: GPL-2.0-only"""
 import os, random, struct, subprocess, sys
 import machine68k as M
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'folder'))
+import mkinfo, mkdiskicons
+ICON = mkdiskicons.disk_icon(mkinfo.icon_sdfolder)
 
 R = M.Register
 mach = M.Machine(M.CPUType.M68020, 16384)
@@ -38,6 +42,7 @@ def blob(n): return bytes(rnd.getrandbits(8) for _ in range(n))
 files = {
     'ALICE68/C/Alice68-HDF': blob(1776),
     'ALICE68/Install': b'; Alice68 installer\n',
+    'ALICE68/Disk.info': b'its own icon',
     'Games/Long File Name.txt': blob(70000),
     'Games/readme.txt': b'hello from the PC\n',
     'Games/Sub/deep.bin': blob(3000),
@@ -313,7 +318,27 @@ f0 = fib()
 chk(f0['type'] == 1 and f0['name'] == 'Games', 'root: %s' % f0)
 chk(pkt(G, PARENT, root)[0] == 0 and pkt(G, PARENT, root)[1] == 0, 'the root has no parent')
 ls = {e['name']: e for e in listdir(G, root)}
-chk(set(ls) == {'Long File Name.txt', 'readme.txt', 'Sub'}, 'Games lists %s' % sorted(ls))
+chk(set(ls) == {'Long File Name.txt', 'readme.txt', 'Sub', 'Disk.info'}, 'Games lists %s' % sorted(ls))
+chk(ls['Disk.info']['type'] == -3 and ls['Disk.info']['size'] == len(ICON) and ls['Disk.info']['prot'] & 5 == 5, 'the built-in Disk.info: %s' % ls['Disk.info'])
+hi, r = openf(G, FINDINPUT, 'disk.INFO')
+chk(hi and readall(G, hi, 100) == ICON and mkinfo.read_icon(ICON)[0] == mkinfo.WBDISK, 'the built-in Disk.info reads as a disk icon')
+ok(pkt(G, END, hi), 'Close')
+err(pkt(G, DELETE, 0, name('Disk.info')), 222, 'delete the built-in Disk.info')
+hi, r = openf(G, FINDOUTPUT, 'Disk.info')                 # a Workbench Snapshot writes a real one
+chk(hi and write(G, hi, b'snapshot')[0] == 8, 'write a real Disk.info')
+ok(pkt(G, END, hi), 'Close')
+ls2 = [e['name'] for e in listdir(G, root)]
+chk(ls2.count('Disk.info') == 1, 'one Disk.info once a real one is there: %s' % ls2)
+hi, r = openf(G, FINDINPUT, 'Disk.info')
+chk(hi and readall(G, hi, 100) == b'snapshot', 'the real Disk.info wins')
+ok(pkt(G, END, hi), 'Close')
+ok(pkt(G, DELETE, 0, name('Disk.info')), 'delete the real Disk.info')
+hi, r = openf(G, FINDINPUT, 'Disk.info')
+chk(hi and readall(G, hi, 100) == ICON, 'the built-in one is back')
+ok(pkt(G, END, hi), 'Close')
+A = start(0)
+la = {e['name']: e for e in listdir(A, ok(pkt(A, LOCATE, 0, name(''), -2), 'Lock ALICE68:'))}
+chk(la['Disk.info']['size'] == len(b'its own icon') and [e for e in la].count('Disk.info') == 1, 'a folder with its own Disk.info: only that one')
 chk(ls['Sub']['type'] == 2 and ls['readme.txt']['type'] == -3 and ls['Long File Name.txt']['size'] == 70000, 'entry types and sizes')
 chk(ls['readme.txt']['prot'] & 0xf == 0, 'rwed allowed: %x' % ls['readme.txt']['prot'])
 h1, r = openf(G, FINDINPUT, 'Long File Name.txt')
@@ -402,7 +427,7 @@ chk(hn and write(HD, hn, b'\0' * 1024)[0] == 1024, 'a new hardfile can be made (
 ok(pkt(HD, END, hn), 'Close')
 DO = start(2)
 lsd = [e['name'] for e in listdir(DO, ok(pkt(DO, LOCATE, 0, name(''), -2), 'Lock'))]
-chk(lsd == ['letter.txt'], 'Documents: %s' % lsd)
+chk(lsd == ['letter.txt', 'Disk.info'], 'Documents: %s' % lsd)
 ok(pkt(DO, EXAMINE, ok(pkt(DO, LOCATE, 0, name(''), -2), 'Lock'), FIB >> 2), 'Examine')
 chk(fib()['name'] == 'Documents', 'the volume name, not the folder name')
 print('packets OK: %d checks, %d card reads, %d writes' % (checks[0], stats['reads'], stats['writes']))

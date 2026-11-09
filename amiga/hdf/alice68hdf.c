@@ -36,9 +36,9 @@
  */
 
 #define VERSION   0
-#define REVISION  6
+#define REVISION  7
 const char hdf_devname[] = "alice68hdf.device";
-const char hdf_idstring[] = "alice68hdf.device 0.6 (09.11.2026) Alice68 hardfiles, folders and CD images";
+const char hdf_idstring[] = "alice68hdf.device 0.7 (09.11.2026) Alice68 hardfiles, folders and CD images";
 
 #include "hdf_dev.h"
 

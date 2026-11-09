@@ -14,6 +14,10 @@ must be read-only through the folder too.
 SPDX-License-Identifier: GPL-2.0-only"""
 import os, random, struct, subprocess, sys, zlib
 import machine68k as M
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'folder'))
+import mkinfo, mkdiskicons
+ICON = mkdiskicons.disk_icon(mkinfo.icon_cdrom)
 
 R = M.Register
 mach = M.Machine(M.CPUType.M68020, 16384)
@@ -300,7 +304,20 @@ ok(pkt(EXAMINE, root, FIB >> 2), 'Examine root')
 chk(fib()['type'] == 1 and fib()['name'] == 'Alice68 CD', 'root: %s' % fib())
 chk(pkt(PARENT, root) == (0, 0), 'the root has no parent')
 ls = {e['name']: e for e in listdir(root)}
-chk(set(ls) == {'Read Me.txt', 'Big File.bin', 'Docs', 'a', 'empty'}, 'root lists %s' % sorted(ls))
+chk(set(ls) == {'Read Me.txt', 'Big File.bin', 'Docs', 'a', 'empty', 'Disk.info'}, 'root lists %s' % sorted(ls))
+chk(ls['Disk.info']['size'] == len(ICON) and ls['Disk.info']['type'] == -3, 'the built-in Disk.info: %s' % ls['Disk.info'])
+hi, r = openf(FINDINPUT, 'Disk.info')
+chk(hi and readall(hi, 100) == ICON and mkinfo.read_icon(ICON)[0] == mkinfo.WBDISK, 'the built-in Disk.info reads as a disk icon')
+ok(pkt(END, hi), 'Close')
+err(openf(FINDOUTPUT, 'Disk.info')[1], 214, 'write Disk.info on a CD image')
+dl_ = ok(pkt(LOCATE, 0, name('Disk.info'), -2), 'Lock Disk.info')
+pd_ = ok(pkt(PARENT, dl_), 'its parent')
+chk(pkt(SAMELOCK, pd_, root)[0] == -1, 'the built-in Disk.info is in the root')
+ok(pkt(FREE, dl_), 'UnLock'); ok(pkt(FREE, pd_), 'UnLock')
+dsub = ok(pkt(LOCATE, 0, name('Docs'), -2), 'Lock Docs')
+chk('Disk.info' not in [e['name'] for e in listdir(dsub)], 'no Disk.info in sub-folders')
+err(pkt(LOCATE, dsub, name('Disk.info'), -2), 205, 'Disk.info in a sub-folder')
+ok(pkt(FREE, dsub), 'UnLock')
 chk(ls['Docs']['type'] == 2 and ls['Big File.bin']['type'] == -3 and ls['Big File.bin']['size'] == 150000, 'types and sizes')
 chk(ls['Read Me.txt']['prot'] & 0x5 == 0x5 and ls['Read Me.txt']['days'] > 17000, 'read-only, dated: %s' % ls['Read Me.txt'])
 h1, r = openf(FINDINPUT, 'Big File.bin')

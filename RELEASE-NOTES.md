@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Icons for mounted volumes.** Folders and CD images without a `Disk.info` of their own
+  now show Alice68's icons on Workbench: an SD folder and a CD (`alice68hdf.device` 0.7
+  supplies the `Disk.info`; a real one on the volume wins, and Workbench's Snapshot on a
+  folder writes one). Hardfile partitions are run by their own filesystem, so
+  `ALICE68:Icons` has `Hardfile.icon` (and `CD.icon`, `Folder.icon`) to copy on as
+  `Disk.info`. Tested on a 68k emulator.
+- **Confirmed on a Pi:** a CD image (`.iso`) mounted and readable.
+
 - **CD images (`.iso`) on the SD card as read-only volumes.** Every `*.iso` in the FAT
   partition's root or in an `ISO` folder is mounted at boot, the way `.hdf` files and
   folders are: volume name from the disc's label, DOS devices `CD0:`, `CD1:` and so on,
@@ -9,7 +17,8 @@
   Ridge and Joliet long names, so no CD filesystem has to be installed. Writes are
   refused; a mounted image can't be changed through a folder either. `iso=off` in
   `cmdline.txt` turns them off. `Alice68-ShowConfig` lists them. Tested on a PC (images
-  made by genisoimage) and on a 68k emulator; not yet on a Pi.
+  made by genisoimage) and on a 68k emulator. Images up to 4 GB (FAT32's limit for one
+  file): DVD images under 4 GB work; UDF-only discs don't.
 
 - **On/off switches for Ethernet and WiFi that work while a stack is attached.**
   `Alice68-Network` 2.3 has a slider switch at the top of the Ethernet and WiFi settings

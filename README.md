@@ -513,6 +513,9 @@ for read-only.
   other drive is not mounted that boot.
 - **On the splash:** the driver's lines (`[alice68hdf] ...`) appear in the splash's
   SYSTEM panel and the serial log, so you can see what was mounted while it boots.
+- **The icon:** a hardfile's partitions belong to their filesystem, so Alice68 can't give
+  them an icon by itself. Copy one on once: `Copy ALICE68:Icons/Hardfile.icon DH0:Disk.info`
+  (`ALICE68:Icons` also has `CD.icon` and `Folder.icon` for other drives).
 
 **Every hardfile is mounted, and none of them boots** - your SD card boots as before.
 To boot from one of them, name it in `cmdline.txt` (one line):
@@ -551,6 +554,9 @@ alice68.folder=Amiga/Work:Work    # the folder Amiga/Work, as volume Work:
 - **The volume name** is the folder's own name, unless you give one after a `:`. A name
   that is already taken by a mounted volume gets a digit (`Games2`).
 - **The DOS devices** are `SDF0:`, `SDF1:` and so on. Folders are **never bootable**.
+- **The icon:** a folder without a `Disk.info` of its own shows Alice68's SD folder icon
+  on Workbench. It can't be changed or deleted; writing a real `Disk.info` (Workbench's
+  **Snapshot** on the disk icon does) replaces it.
 - **`ALICE68:`** - a folder named `ALICE68` in the card's root is always mounted. It
   holds Alice68's Amiga files, put there by the build (see below).
 - `alice68.folders=off` mounts none of them, not even `ALICE68:`.
@@ -608,6 +614,12 @@ driver reads the images itself.
   where they belong. Latin-1 on the Amiga side: other characters show as `?`.
 - **Read-only:** writing, deleting, renaming and making folders are refused with "disk is
   write-protected". The image file on the card is never changed.
+- **The icon:** an image without a `Disk.info` of its own (most PC-made discs) shows
+  Alice68's CD icon on Workbench; Amiga CDs keep their own.
+- **Size: up to 4 GB.** That is FAT32's limit for one file, so a DVD image works if it is
+  under 4 GB: most single-layer DVDs (4.7 GB) are too big, and exFAT cards are not
+  supported. Inside an image, AmigaDOS itself can't show or seek past 2 GB in one file.
+  DVDs that carry only UDF (no ISO 9660 side) can't be read; most data DVDs carry both.
 - `iso=off` in `cmdline.txt` mounts none of them.
 - Plain data CDs only: no audio tracks, no multi-session images (only the first session),
   and not other formats such as `.bin`/`.cue`, `.nrg` or `.cdi`. Like hardfiles, an image
