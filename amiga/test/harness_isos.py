@@ -308,6 +308,7 @@ chk(set(ls) == {'Read Me.txt', 'Big File.bin', 'Docs', 'a', 'empty', 'Disk.info'
 chk(ls['Disk.info']['size'] == len(ICON) and ls['Disk.info']['type'] == -3, 'the built-in Disk.info: %s' % ls['Disk.info'])
 hi, r = openf(FINDINPUT, 'Disk.info')
 chk(hi and readall(hi, 100) == ICON and mkinfo.read_icon(ICON)[0] == mkinfo.WBDISK, 'the built-in Disk.info reads as a disk icon')
+chk(mkinfo.drawer_show(ICON) == (mkinfo.DDFLAGS_SHOWALL, mkinfo.DDVM_BYICON), 'the CD\'s window shows all files')
 ok(pkt(END, hi), 'Close')
 err(openf(FINDOUTPUT, 'Disk.info')[1], 214, 'write Disk.info on a CD image')
 dl_ = ok(pkt(LOCATE, 0, name('Disk.info'), -2), 'Lock Disk.info')

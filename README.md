@@ -615,7 +615,8 @@ driver reads the images itself.
 - **Read-only:** writing, deleting, renaming and making folders are refused with "disk is
   write-protected". The image file on the card is never changed.
 - **The icon:** an image without a `Disk.info` of its own (most PC-made discs) shows
-  Alice68's CD icon on Workbench; Amiga CDs keep their own.
+  Alice68's CD icon on Workbench, and its window shows **all files** (Show > All Files),
+  since such discs have few `.info` files. Amiga CDs keep their own icon and settings.
 - **Size: up to 4 GB.** That is FAT32's limit for one file, so a DVD image works if it is
   under 4 GB: most single-layer DVDs (4.7 GB) are too big, and exFAT cards are not
   supported. Inside an image, AmigaDOS itself can't show or seek past 2 GB in one file.

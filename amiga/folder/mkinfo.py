@@ -178,11 +178,18 @@ def _str(s):
     b = s.encode('latin1') + b'\0'
     return struct.pack('>I', len(b)) + b
 
-def write_icon(path, kind, pic, tool=None, tooltypes=(), stack=0, pos=None, window=None):
+DDFLAGS_SHOWICONS, DDFLAGS_SHOWALL = 1, 2           # workbench/workbench.h: what a disk's or drawer's window shows
+DDVM_BYICON, DDVM_BYNAME = 1, 2
+
+def write_icon(path, kind, pic, tool=None, tooltypes=(), stack=0, pos=None, window=None, show=None):
+    """show: (dd_Flags, dd_ViewModes) for a disk or drawer, e.g. (DDFLAGS_SHOWALL, DDVM_BYICON):
+    Workbench 2.0's extended DrawerData, which it reads when the gadget's UserData is
+    WB_DISKREVISION (1); written after the tool types"""
     x, y = pos if pos else (NO_POS, NO_POS)
+    ext = show is not None and kind in (WBDISK, WBDRAWER)
     gadget = struct.pack('>IhhhhHHHIIIiIHI',
                          0, 0, 0, pic.w, pic.h, 4, 3, 1,      # next, box, GADGIMAGE + complement, RELVERIFY|IMMEDIATE, BOOLGADGET
-                         1, 0, 0, 0, 0, 0, 0)                     # GadgetRender (an image follows), no select image; UserData 0: an OS 2 icon
+                         1, 0, 0, 0, 0, 0, 1 if ext else 0)       # GadgetRender (an image follows), no select image; UserData: WB_DISKREVISION
     dobj = struct.pack('>HH', 0xe310, 1) + gadget + struct.pack('>BBIIiiIII',
                          kind, 0, 1 if tool else 0, 1 if tooltypes else 0, x, y,
                          1 if kind in (WBDISK, WBDRAWER) else 0, 0, stack)
@@ -197,6 +204,7 @@ def write_icon(path, kind, pic, tool=None, tooltypes=(), stack=0, pos=None, wind
     if tooltypes:
         out += struct.pack('>I', (len(tooltypes) + 1) * 4)
         for t in tooltypes: out += _str(t)
+    if ext: out += struct.pack('>IH', show[0], show[1])
     if path: open(path, 'wb').write(out)
     return out
 
@@ -235,8 +243,15 @@ def read_icon(data):
         for _ in range(n):
             s, o = rstr(o); tt.append(s)
     if twin: _, o = rstr(o)
+    if dd and (g[14] & 0xff) >= 1: o += 6                # dd_Flags, dd_ViewModes
     if o != len(data): raise ValueError('%d bytes left over' % (len(data) - o))
     return kind, pic, t, tt, stack
+
+def drawer_show(data):
+    """a disk's or drawer's (dd_Flags, dd_ViewModes), or None if the icon has none"""
+    g = struct.unpack_from('>IhhhhHHHIIIiIHI', data, 4)
+    if not struct.unpack_from('>I', data, 66)[0] or (g[14] & 0xff) < 1: return None
+    return struct.unpack_from('>IH', data, len(data) - 6)
 
 PALETTE = [(0xaa, 0xaa, 0xaa), (0, 0, 0), (0xff, 0xff, 0xff), (0x66, 0x88, 0xbb)]   # Workbench 3.x's
 

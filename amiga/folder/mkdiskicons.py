@@ -13,12 +13,15 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import mkinfo
 
 def disk_icon(draw):
-    data = mkinfo.write_icon(None, mkinfo.WBDISK, draw())
+    show = SHOW.get(draw)
+    data = mkinfo.write_icon(None, mkinfo.WBDISK, draw(), show=show)
     kind, pic, tool, tts, stack = mkinfo.read_icon(data)     # it reads back
-    assert kind == mkinfo.WBDISK
+    assert kind == mkinfo.WBDISK and mkinfo.drawer_show(data) == show
     return data
 
 ICONS = {'folder': mkinfo.icon_sdfolder, 'cd': mkinfo.icon_cdrom, 'hardfile': mkinfo.icon_hardfile}
+# CD images are mostly not Amiga discs (few .info files): their window shows all files
+SHOW = {mkinfo.icon_cdrom: (mkinfo.DDFLAGS_SHOWALL, mkinfo.DDVM_BYICON)}
 
 if __name__ == '__main__':
     out = sys.argv[1]
