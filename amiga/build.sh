@@ -20,6 +20,7 @@ build() {   # name, sources...
 }
 build alice68-usb.device device_start.S alice68-usb.c lvo.S
 build Alice68-USBLog usblog_start.S usblog.c lvo.S
+build Alice68-Wheel wheel_start.S wheel.c lvo.S
 python3 -I folder/mkdiskicons.py out            # the volumes' Disk.info, for alice68hdf.device
 build alice68hdf.device hdf/hdf_start.S hdf/alice68hdf.c hdf/folders.c hdf/isos.c hdf/hdf_core.c hdf/fatfs.c hdf/iso9660.c out/disk_icons.c lvo.S
 build Alice68-HDF hdf/hdfinfo_start.S hdf/hdfinfo.c lvo.S

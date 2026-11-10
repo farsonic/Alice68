@@ -105,6 +105,30 @@ def icon_disk():
     p.rect(x1 + 1, y0 + 8, x1 + 1, y1 + 1, 1); p.rect(x0 + 2, y1 + 1, x1 + 1, y1 + 1, 1)   # shadow
     return p
 
+def icon_wheel():
+    """a mouse, seen from above, with its scroll wheel in blue"""
+    p = Pic()
+    cx, cy, rx, ry = 27, 12.5, 10.6, 11.9
+    for y in range(H):
+        for x in range(W):
+            if _in_ellipse(x, y, cx, cy, rx, ry): p.px(x, y, 2)
+    for y in range(H):                                   # the outline
+        for x in range(W):
+            if _in_ellipse(x, y, cx, cy, rx, ry) and not (_in_ellipse(x - 1, y, cx, cy, rx, ry) and
+                    _in_ellipse(x + 1, y, cx, cy, rx, ry) and _in_ellipse(x, y - 1, cx, cy, rx, ry) and
+                    _in_ellipse(x, y + 1, cx, cy, rx, ry)):
+                p.px(x, y, 1)
+    for x in range(W):                                   # the buttons' edge
+        if _in_ellipse(x, 11, cx, cy, rx, ry): p.px(x, 11, 1)
+    p.rect(cx, 1, cx, 11, 1)                             # between the buttons
+    p.rect(cx - 1, 3, cx + 1, 9, 3)                      # the wheel
+    p.frame(cx - 2, 2, cx + 2, 10, 1)
+    for y in (4, 6, 8): p.px(cx, y, 2)                   # its ridges
+    for y in range(H):                                   # shadow: one pixel right of the body
+        xs = [x for x in range(W) if _in_ellipse(x, y, cx, cy, rx, ry)]
+        if xs and y > 2: p.px(xs[-1] + 1, y, 1)
+    return p
+
 def _in_ellipse(x, y, cx, cy, rx, ry):
     return ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 <= 1.0
 

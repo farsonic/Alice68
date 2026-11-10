@@ -14,8 +14,14 @@ card from a PC.
   C/Alice68-Network      the network settings window (MUI)
   C/Alice68-NetworkGT    the same without MUI (GadTools)
   C/Alice68-Monitor      a debugging window
+  C/Alice68-Wheel        a USB mouse's scroll wheel (also in WBStartup)
   DEVS/USBHardware/alice68-usb.device   for Neptune or Poseidon
   DEVS/alice68net.device the network card (WiFi unit 0, Ethernet unit 1)
+
+Alice68-Wheel turns a USB mouse's wheel into the NewMouse events most
+programs know (wheel up/down/left/right, the 4th button). Install puts it in
+WBStartup too, so it starts with Workbench; run it again to stop it. Without
+installing: Run >NIL: ALICE68:C/Alice68-Wheel
 
 Icons/ holds volume icons: copy one onto a drive as its Disk.info. Folders
 and CD images show theirs by themselves; for a hardfile's partition:

@@ -23,6 +23,9 @@ FILES = [                      # (built file in OUT_DIR, place in the system)
     ('Alice68-Network', 'C'),
     ('Alice68-NetworkGT', 'C'),
     ('Alice68-Monitor', 'C'),
+    ('Alice68-Wheel', 'C'),
+    ('Alice68-Wheel', 'WBStartup'),            # the mouse wheel, started with Workbench
+    ('Alice68-Wheel.info', 'WBStartup'),
     ('alice68-usb.device', 'DEVS/USBHardware'),
     ('alice68net.device', 'DEVS'),
 ]
@@ -30,6 +33,14 @@ DATE = '07.11.2026'
 VER = '1.1'
 folder = os.path.join(out, 'ALICE68')
 shutil.rmtree(folder, ignore_errors=True)
+sys.dont_write_bytecode = True             # keep the source tree clean
+sys.path.insert(0, here)
+import mkinfo
+# Alice68-Wheel's icon for WBStartup: a tool Workbench starts and does not wait for
+wheel_tt = ('DONOTWAIT',)
+data = mkinfo.write_icon(os.path.join(out, 'Alice68-Wheel.info'), mkinfo.WBTOOL, mkinfo.icon_wheel(), None, wheel_tt, 4096)
+k, pic, t, tt, st = mkinfo.read_icon(data)
+if (k, tuple(tt), st) != (mkinfo.WBTOOL, wheel_tt, 4096) or pic.p != mkinfo.icon_wheel().p: sys.exit('Alice68-Wheel.info does not read back')
 for name, place in FILES:
     os.makedirs(os.path.join(folder, place), exist_ok=True)
     shutil.copyfile(os.path.join(out, name), os.path.join(folder, place, name))
@@ -131,7 +142,7 @@ ins = [
     '  (abort %s))' % q("ALICE68: is not mounted.\n\nIs the folder ALICE68 on the SD card's\nFAT partition, next to kernel8.img?\n(and no alice68.folders=off in config.txt)"),
     '(welcome "Alice68 %s: the Amiga files")' % VER,
     '(message %s (all))' % q("This copies Alice68's Amiga files from\nALICE68: into your system:\n\n"
-                              "eight tools into C:,\nalice68net.device into DEVS:,\nalice68-usb.device into DEVS:USBHardware.\n\n"
+                              "nine tools into C:,\nAlice68-Wheel into WBStartup too\n(the USB mouse's scroll wheel),\nalice68net.device into DEVS:,\nalice68-usb.device into DEVS:USBHardware.\n\n"
                               "What they replace is kept in\nAlice68-Backup, and Uninstall puts it back."),
     '(set #dest (askdir (prompt "Install into which system?") (help @askdir-help) (default @default-dest)))',
     '(set #bak (tackon #dest "Alice68-Backup"))',
@@ -209,9 +220,6 @@ for fn, lines in (('Install', ins), ('Uninstall', unins)):
         f.write('\n'.join(lines) + '\n')
 
 # ---- icons: the volume's, the scripts', the ReadMe's ----
-sys.dont_write_bytecode = True             # keep the source tree clean
-sys.path.insert(0, here)
-import mkinfo
 for name, (kind, draw, tool, tts, stack, pos) in mkinfo.ICONS.items():
     data = mkinfo.write_icon(os.path.join(folder, name + '.info'), kind, draw(), tool, tts, stack, pos)
     k, pic, t, tt, st = mkinfo.read_icon(data)

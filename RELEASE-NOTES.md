@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **USB mouse scroll wheels.** The kernel reads a mouse's HID report descriptor and, when it
+  has a wheel, takes its reports in report protocol (before, every mouse ran in boot
+  protocol, which has no wheel). The wheel's steps, the horizontal wheel's and the 4th
+  button go onto the USB card, and the new **`Alice68-Wheel`** turns them into NewMouse
+  events (raw keys `$7A`-`$7E`). Install puts it in `C:` and `WBStartup`. Mice without a
+  wheel, or with a layout the kernel cannot read, stay in boot protocol as before. Tested on
+  the PC (the parser, `tools/hid-test`, against several mice's descriptor layouts) and on a
+  68k emulator (`amiga/test/harness_wheel.py`); real mice on a Pi still to confirm.
+
 - **The kernel calls itself Alice68.** Its version string is now
   `Alice68 0.4.0 (date) git:<commit>, based on Emu68 1.1.0-beta.1` (shown by `version`
   tools and in the device tree's `idstring`); the splash's second line reads "based on

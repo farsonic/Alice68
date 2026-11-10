@@ -162,6 +162,18 @@ static void pt_board_map(struct ExpansionBoard *board)
     __atomic_store_n(&pt_session_req, 1, __ATOMIC_RELEASE);
     __asm__ volatile("sev" ::: "memory");
 }
+/* a USB mouse's wheels and extra buttons, for Alice68-Wheel (amiga/wheel.c), which turns them
+   into AmigaOS's NewMouse events: the Amiga's mouse port has no wheel */
+static void pt_mouse_extra(int wheel, int pan, unsigned buttons)
+{
+    volatile struct pt_hdr *h = __atomic_load_n(&pt, __ATOMIC_ACQUIRE);
+    if (!h || (!wheel && !pan && h->mouse_btn == buttons)) return;
+    h->wheel_y += wheel;
+    h->wheel_x += pan;
+    h->mouse_btn = buttons;
+    __asm__ volatile("dmb ish" ::: "memory");
+    h->mouse_seq++;
+}
 static struct ExpansionBoard pt_board = { pt_rom, PT_BOARD_BYTES, 0, 0, 1, pt_board_map };
 static void * __attribute__((used, section(".boards.z2"))) pt_board_ref = &pt_board;
 

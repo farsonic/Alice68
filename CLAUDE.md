@@ -36,6 +36,10 @@ User-facing docs: README.md. History of where code came from: docs/PROVENANCE.md
   from `build.sh`); `amiga/netprefs.c` — `Alice68-NetworkGT`,
   the GadTools settings window (`lvoy.S` for calls with a2/a3). `amiga/wifi/` — `Alice68-WiFi`, `wifi_api.h`, `netdev.h`.
   `alice68hdf.device` hands the `WIFI` folder's files to the kernel at boot (`offer_wifi`).
+- Mouse wheel: `frf_xhci.c` reads a mouse's report descriptor (`alice_hid.[ch]`, host-independent,
+  `tools/hid-test`) and, with a wheel, uses report protocol; the steps go to `pt_hdr.wheel_y/_x,
+  mouse_btn` on the USB card, and `amiga/wheel.c` (`Alice68-Wheel`, in WBStartup) sends NewMouse
+  raw keys through input.device. Other mice stay in boot protocol.
 - `amiga/monitor.c` — `Alice68-Monitor`: debugging window (tasks, backtraces, the board's log rings,
   the WiFi driver's `pt_wstat` "where"). The board layout is in `alice68_usbpt.h`; it survives a 68k reset.
 - `tools/hdf-test/`, `amiga/test/` — tests. `tools/splash-preview/` — render the splash on a PC.
@@ -65,6 +69,8 @@ tools/hdf-test/run.sh                    # hardfile, folder and CD image tests: 
 python3 amiga/test/harness.py amiga/out/alice68-usb.device   # USB pass-through driver on the 68k emulator
 python3 amiga/test/harness_netcheck.py amiga/out/Alice68-NetCheck   # the network check tool against a fake SANA-II driver
 tools/wifi-test/run.sh                   # WiFi protocol layer on the PC (expect "ALL OK")
+tools/hid-test/run.sh                    # the USB mouse report parser on the PC (expect "ALL OK")
+python3 amiga/test/harness_wheel.py amiga/out/Alice68-Wheel  # the mouse wheel tool against a fake card and input.device
 python3 amiga/test/harness_wifitool.py amiga/out/Alice68-WiFi   # the WiFi tool against a fake driver
 python3 amiga/test/harness_monitor.py amiga/out/Alice68-Monitor  # Alice68-Monitor DUMP against a fake board
 python3 amiga/test/harness_netprefs.py amiga/out/Alice68-NetworkGT # the GadTools network window against fake libraries

@@ -317,6 +317,22 @@ card is still there but stays empty: the kernel leaves the USB-A ports to rondov
 
 A CM4's USB port is the USB-C controller, so on a CM4 use `frf_usb=neptune` (untested).
 
+### The mouse's scroll wheel
+
+The Amiga's mouse port has no wheel, so the kernel counts a USB mouse's wheel steps on the
+[USB card](#alice68s-expansion-cards), and **`Alice68-Wheel`** turns them into the
+"NewMouse" events most wheel-aware programs know (raw keys `$7A`/`$7B` for up and down,
+`$7C`/`$7D` for left and right, `$7E` for the 4th button), with Shift and the other
+qualifiers as you hold them. **Install** puts it in `C:` and in `WBStartup`, so it starts
+with Workbench. Running it again (or double-clicking its icon) stops it, and
+`Alice68-Wheel NEWMOUSE` also sends each event as `IECLASS_NEWMOUSE` for tools that want
+that. Without installing: `Run >NIL: ALICE68:C/Alice68-Wheel`.
+
+The kernel reads the wheel from the mouse's own report layout (its HID report descriptor).
+A mouse without a wheel, or one whose layout the kernel cannot read, works as before
+(buttons and movement), and the boot log says `wheel for Alice68-Wheel` after a mouse that
+has one. Mice on the USB-C port (`frf_usb=neptune`) have no wheel through the kernel.
+
 ### Neptune on the USB-A ports (storage, network)
 
 The kernel keeps USB keyboards and mice for itself and offers every other device on the

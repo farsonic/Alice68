@@ -287,8 +287,12 @@ static int vl805_reload(volatile uint32_t *req)
 
 struct ring { volatile uint32_t *t; uint32_t phys; int n, enq, cyc; };
 
+#include "alice_hid.c"            /* a mouse's report layout, for its wheel */
+
 struct hid_ep {
     int dci, kind, mps, ival;    /* kind: 1 keyboard, 2 mouse */
+    int rp;                      /* mouse in report protocol: hm says where its fields are */
+    struct hid_mouse hm;
     struct ring r;
     volatile uint8_t *buf;
     int dead;
@@ -657,14 +661,17 @@ static int enumerate(int root, uint32_t route, int speed, int tt_slot, int tt_po
     }
     if (modeswitch(slot, vid, pid, desc, n, cfgval, where)) return slot;   /* it will reconnect */
 
-    int cur_if = -1, cur_kind = 0, max_dci = 1;
-    int ifnum[MAX_HID];
+    int cur_if = -1, cur_kind = 0, max_dci = 1, cur_rdlen = 0;
+    int ifnum[MAX_HID], rdlen[MAX_HID];
     for (int i = 0; i + 2 <= n && desc[i] >= 2; i += desc[i]) {
         if (desc[i + 1] == 4 && i + 9 <= n) {                    /* interface */
             cur_if = desc[i + 2];
             cur_kind = (desc[i + 5] == 3 && desc[i + 6] == 1) ? (desc[i + 7] == 1 ? 1 : desc[i + 7] == 2 ? 2 : 0) : 0;
+            cur_rdlen = 0;
             if (desc[i + 5] != 3 || desc[i + 6] != 1)
                 xlog("[FRF-XHCI] %s: interface %d class %02x/%02x/%02x - left alone\n", where, cur_if, desc[i + 5], desc[i + 6], desc[i + 7]);
+        } else if (desc[i + 1] == 0x21 && i + 9 <= n && desc[i + 6] == 0x22) {          /* HID: report descriptor length */
+            cur_rdlen = desc[i + 7] | (desc[i + 8] << 8);
         } else if (desc[i + 1] == 5 && i + 7 <= n && cur_kind && d->nhid < MAX_HID) {   /* endpoint */
             uint8_t ea = desc[i + 2], at = desc[i + 3];
             if ((ea & 0x80) && (at & 3) == 3) {
@@ -674,6 +681,8 @@ static int enumerate(int root, uint32_t route, int speed, int tt_slot, int tt_po
                 h->mps = (desc[i + 4] | (desc[i + 5] << 8)) & 0x7ff;
                 if (h->mps > 64) h->mps = 64;
                 h->dead = 0;
+                h->rp = 0;
+                rdlen[d->nhid] = cur_rdlen;
                 ring_init(&h->r, area + 0x2400 + (uint32_t)d->nhid * 0x400, NTRB_XFER);
                 h->buf = (volatile uint8_t *)(area + 0x3000 + (uint32_t)d->nhid * 0x100);
                 h->ival = ep_interval(speed, desc[i + 6]);
@@ -690,7 +699,22 @@ static int enumerate(int root, uint32_t route, int speed, int tt_slot, int tt_po
     }
     if (control(slot, 0x00, 9, cfgval, 0, 0) < 0) { xlog("[FRF-XHCI] %s: SET_CONFIGURATION failed\n", where); return slot; }
     for (int k = 0; k < d->nhid; k++) {
-        (void)control(slot, 0x21, 0x0b, 0, (uint16_t)ifnum[k], 0);     /* SET_PROTOCOL boot */
+        struct hid_ep *h = &d->hid[k];
+        /* a mouse with a wheel: report protocol, laid out as its report descriptor says. Any
+           other mouse, or one whose descriptor cannot be read or understood, and every
+           keyboard: boot protocol (buttons, X, Y) as before */
+        if (h->kind == 2 && rdlen[k] > 0 && rdlen[k] <= 512) {
+            int got = control(slot, 0x81, 6, 0x2200, (uint16_t)ifnum[k], (uint16_t)rdlen[k]);
+            if (got > 0) {
+                uint8_t rd[512];
+                for (int i = 0; i < got; i++) rd[i] = d->ctl[i];
+                if (hid_mouse_parse(rd, got, &h->hm) && (h->hm.wheel.size || h->hm.pan.size)
+                    && control(slot, 0x21, 0x0b, 1, (uint16_t)ifnum[k], 0) >= 0)          /* SET_PROTOCOL report */
+                    h->rp = 1;
+            }
+        }
+        if (!h->rp)
+            (void)control(slot, 0x21, 0x0b, 0, (uint16_t)ifnum[k], 0);     /* SET_PROTOCOL boot */
         (void)control(slot, 0x21, 0x0a, 0, (uint16_t)ifnum[k], 0);     /* SET_IDLE 0 (stall is fine) */
     }
 
@@ -718,8 +742,9 @@ static int enumerate(int root, uint32_t route, int speed, int tt_slot, int tt_po
         ring_put(&h->r, (uint32_t)(uintptr_t)h->buf, 0, (uint32_t)h->mps, (1u << 10) | (1u << 5) | (1u << 2));   /* Normal, IOC, ISP */
         ring_db(slot, h->dci);
         if (h->kind == 1) n_kbd++; else n_mouse++;
-        xlog("[FRF-XHCI] %s: %s ready (endpoint %d, %d bytes) -> Amiga %s\n", where,
-                h->kind == 1 ? "keyboard" : "mouse", (h->dci - 1) / 2, h->mps, h->kind == 1 ? "keyboard" : "mouse port");
+        xlog("[FRF-XHCI] %s: %s ready (endpoint %d, %d bytes) -> Amiga %s%s\n", where,
+                h->kind == 1 ? "keyboard" : "mouse", (h->dci - 1) / 2, h->mps, h->kind == 1 ? "keyboard" : "mouse port",
+                h->rp ? (h->hm.pan.size ? ", wheels for Alice68-Wheel" : ", wheel for Alice68-Wheel") : "");
     }
     frf_post_usb_devices(n_kbd, n_mouse, 0, 0);
     return slot;
@@ -837,6 +862,16 @@ static void on_transfer(const struct evt *e)
             for (int i = 0; i < len && i < 64; i++) rep[i] = h->buf[i];
             if (h->kind == 1 && len >= 8) {
                 frf_native_usb_keyboard_boot_report(rep);
+            } else if (h->kind == 2 && h->rp) {
+                struct hid_mouse_report r;
+                if (len > 0 && hid_mouse_decode(&h->hm, rep, len < 64 ? len : 64, &r)) {
+                    /* the Amiga reads its counters once a frame: keep each step in a byte */
+                    int dx = r.dx < -127 ? -127 : r.dx > 127 ? 127 : r.dx;
+                    int dy = r.dy < -127 ? -127 : r.dy > 127 ? 127 : r.dy;
+                    aga_virtual_mouse_update(dx, dy, r.buttons & 7u);
+                    frf_usb_mouse_seen = 1; frf_usb_mouse_buttons = (uint8_t)r.buttons;
+                    pt_mouse_extra(r.wheel, r.pan, r.buttons);
+                }
             } else if (h->kind == 2 && len >= 3) {
                 aga_virtual_mouse_update((int)(int8_t)rep[1], (int)(int8_t)rep[2], rep[0] & 7u);
                 frf_usb_mouse_seen = 1; frf_usb_mouse_buttons = rep[0];

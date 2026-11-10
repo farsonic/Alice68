@@ -101,7 +101,11 @@ struct pt_hdr {
     unsigned int amiga_ver;     /* the driver's version once it has opened */
     unsigned int wlog_wr;       /* bytes written to alice68wifi.device's log ring, ever */
     unsigned int msnap_seq;     /* Alice68-Monitor: +1 per task table it wrote */
-    unsigned int pad[5];
+    int          wheel_y;       /* kernel: USB mouse wheel steps, ever (+ = up); Alice68-Wheel reads them */
+    int          wheel_x;       /* ...and horizontal wheel steps (+ = right) */
+    unsigned int mouse_btn;     /* the mouse's buttons now: bit 3 the 4th, bit 4 the 5th */
+    unsigned int mouse_seq;     /* +1 on every change of the three above */
+    unsigned int pad[1];
     struct pt_port port[PT_PORTS];
 };                              /* 64 + 128 bytes */
 
