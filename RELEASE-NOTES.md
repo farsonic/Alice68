@@ -1,6 +1,13 @@
 # Alice68 release notes
 
-## Unreleased
+## 0.5.0 — CD images, mouse wheel, ShowConfig
+
+Download: `Alice68-0.5.0-Pi4.zip` from the
+[v0.5.0 release](https://github.com/farsonic/Alice68/releases). Unzip it and copy
+everything in it to the root of the SD card's FAT partition: the card must already have
+the Raspberry Pi firmware (`start4.elf`, `fixup4.dat`, `bcm2711-rpi-4-b.dtb`) and your
+Kickstart (`Alice68-READ-ME-FIRST.txt` in the zip lists them). The source is
+`Alice68-0.5.0-src.zip`. Riptide 0.38 is in `ALICE68/Riptide`, as in 0.4.0.
 
 - **USB mouse scroll wheels.** The kernel reads a mouse's HID report descriptor and, when it
   has a wheel, takes its reports in report protocol (before, every mouse ran in boot
@@ -12,7 +19,7 @@
   68k emulator (`amiga/test/harness_wheel.py`); real mice on a Pi still to confirm.
 
 - **The kernel calls itself Alice68.** Its version string is now
-  `Alice68 0.4.0 (date) git:<commit>, based on Emu68 1.1.0-beta.1` (shown by `version`
+  `Alice68 0.5.0 (date) git:<commit>, based on Emu68 1.1.0-beta.1` (shown by `version`
   tools and in the device tree's `idstring`); the splash's second line reads "based on
   Emu68 1.1.0-beta.1 - AGA core 1.120". The `/emu68` device-tree node and its numeric
   `version` stay as they were, because Amiga drivers written for Emu68 (the `-rangeops`
