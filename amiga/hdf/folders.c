@@ -8,7 +8,10 @@
  * and a folder named ALICE68 in the root (Alice68's own Amiga files and their
  * installer) is always mounted as ALICE68:, unless alice68.folders=off.
  * They are read-write (read-only with hdf.readonly or a read-only card), never
- * bootable, and are DOS devices SDF0:, SDF1:, ...
+ * bootable, and are DOS devices SDF0:, SDF1:, ... A folder not on the FAT partition is
+ * looked for on the card's exFAT partition, and that partition is a volume itself (named
+ * by its label); both read-only unless config.txt has alice68.exfat=rw (alice68.exfat=off:
+ * not the partition itself).
  *
  * Each is a DOS handler process started by dos.library at boot (the boot
  * node's ADNF_STARTPROC). The code is here in the ROM; dos.library is given a
@@ -866,6 +869,29 @@ APTR handler_seglist(struct HdfBase *db, void (*entry)(struct HdfBase *))
 static int is_sp(char c) { return c == ' ' || c == '\t' || c == '\r'; }
 
 /* config.txt lines alice68.folder=PATH[:VOLUME] (and alice68.folders=off): calls take() for each */
+/* alice68.exfat=off|ro|rw: the exFAT partition as a volume (0 off, 1 read-only: the default, 2 read-write) */
+static int exfat_mode(const char *c)
+{
+    static const char key[] = "alice68.exfat=";
+    int mode = 1;
+    while (c && *c) {
+        const char *l = c;
+        while (*c && *c != '\n') c++;
+        const char *end = c;
+        if (*c) c++;
+        while (l < end && is_sp(*l)) l++;
+        while (end > l && is_sp(end[-1])) end--;
+        uint32_t i = 0;
+        while (key[i] && l + i < end && l[i] == key[i]) i++;
+        if (key[i]) continue;
+        l += i;
+        if (end - l == 2 && l[0] == 'r' && l[1] == 'w') mode = 2;
+        else if (end - l == 2 && l[0] == 'r' && l[1] == 'o') mode = 1;
+        else if (end - l == 3 && l[0] == 'o' && l[1] == 'f' && l[2] == 'f') mode = 0;
+    }
+    return mode;
+}
+
 static int parse_config(const char *c, char paths[][128], char vols[][32], int max, int *off)
 {
     int n = 0;
@@ -903,6 +929,56 @@ static int parse_config(const char *c, char paths[][128], char vols[][32], int m
     return n;
 }
 
+/* a volume for a folder (path) of a partition, or (path "") the exFAT partition itself: 1 made,
+   0 not (logged), -1 out of memory */
+static int add_volume(struct HdfBase *db, struct hdf_io *io, APTR eb, APTR cd, const char *path, const char *volname,
+                      struct ffs *fs, uint32_t root, const struct ffs_ent *re)
+{
+    const char *pth = path;
+    struct FVol *fv = AllocMem(sizeof *fv, MEMF_PUBLIC | MEMF_CLEAR);
+    if (!fv) return -1;
+    fv->fs = fs;
+    fv->ro = fs == &db->xffs && db->xfat.ro != 0;  /* exFAT: read-only unless alice68.exfat=rw (and it may be) */
+    fv->index = db->nfvols;
+    scpy(fv->path, pth, sizeof fv->path);
+    fv->root = root;
+    fv->rent = *re;
+    /* the volume name: given, else the folder's own name; never one mounted already */
+    const char *base = volname[0] ? volname : re->name;
+    scpy(fv->vol, base, 28);
+    for (char d = '2'; d <= '9'; d++) {
+        int clash = find_vol(db, fv->vol) >= 0;
+        for (ULONG k = 0; k < db->nfvols && !clash; k++) clash = str_ieq(db->fvol[k]->vol, fv->vol);
+        if (!clash) break;
+        uint32_t l = slen(base) < 27 ? slen(base) : 27;
+        memcpy(fv->vol, base, l); fv->vol[l] = d; fv->vol[l + 1] = 0;
+    }
+    scpy(fv->dev, "SDF0", sizeof fv->dev);
+    fv->dev[3] = (char)('0' + fv->index);
+    /* the seglist dos.library starts: in RAM, a call of folder_main(db) in the ROM */
+    if (!db->fseg && !(db->fseg = handler_seglist(db, folder_main))) { FreeMem(fv, sizeof *fv); return -1; }
+    ULONG pkt[4 + 17] = { (ULONG)fv->dev, (ULONG)hdf_devname, FOLDER_UNIT0 + fv->index, 0,
+                          16, 128, 0, 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0x1fe00, 0x7ffffffe, (ULONG)-128, 0x46415401 /* 'FAT\1' */ };
+    struct DeviceNode *dn = eb ? MakeDosNode(eb, pkt) : 0;
+    if (!dn) { hdf_log(io, "%s: MakeDosNode failed", fv->vol); FreeMem(fv, sizeof *fv); return 0; }
+    dn->dn_SegList = MKBADDR(db->fseg);
+    dn->dn_GlobalVec = (ULONG)-1;                   /* a C handler */
+    dn->dn_StackSize = FOLDER_STACK;
+    dn->dn_Priority = 10;
+    dn->dn_Handler = 0;
+    if (find_drive(eb, fv->dev)) hdf_log(io, "%s: a drive of that name is mounted already", fv->dev);
+    db->fvol[db->nfvols++] = fv;
+    if (!AddBootNode(eb, -128, 1 /* ADNF_STARTPROC */, dn, cd)) { hdf_log(io, "%s: AddBootNode failed", fv->vol); db->nfvols--; FreeMem(fv, sizeof *fv); return 0; }
+    add_vol(db, fv->vol, fv->dev);
+    if (fv->path[0])
+        hdf_log(io, "folder %s%s: volume %s (%s:), not bootable%s", fv->path, fv->fs == &db->xffs ? " (exFAT)" : "", fv->vol, fv->dev,
+                db->readonly || fv->ro ? ", read-only" : "");
+    else
+        hdf_log(io, "exFAT partition: volume %s (%s:), not bootable%s%s", fv->vol, fv->dev,
+                db->readonly || fv->ro ? ", read-only: " : "", db->readonly ? "the card is" : fv->ro ? db->xfat.ro : "");
+    return 1;
+}
+
 void folders_mount(struct HdfBase *db, struct hdf_io *io, APTR eb, APTR cd, const char *config)
 {
     char (*paths)[128] = AllocMem(FOLDER_MAX * (128 + 32), MEMF_PUBLIC | MEMF_CLEAR);
@@ -918,6 +994,15 @@ void folders_mount(struct HdfBase *db, struct hdf_io *io, APTR eb, APTR cd, cons
     quiet.log = 0;
     if (fat_open(&db->ffat, &quiet) || (db->ffat.io = io, ffs_init(&db->ffs, &db->ffat))) { hdf_log(io, "folders: the FAT partition cannot be opened"); goto out; }
     db->ffs_up = 1;
+    /* the card's exFAT partition: folders on it, and itself as a volume (alice68.exfat=) */
+    int xm = exfat_mode(config);
+    if (xfat_open(&db->xfat, &quiet) == 0) {
+        if (ffs_init_exfat(&db->xffs, &db->xfat) == 0) {
+            db->xffs_up = 1;
+            if (xm == 2) { const char *why = xfat_writable(&db->xfat); if (why) hdf_log(io, "exFAT partition: not written: %s", why); }
+            else if (!db->xfat.ro) db->xfat.ro = "alice68.exfat=rw in config.txt writes it";
+        } else xfat_close(&db->xfat);
+    }
     for (int i = 0; i < n && db->nfvols < FOLDER_MAX; i++) {
         char *pth = paths[i];
         while (*pth == '/') pth++;
@@ -929,10 +1014,6 @@ void folders_mount(struct HdfBase *db, struct hdf_io *io, APTR eb, APTR cd, cons
         struct ffs *fs = &db->ffs;
         int r = ffs_resolve(fs, pth, &root, &re);
         if (r == FFS_END) {                            /* not on the FAT partition: on the exFAT one? */
-            if (!db->xffs_up && xfat_open(&db->xfat, &quiet) == 0) {
-                if (ffs_init_exfat(&db->xffs, &db->xfat) == 0) db->xffs_up = 1;
-                else xfat_close(&db->xfat);
-            }
             if (db->xffs_up) {
                 ffs_set_io(&db->xffs, io);
                 int rx = ffs_resolve(&db->xffs, pth, &root, &re);
@@ -943,43 +1024,16 @@ void folders_mount(struct HdfBase *db, struct hdf_io *io, APTR eb, APTR cd, cons
             if (i) hdf_log(io, "config.txt: alice68.folder=%s: %s", pth, r == FFS_NOTDIR ? "not a folder" : r == FFS_BADNAME ? "not the root" : "no such folder");
             continue;
         }
-        struct FVol *fv = AllocMem(sizeof *fv, MEMF_PUBLIC | MEMF_CLEAR);
-        if (!fv) break;
-        fv->fs = fs;
-        fv->ro = fs == &db->xffs;                      /* exFAT: read-only until it can be written */
-        fv->index = db->nfvols;
-        scpy(fv->path, pth, sizeof fv->path);
-        fv->root = root;
-        fv->rent = re;
-        /* the volume name: given, else the folder's own name; never one mounted already */
-        const char *base = vols[i][0] ? vols[i] : re.name;
-        scpy(fv->vol, base, 28);
-        for (char d = '2'; d <= '9'; d++) {
-            int clash = find_vol(db, fv->vol) >= 0;
-            for (ULONG k = 0; k < db->nfvols && !clash; k++) clash = str_ieq(db->fvol[k]->vol, fv->vol);
-            if (!clash) break;
-            uint32_t l = slen(base) < 27 ? slen(base) : 27;
-            memcpy(fv->vol, base, l); fv->vol[l] = d; fv->vol[l + 1] = 0;
-        }
-        scpy(fv->dev, "SDF0", sizeof fv->dev);
-        fv->dev[3] = (char)('0' + fv->index);
-        /* the seglist dos.library starts: in RAM, a call of folder_main(db) in the ROM */
-        if (!db->fseg && !(db->fseg = handler_seglist(db, folder_main))) { FreeMem(fv, sizeof *fv); break; }
-        ULONG pkt[4 + 17] = { (ULONG)fv->dev, (ULONG)hdf_devname, FOLDER_UNIT0 + fv->index, 0,
-                              16, 128, 0, 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0x1fe00, 0x7ffffffe, (ULONG)-128, 0x46415401 /* 'FAT\1' */ };
-        struct DeviceNode *dn = eb ? MakeDosNode(eb, pkt) : 0;
-        if (!dn) { hdf_log(io, "%s: MakeDosNode failed", fv->vol); FreeMem(fv, sizeof *fv); continue; }
-        dn->dn_SegList = MKBADDR(db->fseg);
-        dn->dn_GlobalVec = (ULONG)-1;                   /* a C handler */
-        dn->dn_StackSize = FOLDER_STACK;
-        dn->dn_Priority = 10;
-        dn->dn_Handler = 0;
-        if (find_drive(eb, fv->dev)) hdf_log(io, "%s: a drive of that name is mounted already", fv->dev);
-        db->fvol[db->nfvols++] = fv;
-        if (!AddBootNode(eb, -128, 1 /* ADNF_STARTPROC */, dn, cd)) { hdf_log(io, "%s: AddBootNode failed", fv->vol); db->nfvols--; FreeMem(fv, sizeof *fv); continue; }
-        add_vol(db, fv->vol, fv->dev);
-        hdf_log(io, "folder %s%s: volume %s (%s:), not bootable%s", fv->path, fv->fs == &db->xffs ? " (exFAT)" : "", fv->vol, fv->dev,
-                db->readonly || fv->ro ? ", read-only" : "");
+        if (add_volume(db, io, eb, cd, pth, vols[i], fs, root, &re) < 0) break;
+    }
+    if (db->xffs_up && xm && db->nfvols < FOLDER_MAX) {   /* the exFAT partition itself */
+        struct ffs_ent re;
+        memset(&re, 0, sizeof re);
+        re.attr = FFS_A_DIR;
+        re.first = re.dir = db->xfat.root;
+        re.date = (uint16_t)((46 << 9) | (1 << 5) | 1);
+        ffs_set_io(&db->xffs, io);
+        add_volume(db, io, eb, cd, "", db->xfat.label[0] ? db->xfat.label : "exFAT", &db->xffs, db->xfat.root, &re);
     }
 out:
     FreeMem(paths, FOLDER_MAX * (128 + 32));

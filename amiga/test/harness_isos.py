@@ -78,7 +78,7 @@ else:
         return subprocess.run(['losetup', '-f', '--show', '-o', str(st * 512), '--sizelimit', str(n * 512), img],
                               check=True, capture_output=True).stdout.decode().strip()
     l1 = loopdev(P1, N1)
-    subprocess.run(['mkfs.fat', '-F', '32', '-s', '1', l1], check=True, stdout=subprocess.DEVNULL)
+    subprocess.run(['mkfs.fat', '-F', '32', '-s', '1', l1], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for top in ('cmdline.txt',):
         if os.path.exists(os.path.join(src, 'card', top)):
             subprocess.run(['mcopy', '-i', l1, os.path.join(src, 'card', top), '::/'], check=True, env=env)

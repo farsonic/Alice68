@@ -588,9 +588,26 @@ first exFAT partition and mounts its hardfiles (root and `HDF`) and CD images (r
 - **Then** copy the release's files onto the FAT32 partition as usual, and your hardfiles
   and CD images onto the exFAT one. The boot log shows `exFAT partition at sector ...`
   and each file found there.
-- **Folders** on the exFAT partition can be mounted too (`alice68.folder=`, see
-  [Folders](#folders-of-the-sd-card-as-amiga-volumes)), **read-only** for now. A hardfile
-  written to on the Amiga keeps its size and clusters, as on FAT.
+- **The partition itself is an Amiga volume**, named by its label (`exFAT` if it has
+  none), on `SDFn:`. Folders on it can be mounted too (`alice68.folder=`, see
+  [Folders](#folders-of-the-sd-card-as-amiga-volumes)). In `config.txt`:
+
+  ```ini
+  alice68.exfat=ro      # the default: read-only
+  alice68.exfat=rw      # read-write: Alice68 writes the exFAT partition
+  alice68.exfat=off     # the partition is not a volume (hardfiles, CD images, folders still work)
+  ```
+
+  Writing keeps the order that leaves a cut-off write repairable: file data first, then
+  the allocation bitmap and FAT, then the directory entry (with its checksum); deleting
+  clears the entry before freeing its space. While changes are on their way the volume is
+  marked "dirty", and the mark is cleared when they're done. If the Pi loses power in the
+  middle, the volume is left marked dirty and Alice68 mounts it **read-only** until it has
+  been checked on a PC (Windows offers to, or `fsck.exfat`/First Aid on a Mac): the worst
+  it should find is a file holding a little more space than it needs. Amiga attributes
+  are kept in `.uaem` sidecars as in FAT folders. A hardfile or CD image that is mounted
+  can't be changed through the volume, and a hardfile written on the Amiga keeps its size
+  and clusters, as on FAT. The volume is not bootable yet.
 - The card needs an MBR partition table, not GPT: both recipes above make one.
 
 ## Folders of the SD card as Amiga volumes
@@ -608,8 +625,8 @@ alice68.folder=Amiga/Work:Work    # the folder Amiga/Work, as volume Work:
   that is already taken by a mounted volume gets a digit (`Games2`).
 - **On the exFAT partition too:** a folder that isn't on the FAT32 partition is looked
   for on the card's [exFAT partition](#a-second-partition-in-exfat-big-cards-big-files).
-  Those are **read-only for now** (writing exFAT is being built); the boot log says
-  `folder Games (exFAT): ... read-only`.
+  Those are read-only unless `config.txt` has `alice68.exfat=rw`; the boot log says
+  `folder Games (exFAT): ...`.
 - **The DOS devices** are `SDF0:`, `SDF1:` and so on. Folders are **never bootable**.
 - **The icon:** a folder without a `Disk.info` of its own shows Alice68's SD folder icon
   on Workbench. It can't be changed or deleted; writing a real `Disk.info` (Workbench's

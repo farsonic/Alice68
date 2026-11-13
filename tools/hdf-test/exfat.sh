@@ -182,6 +182,72 @@ print('exFAT   folders %d entries through ffs_*, free space, writes refused  %s'
 for x in fails[:20]: print('   ', x)
 sys.exit(1 if fails else 0)
 PY
+# writing: a sequence of changes through the ffs_* calls, then fsck.exfat, then exfat-fuse reads it all back
+OFF=$((139264 * 512))
+cp --sparse=always "$T/card.img" "$T/w.img"
+"$T/exfat_test" -W "$T/w.img" > "$T/wout.txt" 2> "$T/wlog.txt" || true
+L=$(losetup -f --show -o $OFF "$T/w.img")
+fsck.exfat -n "$L" > "$T/wfsck.txt" 2>&1 && FS=clean || FS=dirty
+mount.exfat-fuse -o ro "$L" "$T/mnt" 2>/dev/null
+python3 -I - "$T" "$FS" <<'PY'
+import ast, os, sys, zlib
+T, fs = sys.argv[1], sys.argv[2]
+mnt = T + '/mnt'
+out = open(T + '/wout.txt', encoding='latin-1').read().splitlines()
+fails = [l for l in out if l.startswith('FAIL') or l == 'NOEXFAT']
+if fs != 'clean': fails.append('fsck.exfat: ' + open(T + '/wfsck.txt').read())
+def host(p): return os.path.join(mnt, p.encode('latin-1').decode('latin-1'))
+made = {}
+for l in out:
+    if l.startswith('E '):
+        path, size, crc = l[2:].rsplit(' ', 2); made[path] = (int(size), int(crc, 16))
+        try: b = open(host(path), 'rb').read()
+        except OSError as e: fails.append('%s: %s' % (path, e)); continue
+        if (len(b), zlib.crc32(b)) != made[path]: fails.append('%s: %d %08x on the card, the engine read %s' % (path, len(b), zlib.crc32(b), made[path]))
+    elif l.startswith('X '):
+        if os.path.exists(host(l[2:])): fails.append('%s: still there' % l[2:])
+src = ast.literal_eval(open(T + '/srcfull.txt').read())
+for p, (n, crc) in src.items():                      # what the PC put there and the test did not touch
+    if p in made or p.startswith('New Dir'): continue
+    b = open(host(p), 'rb').read()
+    if (len(b), zlib.crc32(b)) != (n, crc): fails.append('%s: changed' % p)
+st = os.statvfs(mnt)
+free = st.f_bfree * st.f_frsize // int(open(T + '/free.txt').read().split()[1])
+want = [int(l[2:]) for l in out if l.startswith('S ')]
+if want != [free]: fails.append('free clusters: the engine says %s, the card %d' % (want, free))
+writes = [l for l in out if l.startswith('DONE')]
+print('exFAT   writes  %d files made/changed, %d removed, %s, fsck.exfat %s  %s' % (len(made), sum(1 for l in out if l.startswith('X ')), writes[0] if writes else '?', fs, 'OK' if not fails else 'FAILED'))
+for x in fails[:20]: print('   ', x)
+sys.exit(1 if fails else 0)
+PY
+umount "$T/mnt"; losetup -d "$L"
+# power cuts: the same sequence, the card "switched off" after N sector writes (N spread over the
+# whole run); fsck.exfat must always be able to repair it, and find it clean afterwards
+TOTAL=$(sed -n 's/^DONE //p' "$T/wout.txt")
+python3 -I - "$T" "$TOTAL" "$OFF" <<'PY'
+import subprocess, sys
+T, total, off = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+budgets = sorted(set([0, 1, 2, 3, total - 1] + [total * i // 37 for i in range(1, 37)]))
+clean = repaired = 0
+fails = []
+for b in budgets:
+    img = T + '/cut.img'
+    subprocess.run(['cp', '--sparse=always', T + '/card.img', img], check=True)
+    subprocess.run([T + '/exfat_test', '-W', img, str(b)], capture_output=True)
+    L = subprocess.run(['losetup', '-f', '--show', '-o', str(off), img], capture_output=True, text=True, check=True).stdout.strip()
+    try:
+        n = subprocess.run(['fsck.exfat', '-n', L], capture_output=True, text=True)
+        if n.returncode == 0: clean += 1; continue
+        y = subprocess.run(['fsck.exfat', '-y', L], capture_output=True, text=True)
+        again = subprocess.run(['fsck.exfat', '-n', L], capture_output=True, text=True)
+        if again.returncode != 0: fails.append('cut after %d writes: fsck.exfat -y could not repair it:\n%s\n%s' % (b, n.stdout[-600:], y.stdout[-600:]))
+        else: repaired += 1
+    finally:
+        subprocess.run(['losetup', '-d', L])
+print('exFAT   cuts    %d power cuts over %d writes: %d clean, %d repaired by fsck.exfat  %s' % (len(budgets), total, clean, repaired, 'OK' if not fails else 'FAILED'))
+for f in fails[:5]: print('   ', f)
+sys.exit(1 if fails else 0)
+PY
 # a broken boot checksum: the partition is refused, with a reason
 cp --sparse=always "$T/card.img" "$T/bad.img"
 printf 'X' | dd of="$T/bad.img" bs=1 seek=$((139264 * 512 + 120)) conv=notrunc 2>/dev/null

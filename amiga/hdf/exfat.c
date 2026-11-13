@@ -10,6 +10,7 @@
 
 #define T_END      0x00
 #define T_BITMAP   0x81
+#define T_UPCASE   0x82
 #define T_LABEL    0x83
 #define T_FILE     0x85
 #define T_STREAM   0xc0
@@ -29,15 +30,26 @@ static int is_exfat(const uint8_t *s)
 static uint32_t clus_sec(const struct xfat *v, uint32_t c) { return v->heap_start + ((c - 2) << v->spc_shift); }
 static int clus_ok(const struct xfat *v, uint32_t c) { return c >= 2 && c - 2 < v->clusters; }
 
+static int fwin_flush(struct xfat *v);
+/* the FAT entry of cluster c in the window (loaded, never past the FAT's end); 0 = card error */
+static uint8_t *fat_ptr(struct xfat *v, uint32_t c)
+{
+    uint32_t sec = v->fat_start + c / 128;
+    if (sec >= v->fat_end) return 0;
+    if (v->fwin_first == ~0u || sec < v->fwin_first || sec >= v->fwin_first + v->fwin_n) {
+        if (fwin_flush(v)) return 0;
+        uint32_t n = v->fat_end - sec < XFAT_FATWIN ? v->fat_end - sec : XFAT_FATWIN;
+        if (v->io->read(v->io->ctx, sec, n, v->fwin)) { v->fwin_first = ~0u; return 0; }
+        v->fwin_first = sec; v->fwin_n = n;
+    }
+    return v->fwin + (sec - v->fwin_first) * 512 + (c % 128) * 4;
+}
 /* the next cluster in a FAT chain; 0 = end, bad, unreadable */
 static uint32_t fat_next(struct xfat *v, uint32_t c)
 {
-    uint32_t sec = v->fat_start + c / 128;
-    if (v->fwin_first == ~0u || sec < v->fwin_first || sec >= v->fwin_first + XFAT_FATWIN) {
-        if (v->io->read(v->io->ctx, sec, XFAT_FATWIN, v->fwin)) { v->fwin_first = ~0u; return 0; }
-        v->fwin_first = sec;
-    }
-    uint32_t n = le32(v->fwin + (sec - v->fwin_first) * 512 + (c % 128) * 4);
+    uint8_t *p = fat_ptr(v, c);
+    if (!p) return 0;
+    uint32_t n = le32(p);
     return clus_ok(v, n) ? n : 0;
 }
 
@@ -132,6 +144,12 @@ int xfat_open(struct xfat *v, struct hdf_io *io)
     v->spc_shift = shift;
     v->clusters = count;
     v->root = root;
+    v->nfats = nfats;
+    v->bm_lo = ~0u;
+    v->fat_end = v->fat_start + fat_len;
+    if (v->flags & 2) v->ro = "the volume was not cleanly removed: check it on a PC first";
+    else if (v->flags & 4) v->ro = "the volume reports a media failure";
+    else if (nfats != 1) v->ro = "two FATs (TexFAT): not written here";
 
     /* the volume label and the Allocation Bitmap, from the root directory */
     v->nfree = ~0u;
@@ -141,6 +159,7 @@ int xfat_open(struct xfat *v, struct hdf_io *io)
         const uint8_t *p;
         if (entry(v, &d, i, &p) || p[0] == T_END) break;
         if (p[0] == T_BITMAP && !(p[1] & 1) && !v->bm_first) { v->bm_first = le32(p + 20); v->bm_len = le64(p + 24); }
+        if (p[0] == T_UPCASE && !v->up_first) { v->up_first = le32(p + 20); v->up_len = le64(p + 24); }
         if (p[0] == T_LABEL && !v->label[0]) {
             uint32_t n = p[1] > 11 ? 11 : p[1];
             for (uint32_t k = 0; k < n; k++) { uint32_t ch = le16(p + 2 + 2 * k); v->label[k] = (char)(ch < 0x100 ? ch : '?'); }
@@ -159,6 +178,8 @@ void xfat_close(struct xfat *v)
     if (v->fwin) v->io->free(v->io->ctx, v->fwin, XFAT_FATWIN * 512);
     if (v->bounce) v->io->free(v->io->ctx, v->bounce, 512);
     if (v->dirs) v->io->free(v->io->ctx, v->dirs, v->capdirs * sizeof *v->dirs);
+    if (v->bm) v->io->free(v->io->ctx, v->bm, (uint32_t)v->bm_len);
+    v->bm = 0;
     v->sec = v->fwin = v->bounce = 0;
     v->dirs = 0; v->ndirs = v->capdirs = 0;
 }
@@ -373,7 +394,6 @@ int ffs_init_exfat(struct ffs *v, struct xfat *x)
     return xd_note(x, x->root, x->root, 0, 0, 0);
 }
 void xfs_done(struct ffs *v) { (void)v; }
-int xfs_sync(struct ffs *v) { int e = v->err; v->err = 0; return e; }
 void xfs_set_io(struct ffs *v, struct hdf_io *io) { v->x->io = io; }
 uint32_t xfs_cluster_bytes(const struct ffs *v) { return (uint32_t)512 << v->x->spc_shift; }
 uint32_t xfs_clusters(const struct ffs *v) { return v->x->clusters; }
@@ -463,19 +483,6 @@ int xfs_resolve(struct ffs *v, const char *path, uint32_t *dir, struct ffs_ent *
     return 0;
 }
 
-/* writing: stage 3 */
-int xfs_create(struct ffs *v, uint32_t dir, const char *name, uint32_t len, int isdir, struct ffs_ent *o)
-{ (void)v; (void)dir; (void)name; (void)len; (void)isdir; (void)o; return FFS_WP; }
-int xfs_delete(struct ffs *v, const struct ffs_ent *e) { (void)v; (void)e; return FFS_WP; }
-int xfs_rename(struct ffs *v, const struct ffs_ent *e, uint32_t ndir, const char *name, uint32_t len, struct ffs_ent *o)
-{ (void)v; (void)e; (void)ndir; (void)name; (void)len; (void)o; return FFS_WP; }
-int xfs_set_attr(struct ffs *v, struct ffs_ent *e, uint8_t attr) { (void)v; (void)e; (void)attr; return FFS_WP; }
-int xfs_set_date(struct ffs *v, struct ffs_ent *e, uint16_t date, uint16_t time) { (void)v; (void)e; (void)date; (void)time; return FFS_WP; }
-int xfs_flush_file(struct ffs *v, struct ffs_file *h) { (void)v; return h->dirty ? FFS_WP : 0; }
-int32_t xfs_write(struct ffs *v, struct ffs_file *h, uint32_t pos, const void *buf, uint32_t n, int *err)
-{ (void)v; (void)h; (void)pos; (void)buf; (void)n; *err = FFS_WP; return 0; }
-int xfs_truncate(struct ffs *v, struct ffs_file *h, uint32_t size) { (void)v; (void)h; (void)size; return FFS_WP; }
-
 /* the file's ci-th cluster, 0 = past its clusters */
 static uint32_t file_clus(struct xfat *x, struct ffs_file *h, uint32_t ci)
 {
@@ -543,4 +550,617 @@ int xfs_free_clusters(struct ffs *v, uint32_t *n)
     }
     *n = x->nfree;
     return 0;
+}
+
+/* ---- writing ---------------------------------------------------------------------------------- */
+#define EOC 0xffffffffu
+
+static void put16(uint8_t *p, uint32_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); }
+static void put32(uint8_t *p, uint32_t v) { put16(p, v & 0xffff); put16(p + 2, v >> 16); }
+static void put64(uint8_t *p, uint64_t v) { put32(p, (uint32_t)v); put32(p + 4, (uint32_t)(v >> 32)); }
+static uint32_t cbytes(const struct xfat *x) { return (uint32_t)512 << x->spc_shift; }
+static uint32_t nclus(const struct xfat *x, uint64_t bytes) { return (uint32_t)((bytes + cbytes(x) - 1) >> (9 + x->spc_shift)); }
+
+static int werr(struct xfat *x, int r)
+{
+    int e = r == -2 ? FFS_WP : FFS_IO;
+    if (!x->err) x->err = e;
+    return e;
+}
+static int wsec(struct xfat *x, uint32_t sec, uint32_t n, const void *buf)
+{
+    if (!x->io->write) return werr(x, -2);
+    if (buf != x->sec && x->sec_no != ~0u && x->sec_no - sec < n) x->sec_no = ~0u;   /* the cached directory sector is older */
+    int r = x->io->write(x->io->ctx, sec, n, buf);
+    return r ? werr(x, r) : 0;
+}
+
+/* VolumeDirty on the card while changes are on their way (outside the boot checksum) */
+static int set_dirty(struct xfat *x, int on)
+{
+    if (x->dirty_on_card == on) return 0;
+    if (x->io->read(x->io->ctx, x->part_start, 1, x->bounce)) return werr(x, -1);
+    uint32_t f = le16(x->bounce + 106);
+    put16(x->bounce + 106, on ? f | 2 : f & ~2u);
+    int r = wsec(x, x->part_start, 1, x->bounce);
+    if (!r) x->dirty_on_card = on;
+    return r;
+}
+
+static int fwin_flush(struct xfat *v)
+{
+    if (!v->fwin_dirty) return 0;
+    int r = set_dirty(v, 1);
+    if (!r) r = wsec(v, v->fwin_first, v->fwin_n, v->fwin);
+    if (!r) v->fwin_dirty = 0;
+    return r;
+}
+static int fat_set(struct xfat *x, uint32_t c, uint32_t val)
+{
+    uint8_t *p = fat_ptr(x, c);
+    if (!p) return x->err ? x->err : FFS_IO;
+    put32(p, val);
+    x->fwin_dirty = 1;
+    x->wc_first = 0;                                         /* chains changed: walk again */
+    return 0;
+}
+
+/* the whole Allocation Bitmap in memory (it follows its FAT chain) */
+static int bm_load(struct xfat *x)
+{
+    if (x->bm) return 0;
+    if (!x->bm_first || x->bm_len < (x->clusters + 7) / 8 || x->bm_len > 0x10000000u) return FFS_CORRUPT;
+    uint32_t len = (uint32_t)x->bm_len, done = 0, c = x->bm_first, spc = 1u << x->spc_shift;
+    uint8_t *b = x->io->alloc(x->io->ctx, len);
+    if (!b) return FFS_IO;
+    while (done < len && clus_ok(x, c)) {
+        for (uint32_t k = 0; k < spc && done < len; k++) {
+            if (x->io->read(x->io->ctx, clus_sec(x, c) + k, 1, x->bounce)) { x->io->free(x->io->ctx, b, len); return FFS_IO; }
+            uint32_t n = len - done < 512 ? len - done : 512;
+            copy(b + done, x->bounce, n);
+            done += n;
+        }
+        c = fat_next(x, c);
+    }
+    if (done < len) { x->io->free(x->io->ctx, b, len); return FFS_CORRUPT; }
+    x->bm = b;
+    uint32_t used = 0;
+    for (uint32_t i = 0; i < x->clusters; i++) used += (b[i >> 3] >> (i & 7)) & 1;
+    x->nfree = x->clusters - used;
+    return 0;
+}
+static int bm_get(const struct xfat *x, uint32_t c) { uint32_t i = c - 2; return (x->bm[i >> 3] >> (i & 7)) & 1; }
+static void bm_set(struct xfat *x, uint32_t c, int on)
+{
+    uint32_t i = c - 2;
+    uint8_t m = (uint8_t)(1u << (i & 7));
+    if (!!(x->bm[i >> 3] & m) == !!on) return;
+    if (on) { x->bm[i >> 3] |= m; x->nfree--; } else { x->bm[i >> 3] &= (uint8_t)~m; x->nfree++; }
+    uint32_t b = i >> 3;
+    if (x->bm_lo == ~0u || b < x->bm_lo) x->bm_lo = b;
+    if (x->bm_lo == ~0u || b + 1 > x->bm_hi) x->bm_hi = b + 1;
+}
+static int bm_flush(struct xfat *x)
+{
+    if (x->bm_lo == ~0u) return 0;
+    int r = set_dirty(x, 1);
+    if (r) return r;
+    uint32_t cb = cbytes(x), len = (uint32_t)x->bm_len;
+    for (uint32_t off = x->bm_lo & ~511u; off < x->bm_hi; off += 512) {
+        uint32_t ci = off / cb, c = x->bm_first;                  /* the bitmap's ci-th cluster */
+        for (uint32_t k = 0; k < ci && c; k++) c = fat_next(x, c);
+        if (!clus_ok(x, c)) return werr(x, -1);
+        uint32_t sec = clus_sec(x, c) + (off % cb) / 512;
+        if (off + 512 <= len && !((uintptr_t)(x->bm + off) & 3)) r = wsec(x, sec, 1, x->bm + off);
+        else {
+            zero(x->bounce, 512);
+            copy(x->bounce, x->bm + off, len - off < 512 ? len - off : 512);
+            r = wsec(x, sec, 1, x->bounce);
+        }
+        if (r) return r;
+    }
+    x->bm_lo = ~0u; x->bm_hi = 0;
+    return 0;
+}
+/* a free cluster, near want if it can be (0: the hint) */
+static int alloc_clus(struct xfat *x, uint32_t want, uint32_t *out)
+{
+    if (!x->nfree) return FFS_FULL;
+    uint32_t c = clus_ok(x, want) ? want : (clus_ok(x, x->hint) ? x->hint : 2);
+    for (uint32_t n = 0; n < x->clusters; n++, c++) {
+        if (!clus_ok(x, c)) c = 2;
+        if (!bm_get(x, c)) { bm_set(x, c, 1); x->hint = c + 1; *out = c; return 0; }
+    }
+    return FFS_FULL;
+}
+/* new clusters' contents: zeros (for directories) */
+static int zero_clus(struct xfat *x, uint32_t c)
+{
+    zero(x->bounce, 512);
+    for (uint32_t k = 0; k < (1u << x->spc_shift); k++) { int r = wsec(x, clus_sec(x, c) + k, 1, x->bounce); if (r) return r; }
+    return 0;
+}
+
+/* the up-case table for U+0000..U+00FF (Latin-1, what Amiga names hold) */
+static int up_load(struct xfat *x)
+{
+    for (int i = 0; i < 256; i++) x->up[i] = (uint16_t)(i >= 'a' && i <= 'z' ? i - 32 : i);
+    if (!x->up_first) return FFS_CORRUPT;
+    uint32_t c = x->up_first, spc = 1u << x->spc_shift, pos = 0, ident = 0, want_count = 0;
+    uint64_t left = x->up_len;
+    while (pos < 256 && left >= 2 && clus_ok(x, c)) {
+        for (uint32_t k = 0; k < spc && pos < 256 && left >= 2; k++) {
+            if (x->io->read(x->io->ctx, clus_sec(x, c) + k, 1, x->bounce)) return FFS_IO;
+            for (uint32_t i = 0; i < 512 && pos < 256 && left >= 2; i += 2, left -= 2) {
+                uint32_t v = le16(x->bounce + i);
+                if (want_count) { ident = v; want_count = 0; while (ident-- && pos < 256) { x->up[pos] = (uint16_t)pos; pos++; } }
+                else if (v == 0xffff) want_count = 1;           /* a run of characters that are their own upper case */
+                else x->up[pos++] = (uint16_t)v;
+            }
+        }
+        c = fat_next(x, c);
+    }
+    return 0;
+}
+
+const char *xfat_writable(struct xfat *x)
+{
+    if (x->ro) return x->ro;
+    if (!x->io->write) return x->ro = "the card is read-only";
+    if (up_load(x)) return x->ro = "no up-case table";
+    if (bm_load(x)) return x->ro = "the allocation bitmap cannot be read";
+    return 0;
+}
+
+static uint16_t name_hash(const struct xfat *x, const char *name, uint32_t len)
+{
+    uint16_t h = 0;
+    for (uint32_t i = 0; i < len; i++) {
+        uint16_t u = x->up[(uint8_t)name[i]];
+        h = (uint16_t)(((h & 1) ? 0x8000 : 0) + (h >> 1) + (u & 0xff));
+        h = (uint16_t)(((h & 1) ? 0x8000 : 0) + (h >> 1) + (u >> 8));
+    }
+    return h;
+}
+static int name_ok(const char *n, uint32_t len)
+{
+    if (!len || len > FFS_NAME - 1) return 0;
+    for (uint32_t i = 0; i < len; i++) {
+        uint8_t c = (uint8_t)n[i];
+        if (c < 32 || c == '"' || c == '*' || c == '/' || c == ':' || c == '<' || c == '>' || c == '?' || c == '\\' || c == '|') return 0;
+    }
+    return 1;
+}
+
+/* entries [at, at + n) of a directory: read into buf / written from buf */
+static int get_ents(struct xfat *x, const struct xfat_dir *d, uint32_t at, uint8_t *buf, uint32_t n)
+{
+    for (uint32_t k = 0; k < n; k++) {
+        const uint8_t *p;
+        int r = entry(x, d, at + k, &p);
+        if (r) return xerr(r == -1 ? -3 : r);
+        copy(buf + 32 * k, p, 32);
+    }
+    return 0;
+}
+/* where entry idx of a directory is on the card (no sector read); 0 ok */
+static int ent_loc(struct xfat *x, const struct xfat_dir *d, uint32_t idx, uint32_t *sec, uint32_t *off)
+{
+    uint64_t o = (uint64_t)idx * 32;
+    uint32_t cshift = 9 + x->spc_shift;
+    if (d->size && o >= d->size) return FFS_CORRUPT;
+    uint32_t c = dir_clus(x, d, (uint32_t)(o >> cshift));
+    if (!c) return FFS_CORRUPT;
+    uint32_t within = (uint32_t)(o & ((1u << cshift) - 1));
+    *sec = clus_sec(x, c) + within / 512;
+    *off = within % 512;
+    return 0;
+}
+static int put_ents(struct xfat *x, const struct xfat_dir *d, uint32_t at, const uint8_t *buf, uint32_t n)
+{
+    uint32_t cur = ~0u;
+    for (uint32_t k = 0; k < n; k++) {
+        uint32_t sec, off;
+        int r = ent_loc(x, d, at + k, &sec, &off);
+        if (r) return r;
+        if (sec != cur) {
+            if (cur != ~0u && (r = wsec(x, cur, 1, x->sec))) return r;
+            if ((r = read_sec(x, sec))) return xerr(r);
+            cur = sec;
+        }
+        copy(x->sec + off, buf + 32 * k, 32);
+    }
+    return cur != ~0u ? wsec(x, cur, 1, x->sec) : 0;
+}
+static void set_sum(uint8_t *buf, uint32_t n)
+{
+    uint16_t s = 0;
+    for (uint32_t k = 0; k < n; k++)
+        for (int i = 0; i < 32; i++) {
+            if (k == 0 && (i == 2 || i == 3)) continue;
+            s = (uint16_t)(((s & 1) ? 0x8000 : 0) + (s >> 1) + buf[32 * k + i]);
+        }
+    put16(buf + 2, s);
+}
+/* an entry set as it is on the card (n entries); 0 ok */
+static int read_set(struct xfat *x, uint32_t dirkey, uint32_t pos, uint8_t *buf, uint32_t *n)
+{
+    struct xfat_dir d;
+    int r = xd_dir(x, dirkey, &d);
+    if (r) return r;
+    if ((r = get_ents(x, &d, pos, buf, 1))) return r;
+    if (buf[0] != T_FILE || buf[1] < 2 || buf[1] > 18) return FFS_CORRUPT;
+    *n = 1u + buf[1];
+    if ((r = get_ents(x, &d, pos + 1, buf + 32, *n - 1))) return r;
+    return buf[32] == T_STREAM ? 0 : FFS_CORRUPT;
+}
+/* write a changed set: what it points to (bitmap, FAT) goes to the card first */
+static int write_set(struct xfat *x, uint32_t dirkey, uint32_t pos, uint8_t *buf, uint32_t n)
+{
+    struct xfat_dir d;
+    int r = xd_dir(x, dirkey, &d);
+    if (r) return r;
+    set_sum(buf, n);
+    if ((r = bm_flush(x)) || (r = fwin_flush(x)) || (r = set_dirty(x, 1))) return r;
+    return put_ents(x, &d, pos, buf, n);
+}
+
+/* the last of k clusters from first (k >= 1) */
+static uint32_t last_clus(struct xfat *x, uint32_t first, uint32_t k, int nofat)
+{
+    if (nofat) return first + k - 1;
+    uint32_t c = first;
+    for (uint32_t i = 1; i < k && c; i++) c = fat_next(x, c);
+    return c;
+}
+/* grow a chain of k clusters (0: none yet) by one; *nofat and *first follow */
+static int grow_chain(struct xfat *x, uint32_t *first, uint32_t k, int *nofat, uint32_t *added)
+{
+    uint32_t c;
+    int r;
+    if (!k) {
+        if ((r = alloc_clus(x, 0, &c))) return r;
+        *first = c; *nofat = 1; *added = c;
+        return 0;
+    }
+    uint32_t last = last_clus(x, *first, k, *nofat);
+    if (!clus_ok(x, last)) return FFS_CORRUPT;
+    if ((r = alloc_clus(x, last + 1, &c))) return r;
+    if (*nofat && c != last + 1) {                               /* not next to it: a FAT chain from now on */
+        for (uint32_t i = 0; i + 1 < k; i++) if ((r = fat_set(x, *first + i, *first + i + 1))) return r;
+        *nofat = 0;
+    }
+    if (!*nofat) {
+        if ((r = fat_set(x, last, c)) || (r = fat_set(x, c, EOC))) return r;
+    }
+    *added = c;
+    return 0;
+}
+
+/* a directory one cluster longer (its new entries zero) */
+static int grow_dir(struct ffs *v, uint32_t key)
+{
+    struct xfat *x = v->x;
+    struct xdir *k = xd_get(x, key);
+    if (!k) return FFS_CORRUPT;
+    uint32_t first = key, nk, c;
+    int nofat = key == x->root ? 0 : (int)k->nofat, r;
+    if (key == x->root) { nk = 1; for (uint32_t q = fat_next(x, key); q; q = fat_next(x, q)) nk++; }
+    else nk = nclus(x, k->size);
+    if ((r = grow_chain(x, &first, nk, &nofat, &c))) return r;
+    if ((r = zero_clus(x, c))) return r;
+    if (key == x->root) return 0;
+    /* the directory's own entry in its parent: its new size */
+    uint8_t set[19 * 32];
+    uint32_t n;
+    if ((r = read_set(x, k->parent, k->pos, set, &n))) return r;
+    uint64_t size = (uint64_t)(nk + 1) * cbytes(x);
+    set[32 + 1] = (uint8_t)(1 | (nofat ? 2 : 0));
+    put64(set + 32 + 8, size); put64(set + 32 + 24, size);
+    if ((r = write_set(x, k->parent, k->pos, set, n))) return r;
+    k->size = size; k->nofat = (uint32_t)nofat;
+    x->wc_first = 0;
+    return 0;
+}
+
+/* need free entries in a row in a directory (it grows if it must): where */
+static int find_slots(struct ffs *v, uint32_t key, uint32_t need, uint32_t *at)
+{
+    struct xfat *x = v->x;
+    for (int grown = 0; grown < 4; grown++) {
+        struct xfat_dir d;
+        int r = xd_dir(x, key, &d);
+        if (r) return r;
+        uint32_t run = 0, start = 0;
+        for (uint32_t idx = 0; ; idx++) {
+            const uint8_t *p;
+            r = entry(x, &d, idx, &p);
+            if (r == -1) break;
+            if (r) return xerr(r);
+            if (p[0] & 0x80) { run = 0; continue; }
+            if (!run) start = idx;
+            if (++run == need) { *at = start; return 0; }
+        }
+        if ((r = grow_dir(v, key))) return r;
+    }
+    return FFS_DIRFULL;
+}
+
+static void stamp(uint8_t *f, uint32_t ts, int created)
+{
+    if (created) put32(f + 8, ts);
+    put32(f + 12, ts); put32(f + 16, ts);
+    if (created) f[20] = 0;
+    f[21] = 0; f[22] = f[23] = f[24] = 0;                       /* no UTC offset known */
+}
+static void put_name(const struct xfat *x, uint8_t *set, const char *name, uint32_t len)
+{
+    set[32 + 3] = (uint8_t)len;
+    put16(set + 32 + 4, name_hash(x, name, len));
+    for (uint32_t k = 0; k * 15 < len; k++) {
+        uint8_t *e = set + 64 + 32 * k;
+        zero(e, 32);
+        e[0] = T_NAME;
+        for (uint32_t i = 0; i < 15 && k * 15 + i < len; i++) put16(e + 2 + 2 * i, (uint8_t)name[k * 15 + i]);
+    }
+}
+
+static int must_write(struct ffs *v) { return v->x->ro ? FFS_WP : 0; }
+
+int xfs_create(struct ffs *v, uint32_t dir, const char *name, uint32_t len, int isdir, struct ffs_ent *o)
+{
+    struct xfat *x = v->x;
+    int r;
+    if ((r = must_write(v))) return r;
+    if (!name_ok(name, len)) return FFS_BADNAME;
+    struct ffs_ent e;
+    if ((r = xfs_find(v, dir, name, len, &e)) != FFS_END) return r ? r : FFS_EXISTS;
+    uint32_t nn = (len + 14) / 15, n = 2 + nn, at, c = 0;
+    if (isdir) {                                                 /* its first cluster, empty, before the entry */
+        if ((r = alloc_clus(x, 0, &c)) || (r = zero_clus(x, c))) return r;
+    }
+    if ((r = find_slots(v, dir, n, &at))) { if (c) bm_set(x, c, 0); return r; }
+    uint8_t set[19 * 32];
+    zero(set, sizeof set);
+    set[0] = T_FILE; set[1] = (uint8_t)(n - 1);
+    put16(set + 4, isdir ? XFAT_A_DIR : XFAT_A_ARCH);
+    stamp(set, ((uint32_t)v->date << 16) | v->time, 1);
+    set[32] = T_STREAM;
+    set[32 + 1] = (uint8_t)(isdir ? 3 : 1);                      /* AllocationPossible (+ NoFatChain) */
+    if (isdir) { put32(set + 32 + 20, c); put64(set + 32 + 8, cbytes(x)); put64(set + 32 + 24, cbytes(x)); }
+    put_name(x, set, name, len);
+    if ((r = write_set(x, dir, at, set, n))) return r;
+    uint32_t pos = at;
+    return xfs_next(v, dir, &pos, o);
+}
+
+int xfs_delete(struct ffs *v, const struct ffs_ent *e)
+{
+    struct xfat *x = v->x;
+    int r;
+    if ((r = must_write(v))) return r;
+    if (e->attr & FFS_A_DIR) {
+        uint32_t pos = 0;
+        struct ffs_ent c;
+        if ((r = xfs_next(v, e->first, &pos, &c)) != FFS_END) return r ? r : FFS_NOTEMPTY;
+    }
+    uint8_t set[19 * 32];
+    uint32_t n;
+    if ((r = read_set(x, e->dir, e->idx, set, &n))) return r;
+    if (le32(set + 32 + 20) != e->first) return FFS_CORRUPT;
+    struct xfat_dir d;
+    if ((r = xd_dir(x, e->dir, &d))) return r;
+    for (uint32_t k = 0; k < n; k++) set[32 * k] &= 0x7f;      /* not in use */
+    if ((r = set_dirty(x, 1)) || (r = put_ents(x, &d, e->idx, set, n))) return r;
+    /* then its clusters are free */
+    if (e->first && (set[32 + 1] & 1)) {
+        uint32_t k = nclus(x, e->xsize), c = e->first;
+        for (uint32_t i = 0; i < k && clus_ok(x, c); i++) {
+            bm_set(x, c, 0);
+            c = e->xnofat ? c + 1 : fat_next(x, c);
+        }
+    }
+    return 0;
+}
+
+int xfs_rename(struct ffs *v, const struct ffs_ent *e, uint32_t ndir, const char *name, uint32_t len, struct ffs_ent *o)
+{
+    struct xfat *x = v->x;
+    int r;
+    if ((r = must_write(v))) return r;
+    if (!name_ok(name, len)) return FFS_BADNAME;
+    if (e->attr & FFS_A_DIR)                                     /* not into itself */
+        for (uint32_t d = ndir, g = 0; g < 10000; g++) {
+            if (d == e->first) return FFS_LOOP;
+            uint32_t p;
+            if (d == x->root || xfs_parent(v, d, &p)) break;
+            d = p;
+        }
+    struct ffs_ent t;
+    if ((r = xfs_find(v, ndir, name, len, &t)) == 0 && !(t.dir == e->dir && t.idx == e->idx)) return FFS_EXISTS;
+    if (r && r != FFS_END) return r;
+    uint8_t set[19 * 32];
+    uint32_t n;
+    if ((r = read_set(x, e->dir, e->idx, set, &n))) return r;
+    uint32_t nn = (len + 14) / 15, nn_ = 2 + nn;
+    struct xfat_dir od;
+    if ((r = xd_dir(x, e->dir, &od))) return r;
+    if (ndir == e->dir && nn_ <= n) {                            /* in place */
+        uint8_t old[19 * 32];
+        copy(old, set, n * 32);
+        set[1] = (uint8_t)(nn_ - 1);
+        put_name(x, set, name, len);
+        for (uint32_t k = nn_; k < n; k++) { copy(set + 32 * k, old + 32 * k, 32); set[32 * k] &= 0x7f; }
+        set_sum(set, nn_);
+        if ((r = bm_flush(x)) || (r = fwin_flush(x)) || (r = set_dirty(x, 1)) || (r = put_ents(x, &od, e->idx, set, n))) return r;
+        uint32_t pos = e->idx;
+        return xfs_next(v, ndir, &pos, o);
+    }
+    /* a new set where it goes, then the old one let go */
+    uint32_t at;
+    if ((r = find_slots(v, ndir, nn_, &at))) return r;
+    if (ndir == e->dir && (r = read_set(x, e->dir, e->idx, set, &n))) return r;   /* the directory may have grown */
+    uint8_t ns[19 * 32];
+    zero(ns, sizeof ns);
+    copy(ns, set, 64);
+    ns[1] = (uint8_t)(nn_ - 1);
+    put_name(x, ns, name, len);
+    if ((r = write_set(x, ndir, at, ns, nn_))) return r;
+    for (uint32_t k = 0; k < n; k++) set[32 * k] &= 0x7f;
+    if ((r = put_ents(x, &od, e->idx, set, n))) return r;
+    uint32_t pos = at;
+    return xfs_next(v, ndir, &pos, o);
+}
+
+static int edit_file_entry(struct ffs *v, struct ffs_ent *e, int attr, uint32_t ts)
+{
+    struct xfat *x = v->x;
+    int r;
+    if ((r = must_write(v))) return r;
+    uint8_t set[19 * 32];
+    uint32_t n;
+    if ((r = read_set(x, e->dir, e->idx, set, &n))) return r;
+    if (attr >= 0) put16(set + 4, (le16(set + 4) & XFAT_A_DIR) | ((uint32_t)attr & ~(uint32_t)XFAT_A_DIR & 0x37));
+    else { put32(set + 12, ts); set[21] = 0; set[23] = 0; }
+    if ((r = write_set(x, e->dir, e->idx, set, n))) return r;
+    if (attr >= 0) e->attr = (uint8_t)le16(set + 4);
+    else { e->date = (uint16_t)(ts >> 16); e->time = (uint16_t)ts; }
+    return 0;
+}
+int xfs_set_attr(struct ffs *v, struct ffs_ent *e, uint8_t attr) { return edit_file_entry(v, e, attr, 0); }
+int xfs_set_date(struct ffs *v, struct ffs_ent *e, uint16_t date, uint16_t time) { return edit_file_entry(v, e, -1, ((uint32_t)date << 16) | time); }
+
+int xfs_flush_file(struct ffs *v, struct ffs_file *h)
+{
+    struct xfat *x = v->x;
+    if (!h->dirty) return 0;
+    int r;
+    if ((r = must_write(v))) return r;
+    uint8_t set[19 * 32];
+    uint32_t n;
+    if ((r = read_set(x, h->e.dir, h->e.idx, set, &n))) return r;
+    uint8_t *st = set + 32;
+    st[1] = (uint8_t)(1 | (h->e.first && h->e.xnofat ? 2 : 0));
+    put32(st + 20, h->e.first);
+    put64(st + 8, h->e.xvalid);
+    put64(st + 24, h->e.xsize);
+    put16(set + 4, le16(set + 4) | XFAT_A_ARCH);
+    stamp(set, ((uint32_t)v->date << 16) | v->time, 0);
+    if ((r = write_set(x, h->e.dir, h->e.idx, set, n))) return r;
+    h->e.attr = (uint8_t)le16(set + 4);
+    h->e.date = v->date; h->e.time = v->time;
+    h->dirty = 0;
+    return 0;
+}
+
+/* clusters for the file's first `need` (its DataLength follows separately) */
+static int ensure(struct xfat *x, struct ffs_file *h, uint32_t need)
+{
+    uint32_t k = h->e.first ? nclus(x, h->e.xsize) : 0;
+    if (h->e.first && !k) k = 1;
+    int nofat = h->e.first ? h->e.xnofat : 1;
+    while (k < need) {
+        uint32_t c, first = h->e.first;
+        int r = grow_chain(x, &first, k, &nofat, &c);
+        if (r) return r;
+        if (!h->e.first) h->e.first = first;
+        h->e.xnofat = (uint8_t)nofat;
+        k++;
+        h->e.xsize = (uint64_t)k * cbytes(x) < h->e.xsize ? h->e.xsize : (uint64_t)(k - 1) * cbytes(x) + 1;
+        h->dirty = 1;
+    }
+    h->ci = ~0u;
+    return 0;
+}
+
+static int put_bytes(struct ffs *v, struct ffs_file *h, uint32_t pos, const uint8_t *p, uint32_t n)
+{
+    struct xfat *x = v->x;
+    uint32_t cshift = 9 + x->spc_shift;
+    while (n) {
+        uint32_t c = file_clus(x, h, pos >> cshift);
+        if (!c) return FFS_CORRUPT;
+        uint32_t in = pos & ((1u << cshift) - 1), sec = clus_sec(x, c) + in / 512, off = pos & 511;
+        uint32_t avail = (1u << cshift) - in;
+        if (avail > n) avail = n;
+        int r;
+        if (!off && avail >= 512 && p && !((uintptr_t)p & 3)) {
+            avail &= ~511u;
+            r = wsec(x, sec, avail / 512, p);
+        } else {
+            if (avail > 512 - off) avail = 512 - off;
+            if (off || avail < 512) { if (x->io->read(x->io->ctx, sec, 1, x->bounce)) return werr(x, -1); }
+            if (p) copy(x->bounce + off, p, avail); else zero(x->bounce + off, avail);
+            r = wsec(x, sec, 1, x->bounce);
+        }
+        if (r) return r;
+        if (p) p += avail;
+        pos += avail; n -= avail;
+    }
+    return 0;
+}
+
+int32_t xfs_write(struct ffs *v, struct ffs_file *h, uint32_t pos, const void *buf, uint32_t n, int *err)
+{
+    struct xfat *x = v->x;
+    *err = 0;
+    int r;
+    if ((r = must_write(v))) { *err = r; return 0; }
+    if (!n) return 0;
+    if (pos > 0xffffffffu - n) n = 0xffffffffu - pos;           /* AmigaDOS: 32-bit sizes */
+    uint64_t end = (uint64_t)pos + n;
+    uint64_t oldsize = h->e.xsize;
+    if ((r = ensure(x, h, nclus(x, end)))) {                     /* a full card: as much as fits */
+        uint64_t room = (uint64_t)(h->e.first ? nclus(x, h->e.xsize) : 0) * cbytes(x);
+        *err = r;
+        if (room <= pos) { h->e.xsize = oldsize > room ? room : oldsize; return 0; }
+        n = (uint32_t)(room - pos); end = room;
+    }
+    if (pos > h->e.xvalid && (r = put_bytes(v, h, (uint32_t)h->e.xvalid, 0, pos - (uint32_t)h->e.xvalid))) { *err = r; return 0; }
+    if ((r = put_bytes(v, h, pos, buf, n))) { *err = r; return 0; }
+    h->e.xsize = end > oldsize ? end : oldsize;
+    if (end > h->e.xvalid) h->e.xvalid = end;
+    h->e.size = (uint32_t)h->e.xsize;
+    h->dirty = 1;
+    return (int32_t)n;
+}
+
+int xfs_truncate(struct ffs *v, struct ffs_file *h, uint32_t size)
+{
+    struct xfat *x = v->x;
+    int r;
+    if ((r = must_write(v))) return r;
+    uint32_t newk = nclus(x, size), k = h->e.first ? nclus(x, h->e.xsize) : 0;
+    if (h->e.first && !k) k = 1;
+    if (newk > k) {
+        if ((r = ensure(x, h, newk))) return r;
+        h->e.xsize = size; h->e.size = size;
+        h->dirty = 1;
+        return 0;
+    }
+    /* smaller: the entry first, then the clusters it no longer has */
+    uint32_t first = h->e.first, nofat = h->e.xnofat;
+    h->e.xsize = size; h->e.size = size;
+    if (h->e.xvalid > size) h->e.xvalid = size;
+    if (!newk) { h->e.first = 0; h->e.xnofat = 0; }
+    h->dirty = 1;
+    if ((r = xfs_flush_file(v, h))) return r;
+    uint32_t c = first;
+    for (uint32_t i = 0; i < k && clus_ok(x, c); i++) {
+        uint32_t next = nofat ? c + 1 : fat_next(x, c);
+        if (i + 1 == newk && !nofat) { if ((r = fat_set(x, c, EOC))) return r; }
+        if (i >= newk) bm_set(x, c, 0);
+        c = next;
+    }
+    h->ci = ~0u;
+    return 0;
+}
+
+int xfs_sync(struct ffs *v)
+{
+    struct xfat *x = v->x;
+    if (!x->ro) { bm_flush(x); fwin_flush(x); if (!x->err) set_dirty(x, 0); }
+    int e = x->err ? x->err : v->err;
+    x->err = 0; v->err = 0;
+    return e;
 }

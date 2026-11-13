@@ -13,6 +13,11 @@
  *   D path / F path size crc32    (every entry; files read in 777-byte pieces)
  *   S free-clusters cluster-bytes
  *     exfat_test -w IMAGE
+ * and with -W, writing (the image is changed): a fixed sequence of creates, writes, renames,
+ * deletes, truncates through the ffs_* calls; prints E path size crc32 for every file it
+ * leaves, X path for every name it removed, then "DONE writes"; with a budget the card
+ * "loses power" after that many sector writes (they fail from then on):
+ *     exfat_test -W IMAGE [BUDGET]
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,6 +30,15 @@ static int rd(void *ctx, uint32_t sec, uint32_t n, void *buf)
     (void)ctx;
     if (fseeko(img, (off_t)sec * 512, SEEK_SET)) return -1;
     return fread(buf, 512, n, img) == n ? 0 : -1;
+}
+static long budget = -1, nwrites;
+static int wr(void *ctx, uint32_t sec, uint32_t n, const void *buf)
+{
+    (void)ctx;
+    if (budget >= 0 && nwrites >= budget) return -1;          /* the power is off */
+    nwrites++;
+    if (fseeko(img, (off_t)sec * 512, SEEK_SET)) return -1;
+    return fwrite(buf, 512, n, img) == n ? 0 : -1;
 }
 static void *al(void *ctx, uint32_t n) { (void)ctx; return calloc(1, n); }
 static void fr(void *ctx, void *p, uint32_t n) { (void)ctx; (void)n; free(p); }
@@ -94,8 +108,160 @@ static void walk(struct ffs *v, uint32_t dir, const char *path, int depth)
     if (r != FFS_END) { printf("FAIL %s: ffs_next %d\n", path, r); fails++; }
 }
 
+/* ---- -W: writing --------------------------------------------------------------------------- */
+static struct ffs W;
+static uint32_t wroot;
+static uint8_t pat[1 << 20];
+static void fill(uint32_t seed) { for (uint32_t i = 0; i < sizeof pat; i++) { seed = seed * 1103515245u + 12345u; pat[i] = (uint8_t)(seed >> 16); } }
+static int dir_of(const char *path, uint32_t *d, const char **leaf)
+{
+    char tmp[512];
+    const char *sl = strrchr(path, '/');
+    *leaf = sl ? sl + 1 : path;
+    if (!sl) { *d = wroot; return 0; }
+    snprintf(tmp, sizeof tmp, "%.*s", (int)(sl - path), path);
+    struct ffs_ent e;
+    return ffs_resolve(&W, tmp, d, &e);
+}
+static int look(const char *path, struct ffs_ent *e)
+{
+    uint32_t d; const char *leaf;
+    if (dir_of(path, &d, &leaf)) return -1;
+    return ffs_find(&W, d, leaf, (uint32_t)strlen(leaf), e);
+}
+static int mk(const char *path, int isdir)
+{
+    uint32_t d; const char *leaf; struct ffs_ent e;
+    if (dir_of(path, &d, &leaf)) return -1;
+    int r = ffs_create(&W, d, leaf, (uint32_t)strlen(leaf), isdir, &e);
+    ffs_sync(&W);
+    return r;
+}
+/* write len bytes of pat (from seed) at pos, in pieces of chunk */
+static int put(const char *path, uint32_t pos, uint32_t len, uint32_t chunk, uint32_t seed)
+{
+    struct ffs_ent e;
+    if (look(path, &e)) return -1;
+    struct ffs_file h;
+    ffs_open(&h, &e);
+    fill(seed);
+    for (uint32_t at = 0; at < len; at += chunk) {
+        uint32_t n = len - at < chunk ? len - at : chunk;
+        int err;
+        if (ffs_write(&W, &h, pos + at, pat + at, n, &err) != (int32_t)n) return -1;
+    }
+    int r = ffs_flush_file(&W, &h);
+    ffs_sync(&W);
+    return r;
+}
+static int trunc_(const char *path, uint32_t size)
+{
+    struct ffs_ent e;
+    if (look(path, &e)) return -1;
+    struct ffs_file h;
+    ffs_open(&h, &e);
+    int r = ffs_truncate(&W, &h, size);
+    if (!r) r = ffs_flush_file(&W, &h);
+    ffs_sync(&W);
+    return r;
+}
+static int mv(const char *from, const char *to)
+{
+    struct ffs_ent e, o;
+    uint32_t d; const char *leaf;
+    if (look(from, &e) || dir_of(to, &d, &leaf)) return -1;
+    int r = ffs_rename(&W, &e, d, leaf, (uint32_t)strlen(leaf), &o);
+    ffs_sync(&W);
+    return r;
+}
+static int rm(const char *path)
+{
+    struct ffs_ent e;
+    if (look(path, &e)) return -1;
+    int r = ffs_delete(&W, &e);
+    ffs_sync(&W);
+    return r;
+}
+static void expect(const char *path)
+{
+    struct ffs_ent e;
+    if (look(path, &e)) { printf("FAIL %s: not found\n", path); fails++; return; }
+    struct ffs_file h;
+    ffs_open(&h, &e);
+    static uint8_t buf[1 << 16];
+    uint32_t c = 0, at = 0;
+    int32_t n;
+    while ((n = ffs_read(&W, &h, at, buf, sizeof buf)) > 0) { c = crc32(c, buf, (uint32_t)n); at += (uint32_t)n; }
+    printf("E %s %u %08x\n", path, e.size, c);
+}
+#define STEP(x) do { int r_ = (x); if (r_ && budget < 0) { printf("FAIL %s: %d\n", #x, r_); fails++; } } while (0)
+static int write_test(void)
+{
+    char p[256];
+    STEP(mk("New Dir", 1));
+    STEP(mk("New Dir/small.txt", 0)); STEP(put("New Dir/small.txt", 0, 100, 100, 1));
+    STEP(mk("New Dir/big.bin", 0)); STEP(put("New Dir/big.bin", 0, 300000, 7777, 2));
+    STEP(mk("New Dir/A name of ninety characters, which needs six File Name entries in exFAT, x.txt", 0));
+    STEP(put("New Dir/A name of ninety characters, which needs six File Name entries in exFAT, x.txt", 0, 5000, 5000, 3));
+    STEP(mk("New Dir/Gr\xfc\xdf" "e \xe4\xf6\xff.txt", 0)); STEP(put("New Dir/Gr\xfc\xdf" "e \xe4\xf6\xff.txt", 0, 10, 10, 4));
+    STEP(mk("New Dir/empty", 0));
+    /* two files growing in turns: contiguous, then a FAT chain */
+    STEP(mk("New Dir/turn A", 0)); STEP(mk("New Dir/turn B", 0));
+    for (int i = 0; i < 20; i++) { STEP(put("New Dir/turn A", (uint32_t)i * 4096, 4096, 4096, 100 + (uint32_t)i)); STEP(put("New Dir/turn B", (uint32_t)i * 4096, 4096, 4096, 200 + (uint32_t)i)); }
+    /* a directory that has to grow */
+    STEP(mk("Lots", 1));
+    for (int i = 0; i < 200; i++) { snprintf(p, sizeof p, "Lots/new file %03d.dat", i); STEP(mk(p, 0)); if (i % 10 == 0) STEP(put(p, 0, (uint32_t)i * 37 + 1, 999, 300 + (uint32_t)i)); }
+    /* renames */
+    STEP(mv("New Dir/small.txt", "New Dir/a much longer name than before for small.txt"));
+    STEP(mv("New Dir/big.bin", "Lots/big moved.bin"));
+    STEP(mk("New Dir/Sub", 1)); STEP(mk("New Dir/Sub/inner.txt", 0)); STEP(put("New Dir/Sub/inner.txt", 0, 1234, 1234, 5));
+    STEP(mv("New Dir/Sub", "Lots/Sub moved"));
+    if (budget < 0 && mv("Lots", "Lots/Sub moved/Lots") != FFS_LOOP) { printf("FAIL a folder into itself\n"); fails++; }
+    if (budget < 0 && mk("Lots/new file 001.dat", 0) != FFS_EXISTS) { printf("FAIL create an existing name\n"); fails++; }
+    if (budget < 0 && mk("New Dir/bad:name", 0) != FFS_BADNAME) { printf("FAIL a name exFAT cannot hold\n"); fails++; }
+    /* deletes */
+    for (int i = 0; i < 200; i += 3) { snprintf(p, sizeof p, "Lots/new file %03d.dat", i); STEP(rm(p)); }
+    if (budget < 0 && rm("Lots") != FFS_NOTEMPTY) { printf("FAIL delete a folder that is not empty\n"); fails++; }
+    STEP(mk("Gone", 1)); STEP(rm("Gone"));
+    /* sizes */
+    STEP(trunc_("New Dir/turn A", 30000));                     /* a FAT chain, shorter */
+    STEP(trunc_("New Dir/turn B", 0));
+    STEP(trunc_("New Dir/empty", 9000));                       /* longer: zeros (past ValidDataLength) */
+    STEP(put("a/b/c/note \xe9t\xe9.txt", 100, 200, 200, 6));  /* inside a file the PC made */
+    STEP(put("Many/zz last.txt", 70000, 5000, 5000, 7));       /* past its end */
+    /* attributes, dates */
+    struct ffs_ent e;
+    if (!look("New Dir/empty", &e)) { STEP(ffs_set_attr(&W, &e, FFS_A_RO | FFS_A_ARCH)); STEP(ffs_set_date(&W, &e, (uint16_t)((45 << 9) | (6 << 5) | 15), (uint16_t)((12 << 11) | (34 << 5) | 28))); ffs_sync(&W); }
+    if (budget >= 0) return 0;
+    const char *left[] = { "New Dir/a much longer name than before for small.txt", "Lots/big moved.bin",
+        "New Dir/A name of ninety characters, which needs six File Name entries in exFAT, x.txt", "New Dir/Gr\xfc\xdf" "e \xe4\xf6\xff.txt",
+        "New Dir/empty", "New Dir/turn A", "New Dir/turn B", "Lots/Sub moved/inner.txt", "a/b/c/note \xe9t\xe9.txt", "Many/zz last.txt", 0 };
+    for (int i = 0; left[i]; i++) expect(left[i]);
+    for (int i = 0; i < 200; i++) { snprintf(p, sizeof p, "Lots/new file %03d.dat", i); if (i % 3) expect(p); else printf("X %s\n", p); }
+    printf("X New Dir/small.txt\nX New Dir/big.bin\nX New Dir/Sub\nX Gone\n");
+    uint32_t fr_;
+    ffs_free_clusters(&W, &fr_);
+    printf("S %u\n", fr_);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
+    if (argc >= 3 && !strcmp(argv[1], "-W")) {
+        if (!(img = fopen(argv[2], "r+b"))) return 2;
+        if (argc > 3) budget = atol(argv[3]);
+        struct hdf_io io = { 0, rd, wr, al, fr, lg };
+        static struct xfat x;
+        if (xfat_open(&x, &io) || ffs_init_exfat(&W, &x)) { printf("NOEXFAT\n"); return 1; }
+        const char *why = xfat_writable(&x);
+        if (why) { printf("FAIL not writable: %s\n", why); return 1; }
+        wroot = x.root;
+        write_test();
+        ffs_sync(&W);
+        fclose(img);
+        printf("DONE %ld\n", nwrites);
+        return fails != 0;
+    }
     if (argc == 3 && !strcmp(argv[1], "-w")) {
         if (!(img = fopen(argv[2], "rb"))) return 2;
         struct hdf_io io = { 0, rd, 0, al, fr, lg };

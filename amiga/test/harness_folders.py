@@ -4,11 +4,14 @@
 config.txt, the ALICE68 folder, other folders and a mounted hardfile; a fake
 exec, expansion.library, dos.library and brcm-emmc.device.
 
-    harness_folders.py DEVICE.hunk DEVICE.elf WORKDIR [cardro] [exfat]
+    harness_folders.py DEVICE.hunk DEVICE.elf WORKDIR [cardro] [exfat | exfatrw]
 
 exfat: the folders (all but ALICE68) on an exFAT partition after the FAT32 one
 (mkfs.exfat, filled through exfat-fuse; needs root and losetup): mounted
-read-only, read through the same packets, every write refused.
+read-only, read through the same packets, every write refused; the partition
+itself is a volume too. exfatrw: the same with alice68.exfat=rw: files made,
+written, renamed, deleted, a comment kept in a .uaem sidecar, on a folder and on
+the partition's own volume; then fsck.exfat and exfat-fuse read the card back.
 
 Checks the boot nodes the device makes for the folders, then starts a
 handler (fold_start) and sends it DOS packets (fold_do): directory listing,
@@ -32,7 +35,8 @@ HEAP, HEAP_END = 0x400000, 0xC00000
 STACK = 0x200000
 hunk, elf, work = sys.argv[1:4]
 card_ro = 'cardro' in sys.argv[4:]
-exfat = 'exfat' in sys.argv[4:]
+exfatrw = 'exfatrw' in sys.argv[4:]
+exfat = 'exfat' in sys.argv[4:] or exfatrw
 env = dict(os.environ, MTOOLS_SKIP_CHECK='1', LC_ALL='C.UTF-8')
 
 def die(msg):
@@ -73,7 +77,7 @@ config = ('# the Pi\'s settings\n[pi4]\narm_64bit=1\n[all]\n'
           'alice68.folder=HDF:Hardfiles\n'
           'alice68.folder=NoSuchFolder\n'
           'alice68.folder=Games/readme.txt\n'
-          '  alice68.folder=ALICE68  \n')
+          '  alice68.folder=ALICE68  \n' + ('alice68.exfat=rw\n' if exfatrw else ''))
 open(os.path.join(src, 'config.txt'), 'w').write(config)
 if not exfat:
     subprocess.run(['mkfs.fat', '-F', '32', '-s', '1', '-C', img, '40000'], check=True, stdout=subprocess.DEVNULL)
@@ -88,7 +92,7 @@ else:
         return subprocess.run(['losetup', '-f', '--show', '-o', str(st * 512), '--sizelimit', str(n * 512), img],
                               check=True, capture_output=True).stdout.decode().strip()
     l1 = loopdev(P1, N1)
-    subprocess.run(['mkfs.fat', '-F', '32', '-s', '1', l1], check=True, stdout=subprocess.DEVNULL)
+    subprocess.run(['mkfs.fat', '-F', '32', '-s', '1', l1], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for top in ('ALICE68', 'config.txt'):
         subprocess.run(['mcopy', '-s', '-i', l1, os.path.join(src, top), '::/'], check=True, env=env)
     subprocess.run(['losetup', '-d', l1], check=True)
@@ -249,7 +253,7 @@ print('--- driver log ---\n' + logtxt.rstrip())
 # ---- the boot nodes -----------------------------------------------------------------------------
 fold = [b for b in boots if b['dev'] == 'alice68hdf.device' and b['unit'] >= 0x4000]
 got = [(b['name'], b['unit'] - 0x4000, b['pri']) for b in fold]
-want = [('SDF0', 0, -128), ('SDF1', 1, -128), ('SDF2', 2, -128), ('SDF3', 3, -128)]
+want = [('SDF0', 0, -128), ('SDF1', 1, -128), ('SDF2', 2, -128), ('SDF3', 3, -128)] + ([('SDF4', 4, -128)] if exfat else [])
 if got != want: die('folder boot nodes %s, want %s' % (got, want))
 for b in fold:
     dn = b['dn']
@@ -346,6 +350,47 @@ def readall(ctx, h, chunk):
 def write(ctx, h, data):
     mem.w_block(BUF, data); return pkt(ctx, ord('W'), h, BUF, len(data))
 
+if exfat:
+    want_line = 'exFAT partition: volume exFAT (SDF4:), not bootable' + ('' if exfatrw else ', read-only: alice68.exfat=rw in config.txt writes it')
+    chk(want_line in logtxt, 'log: %s' % want_line)
+    X4 = start(4)
+    chk(sorted(e['name'] for e in listdir(X4, ok(pkt(X4, LOCATE, 0, name(''), -2), 'Lock'))) == ['Disk.info', 'Games', 'HDF', 'Work'], 'the partition volume lists its root')
+if exfatrw:                                          # writing exFAT through the packets
+    ok(pkt(G, MKDIR, 0, name('Made here')), 'CreateDir on exFAT')
+    data = bytes(range(256)) * 300
+    h, r = openf(G, FINDOUTPUT, 'Made here/file \xe4.bin'); chk(h and write(G, h, data)[0] == len(data), 'write 76800 bytes'); ok(pkt(G, END, h), 'Close')
+    h, r = openf(G, FINDINPUT, 'Made here/FILE \xc4.BIN'); chk(h and readall(G, h, 1000) == data, 'read it back, another case'); ok(pkt(G, END, h), 'Close')
+    h, r = openf(G, FINDUPDATE, 'readme.txt'); write(G, h, b'HELLO'); ok(pkt(G, END, h), 'Close')
+    ok(pkt(G, RENAME, 0, name('Long File Name.txt'), 0, name('Made here/Moved, with a longer name than it had.txt')), 'Rename across folders')
+    ok(pkt(G, 28, 0, 0, name('readme.txt'), bstr('a comment on exFAT')), 'SetComment (a .uaem sidecar)')
+    ok(pkt(G, DELETE, 0, name('Sub/deep.bin')), 'Delete')
+    h, r = openf(X4, FINDOUTPUT, 'top level.txt'); write(X4, h, b'on the partition volume'); ok(pkt(X4, END, h), 'Close')
+    H3 = start(3)
+    err(openf(H3, FINDOUTPUT, 'raw.hdf')[1], 202, 'replace the mounted hardfile through a folder')
+    err(pkt(H3, DELETE, 0, name('raw.hdf')), 202, 'delete the mounted hardfile through a folder')
+    err(pkt(X4, DELETE, 0, name('HDF/raw.hdf')), 202, 'delete it through the partition volume')
+    f_ = fib(); ok(pkt(G, EXAMINE, ok(pkt(G, LOCATE, 0, name('readme.txt'), -2), 'Lock'), FIB >> 2), 'Examine')
+    chk(bytes(mem.r_block(FIB + 145, mem.r8(FIB + 144))) == b'a comment on exFAT', 'the comment reads back')
+    open(img, 'wb').write(card)
+    L = subprocess.run(['losetup', '-f', '--show', '-o', str(71680 * 512), img], capture_output=True, text=True, check=True).stdout.strip()
+    try:
+        fsck = subprocess.run(['fsck.exfat', '-n', L], capture_output=True, text=True)
+        chk(fsck.returncode == 0, 'fsck.exfat:\n' + fsck.stdout + fsck.stderr)
+        mnt = os.path.join(work, 'folders-mnt')
+        subprocess.run(['mount.exfat-fuse', '-o', 'ro', L, mnt], check=True, capture_output=True)
+        try:
+            rdf = lambda p: open(os.path.join(mnt, p), 'rb').read()
+            chk(rdf('Games/Made here/file \xe4.bin'.encode('latin-1').decode('latin-1')) == data, 'exfat-fuse: the written file')
+            chk(rdf('Games/readme.txt') == b'HELLO' + files['Games/readme.txt'][5:], 'exfat-fuse: the update')
+            chk(rdf('Games/Made here/Moved, with a longer name than it had.txt') == files['Games/Long File Name.txt'], 'exfat-fuse: the moved file')
+            chk(rdf('Games/readme.txt.uaem').endswith(b' a comment on exFAT\n'), 'exfat-fuse: the sidecar')
+            chk(not os.path.exists(os.path.join(mnt, 'Games/Sub/deep.bin')), 'exfat-fuse: the deleted file is gone')
+            chk(rdf('top level.txt') == b'on the partition volume', 'exfat-fuse: written on the partition volume')
+        finally:
+            subprocess.run(['umount', mnt])
+    finally:
+        subprocess.run(['losetup', '-d', L])
+    print('exFAT read-write: %d checks; fsck.exfat clean; exfat-fuse reads it all back' % checks[0]); print('ALL OK'); sys.exit(0)
 if exfat:                                            # read-only: everything reads, nothing writes
     root = ok(pkt(G, LOCATE, 0, name(''), -2), 'Lock root')
     ok(pkt(G, EXAMINE, root, FIB >> 2), 'Examine root')

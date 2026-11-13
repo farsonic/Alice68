@@ -46,6 +46,20 @@ struct xfat {
     uint32_t ndirs, capdirs;
     uint8_t *bounce;                /* one sector, for partial file reads */
     uint32_t nfree;                 /* free clusters, ~0 = not counted */
+    /* writing (xfs_*) */
+    uint32_t nfats;
+    const char *ro;                 /* why it may not be written (0: it may) */
+    uint32_t up_first;              /* the Up-case Table's first cluster (0 none) */
+    uint64_t up_len;
+    uint16_t up[256];               /* upper case of U+0000..U+00FF, from the volume's table */
+    uint8_t *bm;                    /* the whole Allocation Bitmap, once writing starts */
+    uint32_t bm_lo, bm_hi;          /* its changed bytes [lo, hi), not on the card yet */
+    uint32_t fwin_dirty;            /* the FAT window has changes */
+    uint32_t fwin_n;                /* sectors in the window (never past the FAT's end) */
+    uint32_t fat_end;               /* the card sector after the FAT */
+    uint32_t hint;                  /* where to look for free clusters */
+    int      dirty_on_card;         /* VolumeDirty is set on the card (cleared at sync) */
+    int      err;                   /* the first write error since the last sync */
 };
 
 /* a directory the folder code has seen: where it is, and its parent */
@@ -95,7 +109,12 @@ int  xfat_extents(struct xfat *v, const struct xfat_ent *e, uint32_t blocks, str
 int  xfat_find_files(struct xfat *v, int iso, struct hdf_file *files, int max);
 
 /* the ffs_* calls on an exFAT volume (fatfs.c hands them over when v->x is set). Directories are
-   named by their first cluster, the root by v->x->root. Read-only so far: writes give FFS_WP. */
+   named by their first cluster, the root by v->x->root. Writes give FFS_WP unless
+   xfat_writable() said yes. Order on the card: data, then bitmap and FAT, then the entry set
+   (checksummed); deleting clears the entries before freeing the clusters. VolumeDirty is set
+   while changes are on their way and cleared at xfs_sync. */
+/* may it be written? 0 yes; else why not (and v->ro says it) */
+const char *xfat_writable(struct xfat *v);
 void xfs_done(struct ffs *v);
 int  xfs_sync(struct ffs *v);
 int  xfs_next(struct ffs *v, uint32_t dir, uint32_t *pos, struct ffs_ent *o);

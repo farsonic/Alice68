@@ -9,6 +9,18 @@
   and DVD images work. Written from Microsoft's published exFAT specification
   (`amiga/hdf/exfat.c`): the boot checksum, FAT chains and contiguous files, entry set
   checksums, Latin-1 names. README has Mac and Windows recipes for the card.
+- **The exFAT partition as an Amiga volume, and writing it.** The partition itself is now
+  a volume (named by its label), next to any folders on it. `alice68.exfat=rw` in
+  `config.txt` lets Alice68 write it (`ro`, the default, mounts it read-only; `off` not at
+  all). Writing keeps exFAT's order for safety (data, then bitmap and FAT, then the
+  checksummed entry; deletes the other way round) and marks the volume dirty while changes
+  are on their way; after a power cut the volume mounts read-only until checked on a PC.
+  Files stay contiguous where they can and become FAT chains when they can't; directories
+  grow; names are hashed with the volume's own up-case table. Tested on the PC: a long
+  sequence of changes checked by fsck.exfat and read back by exfat-fuse, and 41 power cuts
+  at points spread over it, every one repairable by fsck.exfat (40 clean, one file left
+  holding extra space); on the 68k emulator through the DOS packets on a folder and on
+  the partition volume. Not yet on a Pi.
 - **Amiga attributes in folders, as FS-UAE and Amiberry keep them.** Comments, the script,
   pure and hidden bits, delete protection and exact dates go into a `NAME.uaem` sidecar
   when FAT can't hold them, and names with characters FAT forbids are stored as `%xx`.
@@ -17,9 +29,8 @@
   now go back and forth between the card and FS-UAE or Amiberry on a PC with its
   attributes. Tested on the PC (`uaem.c`) and on the 68k emulator (sidecars made on a PC
   read, ones made on the Amiga checked with mtools and fsck.fat).
-- **Folders on the exFAT partition (read-only).** `alice68.folder=NAME` looks on the FAT32
-  partition first, then on the exFAT one; exFAT folders mount read-only until writing
-  exFAT is done. The folder handler now works through the engine of its own partition
+- **Folders on the exFAT partition.** `alice68.folder=NAME` looks on the FAT32 partition
+  first, then on the exFAT one. The folder handler now works through the engine of its own partition
   (`fatfs.c` hands every call on exFAT to `exfat.c`). Tested on the PC (`tools/hdf-test/exfat.sh`: cards made by
   mkfs.exfat and filled through exfat-fuse, a fragmented file, a 4.5 GB file, checked with
   fsck.exfat) and on the 68k emulator (CD images on an exFAT partition, through the
