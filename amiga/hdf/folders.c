@@ -36,6 +36,8 @@ struct FVol {                               /* starts as struct FVolHead (hdf_de
     ULONG root;                             /* the folder's first cluster */
     struct ffs_ent rent;                    /* its own entry, for its dates */
     struct DosList *dl;                     /* the volume node, once the handler runs */
+    struct ffs *fs;                         /* its partition's engine: FAT (db->ffs) or exFAT (db->xffs) */
+    ULONG ro;                               /* read-only (exFAT, until it can be written) */
 };
 
 ACHECK(AOFF(struct FVol, path) == AOFF(struct FVolHead, path));
@@ -139,9 +141,8 @@ static int in_use(struct FCtx *x, const struct where *w) { return conflict(x, w,
 /* a mounted hardfile or CD image: its first cluster is a unit's or a CD volume's first block */
 static int hdf_mounted(struct FCtx *x, const struct ffs_ent *e)
 {
-    struct fat *f = &x->db->ffat;
     if ((e->attr & FFS_A_DIR) || !e->first) return 0;
-    uint32_t sec = f->data_start + (e->first - 2) * f->spc;
+    uint32_t sec = ffs_clus_sec(x->fv->fs, e->first);
     for (ULONG i = 0; i < x->db->nunits; i++) {
         struct HUnit *u = x->db->unit[i];
         if (u && u->f.next && u->f.ext[0].card_sec == sec) return 1;
@@ -216,9 +217,9 @@ static int up(struct FCtx *x, struct where *w)
     if (w->isroot) return -ERROR_OBJECT_NOT_FOUND;
     uint32_t p;
     if (!(w->e.attr & FFS_A_DIR)) p = w->e.dir;
-    else { int r = ffs_parent(&x->db->ffs, w->e.first, &p); if (r) return -dos_err(r); }
+    else { int r = ffs_parent(x->fv->fs, w->e.first, &p); if (r) return -dos_err(r); }
     if (p == x->fv->root) { w->isroot = 1; w->e = x->fv->rent; return 0; }
-    int r = ffs_dir_ent(&x->db->ffs, p, &w->e);
+    int r = ffs_dir_ent(x->fv->fs, p, &w->e);
     return r ? -dos_err(r) : 0;
 }
 
@@ -239,7 +240,7 @@ static int resolve(struct FCtx *x, LONG lock, ULONG bname, struct where *w)
         if (!w_isdir(x, w)) return -ERROR_OBJECT_WRONG_TYPE;
         uint32_t d = w_key(x, w);
         struct ffs_ent e;
-        r = ffs_find(&x->db->ffs, d, s + i, j - i, &e);
+        r = ffs_find(x->fv->fs, d, s + i, j - i, &e);
         if (r == FFS_END) {
             if (j < len) return -ERROR_DIR_NOT_FOUND;
             w->dir = d; w->leaf = s + i; w->leaflen = j - i;
@@ -283,13 +284,13 @@ static void fill_fib(struct FCtx *x, struct FileInfoBlock *fib, int isroot, cons
 static void fill_info(struct FCtx *x, struct InfoData *id)
 {
     memset(id, 0, sizeof *id);
-    struct fat *f = &x->db->ffat;
-    uint32_t fr = 0;
-    ffs_free_clusters(&x->db->ffs, &fr);
+    struct ffs *v = x->fv->fs;
+    uint32_t fr = 0, spc = ffs_cluster_bytes(v) / HDF_BLOCK, nc = ffs_clusters(v);
+    ffs_free_clusters(v, &fr);
     id->id_UnitNumber = (LONG)x->fv->index;
-    id->id_DiskState = x->db->readonly ? ID_WRITE_PROTECTED : ID_VALIDATED;
-    id->id_NumBlocks = (LONG)(f->clusters * f->spc);
-    id->id_NumBlocksUsed = (LONG)((f->clusters - fr) * f->spc);
+    id->id_DiskState = x->db->readonly || x->fv->ro ? ID_WRITE_PROTECTED : ID_VALIDATED;
+    id->id_NumBlocks = (LONG)(nc * spc);
+    id->id_NumBlocksUsed = (LONG)((nc - fr) * spc);
     id->id_BytesPerBlock = HDF_BLOCK;
     id->id_DiskType = ID_DOS_DISK;
     id->id_VolumeNode = MKBADDR(x->fv->dl);
@@ -300,7 +301,8 @@ static void fill_info(struct FCtx *x, struct InfoData *id)
 static LONG do_packet(struct FCtx *x, struct DosPacket *p, LONG *res2)
 {
     struct HdfBase *db = x->db;
-    struct ffs *v = &db->ffs;
+    struct ffs *v = x->fv->fs;
+    int ro = db->readonly || x->fv->ro;
     struct where w, w2;
     struct FObj *o;
     int r;
@@ -308,7 +310,7 @@ static LONG do_packet(struct FCtx *x, struct DosPacket *p, LONG *res2)
     *res2 = 0;
 #define FAIL(err) do { *res2 = (err); return DOSFALSE; } while (0)
 #define RESOLVE(lock, name, wp) do { r = resolve(x, (lock), (ULONG)(name), (wp)); if (r < 0) FAIL(-r); } while (0)
-#define WRITABLE() do { if (db->readonly) FAIL(ERROR_DISK_WRITE_PROTECTED); } while (0)
+#define WRITABLE() do { if (ro) FAIL(ERROR_DISK_WRITE_PROTECTED); } while (0)
     switch (p->dp_Type) {
     case ACTION_LOCATE_OBJECT:
         RESOLVE(p->dp_Arg1, p->dp_Arg2, &w);
@@ -446,7 +448,7 @@ static LONG do_packet(struct FCtx *x, struct DosPacket *p, LONG *res2)
 
     case ACTION_WRITE: {
         o = (struct FObj *)p->dp_Arg1;
-        if (db->readonly) { *res2 = ERROR_DISK_WRITE_PROTECTED; return -1; }
+        if (ro) { *res2 = ERROR_DISK_WRITE_PROTECTED; return -1; }
         if (o->hdf) { *res2 = ERROR_OBJECT_IN_USE; return -1; }
         if (o->h.e.attr & FFS_A_RO) { *res2 = ERROR_WRITE_PROTECTED; return -1; }
         int err;
@@ -470,7 +472,7 @@ static LONG do_packet(struct FCtx *x, struct DosPacket *p, LONG *res2)
 
     case ACTION_SET_FILE_SIZE: {
         o = (struct FObj *)p->dp_Arg1;
-        if (db->readonly) { *res2 = ERROR_DISK_WRITE_PROTECTED; return -1; }
+        if (ro) { *res2 = ERROR_DISK_WRITE_PROTECTED; return -1; }
         if (o->hdf) { *res2 = ERROR_OBJECT_IN_USE; return -1; }
         if (o->virt) { *res2 = ERROR_WRITE_PROTECTED; return -1; }
         LONG base = p->dp_Arg3 == OFFSET_BEGINNING ? 0 : p->dp_Arg3 == OFFSET_END ? (LONG)o->h.e.size : (LONG)o->pos;
@@ -582,13 +584,14 @@ LONG fold_do(struct FCtx *x, struct DosPacket *p)
 {
     struct HdfBase *db = x->db;
     ObtainSemaphore(&db->fsem);
-    db->ffat.io = &x->io;                              /* this process's card requests */
+    struct ffs *v = x->fv->fs;
+    ffs_set_io(v, &x->io);                             /* this process's card requests */
     struct DateStamp ds;
     DateStamp(x->dos, &ds);
-    ffs_amiga_to_fat((uint32_t)ds.ds_Days, (uint32_t)ds.ds_Minute, (uint32_t)ds.ds_Tick, &db->ffs.date, &db->ffs.time);
+    ffs_amiga_to_fat((uint32_t)ds.ds_Days, (uint32_t)ds.ds_Minute, (uint32_t)ds.ds_Tick, &v->date, &v->time);
     LONG res2;
     LONG res1 = do_packet(x, p, &res2);
-    int e = ffs_sync(&db->ffs);
+    int e = ffs_sync(v);
     if (e == FFS_WP && !db->readonly) {
         db->readonly = 1;
         hdf_log(&x->io, "the card refused a write: %s unit 0 is read-only (dtoverlay=emmc,unit0=rw)", db->card_dev);
@@ -751,13 +754,27 @@ void folders_mount(struct HdfBase *db, struct hdf_io *io, APTR eb, APTR cd, cons
         if (dup) continue;
         uint32_t root;
         struct ffs_ent re;
-        int r = ffs_resolve(&db->ffs, pth, &root, &re);
+        struct ffs *fs = &db->ffs;
+        int r = ffs_resolve(fs, pth, &root, &re);
+        if (r == FFS_END) {                            /* not on the FAT partition: on the exFAT one? */
+            if (!db->xffs_up && xfat_open(&db->xfat, &quiet) == 0) {
+                if (ffs_init_exfat(&db->xffs, &db->xfat) == 0) db->xffs_up = 1;
+                else xfat_close(&db->xfat);
+            }
+            if (db->xffs_up) {
+                ffs_set_io(&db->xffs, io);
+                int rx = ffs_resolve(&db->xffs, pth, &root, &re);
+                if (rx != FFS_END) { r = rx; fs = &db->xffs; }
+            }
+        }
         if (r) {
             if (i) hdf_log(io, "config.txt: alice68.folder=%s: %s", pth, r == FFS_NOTDIR ? "not a folder" : r == FFS_BADNAME ? "not the root" : "no such folder");
             continue;
         }
         struct FVol *fv = AllocMem(sizeof *fv, MEMF_PUBLIC | MEMF_CLEAR);
         if (!fv) break;
+        fv->fs = fs;
+        fv->ro = fs == &db->xffs;                      /* exFAT: read-only until it can be written */
         fv->index = db->nfvols;
         scpy(fv->path, pth, sizeof fv->path);
         fv->root = root;
@@ -789,7 +806,8 @@ void folders_mount(struct HdfBase *db, struct hdf_io *io, APTR eb, APTR cd, cons
         db->fvol[db->nfvols++] = fv;
         if (!AddBootNode(eb, -128, 1 /* ADNF_STARTPROC */, dn, cd)) { hdf_log(io, "%s: AddBootNode failed", fv->vol); db->nfvols--; FreeMem(fv, sizeof *fv); continue; }
         add_vol(db, fv->vol, fv->dev);
-        hdf_log(io, "folder %s: volume %s (%s:), not bootable%s", fv->path, fv->vol, fv->dev, db->readonly ? ", read-only" : "");
+        hdf_log(io, "folder %s%s: volume %s (%s:), not bootable%s", fv->path, fv->fs == &db->xffs ? " (exFAT)" : "", fv->vol, fv->dev,
+                db->readonly || fv->ro ? ", read-only" : "");
     }
 out:
     FreeMem(paths, FOLDER_MAX * (128 + 32));

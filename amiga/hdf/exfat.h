@@ -13,6 +13,7 @@
 #ifndef ALICE68_EXFAT_H
 #define ALICE68_EXFAT_H
 #include "hdf_core.h"
+#include "fatfs.h"
 
 #define XFAT_NAME    108                /* Amiga names: up to 107 characters */
 #define XFAT_FATWIN  8u                 /* FAT sectors cached */
@@ -38,6 +39,22 @@ struct xfat {
     uint32_t fwin_first;            /* ~0 = none */
     uint32_t wc_first, wc_ci, wc_c; /* directory walk: the chain from wc_first, its wc_ci-th cluster is wc_c */
     char     label[XFAT_NAME];      /* volume label, Latin-1 */
+    uint32_t bm_first;              /* the Allocation Bitmap's first cluster, 0 = none found */
+    uint64_t bm_len;                /* its bytes */
+    /* for folders (the ffs_* calls, xfs_*): every directory seen, as exFAT has no ".." entries */
+    struct xdir *dirs;
+    uint32_t ndirs, capdirs;
+    uint8_t *bounce;                /* one sector, for partial file reads */
+    uint32_t nfree;                 /* free clusters, ~0 = not counted */
+};
+
+/* a directory the folder code has seen: where it is, and its parent */
+struct xdir {
+    uint32_t first;                 /* its first cluster: the directory's key */
+    uint32_t parent;                /* its parent's key (the root's: itself) */
+    uint32_t pos;                   /* its entry set's index in the parent */
+    uint32_t nofat;
+    uint64_t size;                  /* 0 for the root (follow the FAT chain) */
 };
 
 /* a directory: where its clusters are */
@@ -76,4 +93,28 @@ int  xfat_extents(struct xfat *v, const struct xfat_ent *e, uint32_t blocks, str
 /* every *.hdf (iso = 0) or *.iso (iso = 1) in the root and in a root folder HDF / ISO,
    as fat_find_hdfs / fat_find_isos do for the FAT partition */
 int  xfat_find_files(struct xfat *v, int iso, struct hdf_file *files, int max);
+
+/* the ffs_* calls on an exFAT volume (fatfs.c hands them over when v->x is set). Directories are
+   named by their first cluster, the root by v->x->root. Read-only so far: writes give FFS_WP. */
+void xfs_done(struct ffs *v);
+int  xfs_sync(struct ffs *v);
+int  xfs_next(struct ffs *v, uint32_t dir, uint32_t *pos, struct ffs_ent *o);
+int  xfs_find(struct ffs *v, uint32_t dir, const char *name, uint32_t len, struct ffs_ent *e);
+int  xfs_parent(struct ffs *v, uint32_t dir, uint32_t *parent);
+int  xfs_dir_ent(struct ffs *v, uint32_t dir, struct ffs_ent *e);
+int  xfs_resolve(struct ffs *v, const char *path, uint32_t *dir, struct ffs_ent *e);
+int  xfs_create(struct ffs *v, uint32_t dir, const char *name, uint32_t len, int isdir, struct ffs_ent *o);
+int  xfs_delete(struct ffs *v, const struct ffs_ent *e);
+int  xfs_rename(struct ffs *v, const struct ffs_ent *e, uint32_t ndir, const char *name, uint32_t len, struct ffs_ent *o);
+int  xfs_set_attr(struct ffs *v, struct ffs_ent *e, uint8_t attr);
+int  xfs_set_date(struct ffs *v, struct ffs_ent *e, uint16_t date, uint16_t time);
+int  xfs_flush_file(struct ffs *v, struct ffs_file *h);
+int32_t xfs_read(struct ffs *v, struct ffs_file *h, uint32_t pos, void *buf, uint32_t n);
+int32_t xfs_write(struct ffs *v, struct ffs_file *h, uint32_t pos, const void *buf, uint32_t n, int *err);
+int  xfs_truncate(struct ffs *v, struct ffs_file *h, uint32_t size);
+int  xfs_free_clusters(struct ffs *v, uint32_t *n);
+uint32_t xfs_cluster_bytes(const struct ffs *v);
+uint32_t xfs_clusters(const struct ffs *v);
+uint32_t xfs_clus_sec(const struct ffs *v, uint32_t c);
+void xfs_set_io(struct ffs *v, struct hdf_io *io);
 #endif

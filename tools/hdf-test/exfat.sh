@@ -12,7 +12,7 @@ if ! command -v mkfs.exfat >/dev/null || ! command -v mount.exfat-fuse >/dev/nul
     echo "exFAT   SKIPPED: needs root, losetup, mkfs.exfat/fsck.exfat (exfatprogs) and exfat-fuse"; exit 0
 fi
 rm -rf "$T"; mkdir -p "$T/mnt"
-cc -O1 -Wall -Wextra -Werror -std=gnu11 -I"$P/amiga/hdf" -o "$T/exfat_test" "$P/tools/hdf-test/exfat_test.c" "$P/amiga/hdf/exfat.c" "$P/amiga/hdf/hdf_core.c"
+cc -O1 -Wall -Wextra -Werror -std=gnu11 -I"$P/amiga/hdf" -o "$T/exfat_test" "$P/tools/hdf-test/exfat_test.c" "$P/amiga/hdf/exfat.c" "$P/amiga/hdf/fatfs.c" "$P/amiga/hdf/hdf_core.c"
 python3 -I - "$T" <<'PY'
 import os, random, struct, subprocess, sys, zlib
 T = sys.argv[1]
@@ -56,6 +56,12 @@ try:
             fb.write(b[i * 4096:(i + 1) * 4096]); fb.flush(); os.fsync(fb.fileno())
     src['HDF/frag.hdf'] = a
     open(os.path.join(mnt, 'big.hdf'), 'wb').close()  # made 4.5 GB below
+    # for the folder engine: deep folders, a folder of 400 files (directories over many clusters)
+    put('a/b/c/d/e/f/g/h/i/j/deep.txt', b'ten folders down\n')
+    put('a/b/c/note \u00e9t\u00e9.txt', blob(5000))
+    put('a/b/empty.bin', b'')
+    for i in range(400): put('Many/file number %03d with a longish name.dat' % i, blob(rnd.randrange(0, 3000)))
+    put('Many/zz last.txt', blob(70000))
 finally:
     run('umount', mnt); run('losetup', '-d', l2)
 
@@ -100,6 +106,9 @@ for blk in (0, 8388607, 8388608, BIG // 512 - 1):
     wr(csec(first) + blk, (b'BIG BLOCK %d\0' % blk).ljust(512, b'\0'))
 f.close()
 open(T + '/src.txt', 'w').write(repr({k: (len(v), zlib.crc32(v[:len(v) // 512 * 512])) for k, v in src.items()}))
+open(T + '/srcfull.txt', 'w').write(repr({k: (len(v), zlib.crc32(v)) for k, v in src.items()}))
+free = sum(1 for c in range(count) if not bitmap[c // 8] >> (c % 8) & 1)
+open(T + '/free.txt', 'w').write('%d %d' % (free, cbytes))
 PY
 # the image must be a valid exFAT volume (fsck.exfat checks the bitmap, chains, checksums)
 L=$(losetup -f --show -o $((139264 * 512)) "$T/card.img")
@@ -116,6 +125,8 @@ def amiga(n): return n.split('/')[-1]
 want = set()
 for p, (n, crc) in src.items():
     name = amiga(p)
+    top = p.split('/')[0] if '/' in p else ''
+    if top not in ('', 'HDF', 'ISO') or not name.lower().endswith(('.hdf', '.iso')): continue
     if name.startswith('._') or name in ('small.hdf', 'notes.txt', 'filler.bin'): continue
     kind = 'I' if name.lower().endswith('.iso') else 'H'
     pieces = None
@@ -146,6 +157,29 @@ if 'N missing.hdf -1' not in out: fails.append('find a missing name')
 if 'Odd size.hdf: size is not a multiple of 512' not in log: fails.append('odd size not logged')
 print('exFAT   card    %d hardfiles/CD images, frag in %d pieces, 4.5 GB file  %s' % (len(got) + 1, frag_pieces, 'OK' if not fails else 'FAILED'))
 for x in fails: print('   ', x)
+sys.exit(1 if fails else 0)
+PY
+# the folder engine: every entry through the ffs_* calls, compared with what was put there
+"$T/exfat_test" -w "$T/card.img" > "$T/walk.txt" 2> "$T/walklog.txt" || true
+python3 -I - "$T" <<'PY'
+import ast, sys
+T = sys.argv[1]
+src = ast.literal_eval(open(T + '/srcfull.txt').read())
+out = open(T + '/walk.txt', encoding='latin-1').read().splitlines()
+want = set()
+for p, (n, crc) in src.items():
+    parts = p.split('/')
+    for i in range(1, len(parts)): want.add('D ' + '/'.join(parts[:i]))
+    want.add('F %s %d %08x' % (p, n, crc))
+want.add('F big.hdf %d -' % (4608 * 1024 * 1024)); want.add('F HDF/filler.bin %d' % (64 * 4096))
+got = set(l for l in out if l[:2] in ('D ', 'F '))
+got = set(' '.join(l.split(' ')[:-1]) if l.startswith('F HDF/filler.bin') else l for l in got)
+fails = [l for l in out if l.startswith('FAIL') or l == 'NOEXFAT']
+fails += ['missing: ' + l for l in sorted(want - got)] + ['extra: ' + l for l in sorted(got - want)]
+s = [l for l in out if l.startswith('S ')]
+if not s or s[0][2:] != open(T + '/free.txt').read(): fails.append('free clusters %s, want %s' % (s, open(T + '/free.txt').read()))
+print('exFAT   folders %d entries through ffs_*, free space, writes refused  %s' % (len(got), 'OK' if not fails else 'FAILED'))
+for x in fails[:20]: print('   ', x)
 sys.exit(1 if fails else 0)
 PY
 # a broken boot checksum: the partition is refused, with a reason

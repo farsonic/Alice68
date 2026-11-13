@@ -588,9 +588,9 @@ first exFAT partition and mounts its hardfiles (root and `HDF`) and CD images (r
 - **Then** copy the release's files onto the FAT32 partition as usual, and your hardfiles
   and CD images onto the exFAT one. The boot log shows `exFAT partition at sector ...`
   and each file found there.
-- **Not yet:** SD-card folders (`alice68.folder=`) are still on the FAT32 partition only;
-  exFAT folders are coming next. A hardfile written to on the Amiga keeps its size and
-  clusters, as on FAT.
+- **Folders** on the exFAT partition can be mounted too (`alice68.folder=`, see
+  [Folders](#folders-of-the-sd-card-as-amiga-volumes)), **read-only** for now. A hardfile
+  written to on the Amiga keeps its size and clusters, as on FAT.
 - The card needs an MBR partition table, not GPT: both recipes above make one.
 
 ## Folders of the SD card as Amiga volumes
@@ -606,6 +606,10 @@ alice68.folder=Amiga/Work:Work    # the folder Amiga/Work, as volume Work:
 
 - **The volume name** is the folder's own name, unless you give one after a `:`. A name
   that is already taken by a mounted volume gets a digit (`Games2`).
+- **On the exFAT partition too:** a folder that isn't on the FAT32 partition is looked
+  for on the card's [exFAT partition](#a-second-partition-in-exfat-big-cards-big-files).
+  Those are **read-only for now** (writing exFAT is being built); the boot log says
+  `folder Games (exFAT): ... read-only`.
 - **The DOS devices** are `SDF0:`, `SDF1:` and so on. Folders are **never bootable**.
 - **The icon:** a folder without a `Disk.info` of its own shows Alice68's SD folder icon
   on Workbench. It can't be changed or deleted; writing a real `Disk.info` (Workbench's

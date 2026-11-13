@@ -9,6 +9,7 @@
 #include "exfat.h"
 
 #define T_END      0x00
+#define T_BITMAP   0x81
 #define T_LABEL    0x83
 #define T_FILE     0x85
 #define T_STREAM   0xc0
@@ -132,17 +133,18 @@ int xfat_open(struct xfat *v, struct hdf_io *io)
     v->clusters = count;
     v->root = root;
 
-    /* the volume label, from the root directory */
+    /* the volume label and the Allocation Bitmap, from the root directory */
+    v->nfree = ~0u;
     struct xfat_dir d;
     xfat_root(v, &d);
     for (uint32_t i = 0; i < 4096; i++) {
         const uint8_t *p;
         if (entry(v, &d, i, &p) || p[0] == T_END) break;
-        if (p[0] == T_LABEL) {
+        if (p[0] == T_BITMAP && !(p[1] & 1) && !v->bm_first) { v->bm_first = le32(p + 20); v->bm_len = le64(p + 24); }
+        if (p[0] == T_LABEL && !v->label[0]) {
             uint32_t n = p[1] > 11 ? 11 : p[1];
             for (uint32_t k = 0; k < n; k++) { uint32_t ch = le16(p + 2 + 2 * k); v->label[k] = (char)(ch < 0x100 ? ch : '?'); }
             v->label[n] = 0;
-            break;
         }
     }
     hdf_log(io, "exFAT partition at sector %lu, %lu clusters of %lu bytes%s%s%s", start, count, (uint32_t)512 << shift,
@@ -155,7 +157,10 @@ void xfat_close(struct xfat *v)
 {
     if (v->sec) v->io->free(v->io->ctx, v->sec, 512);
     if (v->fwin) v->io->free(v->io->ctx, v->fwin, XFAT_FATWIN * 512);
-    v->sec = v->fwin = 0;
+    if (v->bounce) v->io->free(v->io->ctx, v->bounce, 512);
+    if (v->dirs) v->io->free(v->io->ctx, v->dirs, v->capdirs * sizeof *v->dirs);
+    v->sec = v->fwin = v->bounce = 0;
+    v->dirs = 0; v->ndirs = v->capdirs = 0;
 }
 
 void xfat_root(const struct xfat *v, struct xfat_dir *d) { d->first = v->root; d->size = 0; d->nofat = 0; }
@@ -322,4 +327,220 @@ int xfat_find_files(struct xfat *v, int iso, struct hdf_file *files, int max)
             if (!(e.attr & XFAT_A_DIR) && e.name[0] != '.' && has_ext(e.name, ext)) take(v, iso, &e, files, max, &n, &told);
     }
     return n;
+}
+
+/* ---- folders: the ffs_* calls on exFAT (fatfs.h's types; read-only so far) ---------------------- */
+
+static struct xdir *xd_get(struct xfat *x, uint32_t first)
+{
+    for (uint32_t i = x->ndirs; i-- > 0; ) if (x->dirs[i].first == first) return &x->dirs[i];
+    return 0;
+}
+/* a directory seen in its parent: remember where it is */
+static int xd_note(struct xfat *x, uint32_t first, uint32_t parent, uint32_t pos, int nofat, uint64_t size)
+{
+    struct xdir *d = xd_get(x, first);
+    if (!d) {
+        if (x->ndirs == x->capdirs) {
+            uint32_t cap = x->capdirs ? x->capdirs * 2 : 64;
+            struct xdir *n = x->io->alloc(x->io->ctx, cap * sizeof *n);
+            if (!n) return FFS_IO;
+            if (x->dirs) { copy(n, x->dirs, x->ndirs * sizeof *n); x->io->free(x->io->ctx, x->dirs, x->capdirs * sizeof *n); }
+            x->dirs = n; x->capdirs = cap;
+        }
+        d = &x->dirs[x->ndirs++];
+        d->first = first;
+    }
+    d->parent = parent; d->pos = pos; d->nofat = (uint32_t)nofat; d->size = size;
+    return 0;
+}
+static int xd_dir(struct xfat *x, uint32_t key, struct xfat_dir *d)
+{
+    if (key == x->root) { xfat_root(x, d); return 0; }
+    struct xdir *k = xd_get(x, key);
+    if (!k) return FFS_CORRUPT;                          /* never seen in its parent */
+    d->first = k->first; d->size = k->size; d->nofat = (int)k->nofat;
+    return 0;
+}
+static int xerr(int r) { return r == -1 ? FFS_END : r == -2 ? FFS_IO : FFS_CORRUPT; }
+
+int ffs_init_exfat(struct ffs *v, struct xfat *x)
+{
+    zero(v, sizeof *v);
+    v->x = x;
+    v->date = (uint16_t)((46 << 9) | (1 << 5) | 1);
+    if (!x->bounce && !(x->bounce = x->io->alloc(x->io->ctx, 512))) return FFS_IO;
+    return xd_note(x, x->root, x->root, 0, 0, 0);
+}
+void xfs_done(struct ffs *v) { (void)v; }
+int xfs_sync(struct ffs *v) { int e = v->err; v->err = 0; return e; }
+void xfs_set_io(struct ffs *v, struct hdf_io *io) { v->x->io = io; }
+uint32_t xfs_cluster_bytes(const struct ffs *v) { return (uint32_t)512 << v->x->spc_shift; }
+uint32_t xfs_clusters(const struct ffs *v) { return v->x->clusters; }
+uint32_t xfs_clus_sec(const struct ffs *v, uint32_t c) { return clus_sec(v->x, c); }
+
+int xfs_next(struct ffs *v, uint32_t dir, uint32_t *pos, struct ffs_ent *o)
+{
+    struct xfat *x = v->x;
+    struct xfat_dir d;
+    struct xfat_ent e;
+    int r = xd_dir(x, dir, &d);
+    if (r) return r;
+    if ((r = xfat_next(x, &d, pos, &e))) return xerr(r);
+    const uint8_t *p;
+    if ((r = entry(x, &d, e.pos, &p))) return xerr(r);   /* where its File entry is: the entry's identity */
+    zero(o, sizeof *o);
+    o->dir = dir;
+    o->idx = e.pos;
+    o->nlfn = e.count;
+    o->sec = x->sec_no;
+    o->slot = e.pos % 16;
+    o->first = e.first;
+    o->attr = (uint8_t)e.attr;
+    o->date = (uint16_t)(e.mtime >> 16);
+    o->time = (uint16_t)e.mtime;
+    o->xnofat = (uint8_t)e.nofat;
+    o->xsize = e.size;
+    o->xvalid = e.valid;
+    o->size = e.size > 0xffffffffu ? 0xffffffffu : (uint32_t)e.size;
+    copy(o->name, e.name, FFS_NAME);
+    if (e.attr & XFAT_A_DIR) {
+        if (!e.first) return FFS_CORRUPT;                /* a directory always has a cluster */
+        if ((r = xd_note(x, e.first, dir, e.pos, e.nofat, e.size))) return r;
+    }
+    return 0;
+}
+
+int xfs_find(struct ffs *v, uint32_t dir, const char *name, uint32_t len, struct ffs_ent *e)
+{
+    uint32_t pos = 0;
+    for (;;) {
+        int r = xfs_next(v, dir, &pos, e);
+        if (r) return r;
+        if (ffs_name_eq(e->name, name, len)) return 0;
+    }
+}
+
+int xfs_parent(struct ffs *v, uint32_t dir, uint32_t *parent)
+{
+    struct xfat *x = v->x;
+    if (dir == x->root) { *parent = x->root; return FFS_END; }
+    struct xdir *k = xd_get(x, dir);
+    if (!k) return FFS_CORRUPT;
+    *parent = k->parent;
+    return 0;
+}
+
+int xfs_dir_ent(struct ffs *v, uint32_t dir, struct ffs_ent *e)
+{
+    struct xfat *x = v->x;
+    struct xdir *k = xd_get(x, dir);
+    if (!k || dir == x->root) return FFS_CORRUPT;
+    uint32_t pos = k->pos;
+    int r = xfs_next(v, k->parent, &pos, e);
+    if (r) return r == FFS_END ? FFS_CORRUPT : r;
+    return (e->attr & FFS_A_DIR) && e->first == dir ? 0 : FFS_CORRUPT;
+}
+
+int xfs_resolve(struct ffs *v, const char *path, uint32_t *dir, struct ffs_ent *e)
+{
+    uint32_t d = v->x->root;
+    int any = 0;
+    while (*path) {
+        while (*path == '/') path++;
+        uint32_t n = 0;
+        while (path[n] && path[n] != '/') n++;
+        if (!n) break;
+        int r = xfs_find(v, d, path, n, e);
+        if (r) return r;
+        if (!(e->attr & FFS_A_DIR)) return FFS_NOTDIR;
+        d = e->first;
+        path += n;
+        any = 1;
+    }
+    if (!any) return FFS_BADNAME;
+    *dir = d;
+    return 0;
+}
+
+/* writing: stage 3 */
+int xfs_create(struct ffs *v, uint32_t dir, const char *name, uint32_t len, int isdir, struct ffs_ent *o)
+{ (void)v; (void)dir; (void)name; (void)len; (void)isdir; (void)o; return FFS_WP; }
+int xfs_delete(struct ffs *v, const struct ffs_ent *e) { (void)v; (void)e; return FFS_WP; }
+int xfs_rename(struct ffs *v, const struct ffs_ent *e, uint32_t ndir, const char *name, uint32_t len, struct ffs_ent *o)
+{ (void)v; (void)e; (void)ndir; (void)name; (void)len; (void)o; return FFS_WP; }
+int xfs_set_attr(struct ffs *v, struct ffs_ent *e, uint8_t attr) { (void)v; (void)e; (void)attr; return FFS_WP; }
+int xfs_set_date(struct ffs *v, struct ffs_ent *e, uint16_t date, uint16_t time) { (void)v; (void)e; (void)date; (void)time; return FFS_WP; }
+int xfs_flush_file(struct ffs *v, struct ffs_file *h) { (void)v; return h->dirty ? FFS_WP : 0; }
+int32_t xfs_write(struct ffs *v, struct ffs_file *h, uint32_t pos, const void *buf, uint32_t n, int *err)
+{ (void)v; (void)h; (void)pos; (void)buf; (void)n; *err = FFS_WP; return 0; }
+int xfs_truncate(struct ffs *v, struct ffs_file *h, uint32_t size) { (void)v; (void)h; (void)size; return FFS_WP; }
+
+/* the file's ci-th cluster, 0 = past its clusters */
+static uint32_t file_clus(struct xfat *x, struct ffs_file *h, uint32_t ci)
+{
+    if (!h->e.first) return 0;
+    if (h->e.xnofat) return ci < x->clusters && clus_ok(x, h->e.first + ci) ? h->e.first + ci : 0;
+    uint32_t k = 0, c = h->e.first;
+    if (h->ci != ~0u && h->ci <= ci) { k = h->ci; c = h->cc; }
+    while (k < ci && c) { c = fat_next(x, c); k++; }
+    if (!c) return 0;
+    h->ci = k; h->cc = c;
+    return c;
+}
+
+int32_t xfs_read(struct ffs *v, struct ffs_file *h, uint32_t pos, void *buf, uint32_t n)
+{
+    struct xfat *x = v->x;
+    uint8_t *p = buf;
+    uint64_t size = h->e.xsize > 0xffffffffu ? 0xffffffffu : h->e.xsize;
+    if (pos >= size) return 0;
+    if (n > size - pos) n = (uint32_t)(size - pos);
+    uint32_t cshift = 9 + x->spc_shift, done = 0;
+    while (done < n) {
+        uint32_t left = n - done, off = pos & 511;
+        if (pos >= h->e.xvalid) {                        /* past ValidDataLength: zeros */
+            for (uint32_t k = 0; k < left; k++) p[k] = 0;
+            return (int32_t)n;
+        }
+        uint32_t c = file_clus(x, h, pos >> cshift);
+        if (!c) return done ? (int32_t)done : FFS_CORRUPT;
+        uint32_t in = pos & ((1u << cshift) - 1), sec = clus_sec(x, c) + in / 512;
+        uint32_t avail = (1u << cshift) - in;            /* bytes to the end of this cluster */
+        if (avail > left) avail = left;
+        if ((uint64_t)pos + avail > h->e.xvalid) avail = (uint32_t)(h->e.xvalid - pos);
+        if (!off && avail >= 512 && !((uintptr_t)p & 3)) {
+            uint32_t cnt = avail / 512;
+            if (x->io->read(x->io->ctx, sec, cnt, p)) { v->err = FFS_IO; return done ? (int32_t)done : FFS_IO; }
+            avail = cnt * 512;
+        } else {
+            if (x->io->read(x->io->ctx, sec, 1, x->bounce)) { v->err = FFS_IO; return done ? (int32_t)done : FFS_IO; }
+            if (avail > 512 - off) avail = 512 - off;
+            copy(p, x->bounce + off, avail);
+        }
+        p += avail; pos += avail; done += avail;
+    }
+    return (int32_t)done;
+}
+
+int xfs_free_clusters(struct ffs *v, uint32_t *n)
+{
+    struct xfat *x = v->x;
+    if (x->nfree == ~0u) {
+        if (!x->bm_first) return FFS_CORRUPT;
+        uint32_t used = 0, bits = x->clusters, c = x->bm_first, done = 0, spc = 1u << x->spc_shift;
+        while (done < bits && c) {
+            for (uint32_t k = 0; k < spc && done < bits; k++) {
+                if (x->io->read(x->io->ctx, clus_sec(x, c) + k, 1, x->bounce)) return FFS_IO;
+                for (uint32_t b = 0; b < 512 && done < bits; b++) {
+                    uint8_t m = x->bounce[b];
+                    for (int i = 0; i < 8 && done < bits; i++, done++) used += (m >> i) & 1;
+                }
+            }
+            c = fat_next(x, c);
+        }
+        x->nfree = bits - used;
+    }
+    *n = x->nfree;
+    return 0;
 }

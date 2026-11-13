@@ -5,6 +5,7 @@
 #include "../amiga.h"
 #include "hdf_core.h"
 #include "fatfs.h"
+#include "exfat.h"
 
 #define FOLDER_MAX   8                      /* folders mounted as volumes */
 #define FOLDER_UNIT0 0x4000                 /* their FileSysStartupMsg units: not hardfile units */
@@ -124,6 +125,9 @@ struct HdfBase {
     struct fat ffat;
     struct ffs ffs;
     ULONG ffs_up;
+    struct xfat xfat;                       /* the card's exFAT partition, for folders there */
+    struct ffs xffs;                        /* the same calls on it (exfat.c) */
+    ULONG xffs_up;
     struct FVol *fvol[FOLDER_MAX];
     ULONG nfvols;
     struct FObj *objs;                      /* every lock and open file, all volumes */

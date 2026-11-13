@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only
  * Alice68 folders: FAT16/FAT32 reading and writing - see fatfs.h. */
 #include "fatfs.h"
+#include "exfat.h"
 
 #define EPS      16u                            /* entries per sector */
 #define EOC32    0x0fffffffu
@@ -13,7 +14,10 @@ static void put32(uint8_t *p, uint32_t v) { put16(p, v & 0xffff); put16(p + 2, v
 static uint32_t clus_sec(const struct fat *f, uint32_t c) { return f->data_start + (c - 2) * f->spc; }
 static uint32_t ent_first(const struct fat *f, const uint8_t *e) { return le16(e + 26) | (f->fat32 ? le16(e + 20) << 16 : 0); }
 static void set_first(const struct fat *f, uint8_t *e, uint32_t c) { put16(e + 26, c & 0xffff); put16(e + 20, f->fat32 ? c >> 16 : 0); }
-uint32_t ffs_cluster_bytes(const struct ffs *v) { return v->f->spc * HDF_BLOCK; }
+uint32_t ffs_cluster_bytes(const struct ffs *v) { return v->x ? xfs_cluster_bytes(v) : v->f->spc * HDF_BLOCK; }
+uint32_t ffs_clusters(const struct ffs *v) { return v->x ? xfs_clusters(v) : v->f->clusters; }
+uint32_t ffs_clus_sec(const struct ffs *v, uint32_t c) { return v->x ? xfs_clus_sec(v, c) : clus_sec(v->f, c); }
+void ffs_set_io(struct ffs *v, struct hdf_io *io) { if (v->x) xfs_set_io(v, io); else v->f->io = io; }
 
 static int io_err(struct ffs *v, int r)
 {
@@ -51,6 +55,7 @@ int ffs_init(struct ffs *v, struct fat *f)
 
 void ffs_done(struct ffs *v)
 {
+    if (v->x) { xfs_done(v); return; }
     struct hdf_io *io = v->f->io;
     if (v->dsec) io->free(io->ctx, v->dsec, HDF_BLOCK);
     if (v->bounce) io->free(io->ctx, v->bounce, HDF_BLOCK);
@@ -172,6 +177,7 @@ static int free_chain(struct ffs *v, uint32_t c)
 
 int ffs_free_clusters(struct ffs *v, uint32_t *n)
 {
+    if (v->x) return xfs_free_clusters(v, n);
     if (v->nfree == ~0u) {
         uint32_t k = 0;
         for (uint32_t c = 2; c < v->f->clusters + 2; c++) {
@@ -215,6 +221,7 @@ static void fsinfo_update(struct ffs *v)
 
 int ffs_sync(struct ffs *v)
 {
+    if (v->x) return xfs_sync(v);
     dsec_flush(v);
     fwin_flush(v);
     fsinfo_update(v);
@@ -318,6 +325,7 @@ static void fill_ent(struct ffs *v, struct ffs_ent *o, const uint8_t *e, uint32_
 
 int ffs_next(struct ffs *v, uint32_t dir, uint32_t *pos, struct ffs_ent *o)
 {
+    if (v->x) return xfs_next(v, dir, pos, o);
     uint32_t idx = *pos, nl = 0;
     int chain = 0, fits = 0;                                  /* a long name is being put together; it fits */
     uint8_t lsum = 0, lseq = 0;
@@ -358,6 +366,7 @@ int ffs_next(struct ffs *v, uint32_t dir, uint32_t *pos, struct ffs_ent *o)
 
 int ffs_find(struct ffs *v, uint32_t dir, const char *name, uint32_t len, struct ffs_ent *e)
 {
+    if (v->x) return xfs_find(v, dir, name, len, e);
     uint32_t pos = 0;
     for (;;) {
         int r = ffs_next(v, dir, &pos, e);
@@ -368,6 +377,7 @@ int ffs_find(struct ffs *v, uint32_t dir, const char *name, uint32_t len, struct
 
 int ffs_parent(struct ffs *v, uint32_t dir, uint32_t *parent)
 {
+    if (v->x) return xfs_parent(v, dir, parent);
     if (!dir) { *parent = 0; return FFS_END; }
     uint8_t *e;
     int r = dir_ent(v, dir, 1, &e, 0);
@@ -381,6 +391,7 @@ int ffs_parent(struct ffs *v, uint32_t dir, uint32_t *parent)
 
 int ffs_dir_ent(struct ffs *v, uint32_t dir, struct ffs_ent *e)
 {
+    if (v->x) return xfs_dir_ent(v, dir, e);
     uint32_t p, pos = 0;
     int r = ffs_parent(v, dir, &p);
     if (r) return r;
@@ -393,6 +404,7 @@ int ffs_dir_ent(struct ffs *v, uint32_t dir, struct ffs_ent *e)
 
 int ffs_resolve(struct ffs *v, const char *path, uint32_t *dir, struct ffs_ent *e)
 {
+    if (v->x) return xfs_resolve(v, path, dir, e);
     uint32_t d = 0;
     int any = 0;
     while (*path) {
@@ -604,6 +616,7 @@ static int put_name(struct ffs *v, uint32_t dir, const char *name, uint32_t len,
 
 int ffs_create(struct ffs *v, uint32_t dir, const char *name, uint32_t len, int isdir, struct ffs_ent *o)
 {
+    if (v->x) return xfs_create(v, dir, name, len, isdir, o);
     if (!ffs_name_ok(name, len)) return FFS_BADNAME;
     struct ffs_ent x;
     int r = ffs_find(v, dir, name, len, &x);
@@ -651,6 +664,7 @@ static int kill_entries(struct ffs *v, const struct ffs_ent *e)
 
 int ffs_delete(struct ffs *v, const struct ffs_ent *e)
 {
+    if (v->x) return xfs_delete(v, e);
     if (e->attr & FFS_A_DIR) {
         struct ffs_ent x;
         uint32_t pos = 0;
@@ -666,6 +680,7 @@ int ffs_delete(struct ffs *v, const struct ffs_ent *e)
 
 int ffs_rename(struct ffs *v, const struct ffs_ent *e, uint32_t ndir, const char *name, uint32_t len, struct ffs_ent *o)
 {
+    if (v->x) return xfs_rename(v, e, ndir, name, len, o);
     if (!ffs_name_ok(name, len)) return FFS_BADNAME;
     struct ffs_ent x;
     int r = ffs_find(v, ndir, name, len, &x);
@@ -705,6 +720,7 @@ static int edit_ent(struct ffs *v, struct ffs_ent *e, uint8_t **p)
 
 int ffs_set_attr(struct ffs *v, struct ffs_ent *e, uint8_t attr)
 {
+    if (v->x) return xfs_set_attr(v, e, attr);
     uint8_t *p;
     int r = edit_ent(v, e, &p);
     if (r) return r;
@@ -715,6 +731,7 @@ int ffs_set_attr(struct ffs *v, struct ffs_ent *e, uint8_t attr)
 
 int ffs_set_date(struct ffs *v, struct ffs_ent *e, uint16_t date, uint16_t time)
 {
+    if (v->x) return xfs_set_date(v, e, date, time);
     uint8_t *p;
     int r = edit_ent(v, e, &p);
     if (r) return r;
@@ -734,6 +751,7 @@ void ffs_open(struct ffs_file *h, const struct ffs_ent *e)
 
 int ffs_flush_file(struct ffs *v, struct ffs_file *h)
 {
+    if (v->x) return xfs_flush_file(v, h);
     if (!h->dirty) return 0;
     uint8_t *p;
     int r = edit_ent(v, &h->e, &p);
@@ -803,6 +821,7 @@ static int aligned(const void *p) { return !((uintptr_t)p & 3); }
 
 int32_t ffs_read(struct ffs *v, struct ffs_file *h, uint32_t pos, void *buf, uint32_t n)
 {
+    if (v->x) return xfs_read(v, h, pos, buf, n);
     uint8_t *p = buf;
     if (pos >= h->e.size) return 0;
     if (n > h->e.size - pos) n = h->e.size - pos;
@@ -827,6 +846,7 @@ int32_t ffs_read(struct ffs *v, struct ffs_file *h, uint32_t pos, void *buf, uin
 
 int32_t ffs_write(struct ffs *v, struct ffs_file *h, uint32_t pos, const void *buf, uint32_t n, int *err)
 {
+    if (v->x) return xfs_write(v, h, pos, buf, n, err);
     const uint8_t *p = buf;
     uint32_t done = 0;
     *err = 0;
@@ -859,6 +879,7 @@ int32_t ffs_write(struct ffs *v, struct ffs_file *h, uint32_t pos, const void *b
 
 int ffs_truncate(struct ffs *v, struct ffs_file *h, uint32_t size)
 {
+    if (v->x) return xfs_truncate(v, h, size);
     int r;
     if (size > h->e.size) {                                   /* longer: zeros */
         uint32_t pos = h->e.size;

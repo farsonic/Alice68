@@ -6,7 +6,7 @@
 set -e
 P=$(cd "$(dirname "$0")/../.." && pwd); T=${TMPDIR:-/tmp}/alice68-fatfs-test
 rm -rf "$T"; mkdir -p "$T"
-cc -O1 -g -Wall -Wextra -Werror -std=gnu11 -I"$P/amiga/hdf" -o "$T/fatfs_test" "$P/tools/hdf-test/fatfs_test.c" "$P/amiga/hdf/fatfs.c" "$P/amiga/hdf/hdf_core.c"
+cc -O1 -g -Wall -Wextra -Werror -std=gnu11 -I"$P/amiga/hdf" -o "$T/fatfs_test" "$P/tools/hdf-test/fatfs_test.c" "$P/amiga/hdf/fatfs.c" "$P/amiga/hdf/exfat.c" "$P/amiga/hdf/hdf_core.c"
 export MTOOLS_SKIP_CHECK=1 LC_ALL=C.UTF-8
 python3 -I - "$T/src" <<'PY'
 import os, random, sys

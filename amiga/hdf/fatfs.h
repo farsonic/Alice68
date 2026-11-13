@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: GPL-2.0-only
  *
  * Alice68 folders: reading and writing files on the SD card's FAT16/FAT32
- * boot partition, for the folders alice68hdf.device mounts as Amiga volumes
+ * boot partition (and, through exfat.c, its exFAT partition), for the folders
+ * alice68hdf.device mounts as Amiga volumes
  * (config.txt alice68.folder=...). Long names (VFAT) are read and written;
  * names are Latin-1 on the Amiga side, UCS-2 on the card.
  *
@@ -54,6 +55,9 @@ struct ffs_ent {
     uint16_t date, time;                /* modified */
     char     name[FFS_NAME];            /* the long name, else the 8.3 one */
     char     sfn[13];                   /* the 8.3 name, as "NAME.EXT" */
+    /* exFAT only (exfat.c): size is the DataLength clamped to 32 bits */
+    uint8_t  xnofat;                    /* contiguous: no FAT chain */
+    uint64_t xsize, xvalid;             /* DataLength, ValidDataLength */
 };
 
 struct ffs_file {
@@ -62,8 +66,10 @@ struct ffs_file {
     int      dirty;                     /* the entry needs writing */
 };
 
+struct xfat;
 struct ffs {
     struct fat *f;
+    struct xfat *x;                     /* an exFAT volume (exfat.c) instead of f: every call goes there */
     uint8_t *dsec;                      /* directory sector */
     uint32_t dsec_no;                   /* its card sector, ~0 = none */
     int      dsec_dirty;
@@ -109,6 +115,11 @@ int  ffs_flush_file(struct ffs *v, struct ffs_file *h);          /* its entry (s
 
 int  ffs_free_clusters(struct ffs *v, uint32_t *n);
 uint32_t ffs_cluster_bytes(const struct ffs *v);
+uint32_t ffs_clusters(const struct ffs *v);                     /* in the partition */
+uint32_t ffs_clus_sec(const struct ffs *v, uint32_t c);         /* a cluster's first card sector */
+void ffs_set_io(struct ffs *v, struct hdf_io *io);              /* whose card requests from now on */
+/* an exFAT volume through the same calls (exfat.c); 0 ok */
+int  ffs_init_exfat(struct ffs *v, struct xfat *x);
 
 /* AmigaDOS dates (days since 1978, minutes, ticks) and FAT's */
 void ffs_amiga_to_fat(uint32_t days, uint32_t mins, uint32_t ticks, uint16_t *date, uint16_t *time);

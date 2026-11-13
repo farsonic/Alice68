@@ -4,7 +4,11 @@
 config.txt, the ALICE68 folder, other folders and a mounted hardfile; a fake
 exec, expansion.library, dos.library and brcm-emmc.device.
 
-    harness_folders.py DEVICE.hunk DEVICE.elf WORKDIR [cardro]
+    harness_folders.py DEVICE.hunk DEVICE.elf WORKDIR [cardro] [exfat]
+
+exfat: the folders (all but ALICE68) on an exFAT partition after the FAT32 one
+(mkfs.exfat, filled through exfat-fuse; needs root and losetup): mounted
+read-only, read through the same packets, every write refused.
 
 Checks the boot nodes the device makes for the folders, then starts a
 handler (fold_start) and sends it DOS packets (fold_do): directory listing,
@@ -28,6 +32,7 @@ HEAP, HEAP_END = 0x400000, 0xC00000
 STACK = 0x200000
 hunk, elf, work = sys.argv[1:4]
 card_ro = 'cardro' in sys.argv[4:]
+exfat = 'exfat' in sys.argv[4:]
 env = dict(os.environ, MTOOLS_SKIP_CHECK='1', LC_ALL='C.UTF-8')
 
 def die(msg):
@@ -64,9 +69,31 @@ config = ('# the Pi\'s settings\n[pi4]\narm_64bit=1\n[all]\n'
           'alice68.folder=Games/readme.txt\n'
           '  alice68.folder=ALICE68  \n')
 open(os.path.join(src, 'config.txt'), 'w').write(config)
-subprocess.run(['mkfs.fat', '-F', '32', '-s', '1', '-C', img, '40000'], check=True, stdout=subprocess.DEVNULL)
-for top in ('ALICE68', 'Games', 'Work', 'HDF', 'config.txt'):
-    subprocess.run(['mcopy', '-s', '-i', img, os.path.join(src, top), '::/'], check=True, env=env)
+if not exfat:
+    subprocess.run(['mkfs.fat', '-F', '32', '-s', '1', '-C', img, '40000'], check=True, stdout=subprocess.DEVNULL)
+    for top in ('ALICE68', 'Games', 'Work', 'HDF', 'config.txt'):
+        subprocess.run(['mcopy', '-s', '-i', img, os.path.join(src, top), '::/'], check=True, env=env)
+else:
+    # MBR: FAT32 at 2048 (ALICE68, config.txt), exFAT after it with Games, Work and HDF
+    P1, N1, P2, N2 = 2048, 69632, 71680, 65536
+    with open(img, 'wb') as f: f.truncate((P2 + N2) * 512)
+    subprocess.run(['sfdisk', '-q', img], input=b'label: dos\n%d,%d,c\n%d,%d,7\n' % (P1, N1, P2, N2), check=True)
+    def loopdev(st, n):
+        return subprocess.run(['losetup', '-f', '--show', '-o', str(st * 512), '--sizelimit', str(n * 512), img],
+                              check=True, capture_output=True).stdout.decode().strip()
+    l1 = loopdev(P1, N1)
+    subprocess.run(['mkfs.fat', '-F', '32', '-s', '1', l1], check=True, stdout=subprocess.DEVNULL)
+    for top in ('ALICE68', 'config.txt'):
+        subprocess.run(['mcopy', '-s', '-i', l1, os.path.join(src, top), '::/'], check=True, env=env)
+    subprocess.run(['losetup', '-d', l1], check=True)
+    l2 = loopdev(P2, N2)
+    subprocess.run(['mkfs.exfat', l2], check=True, stdout=subprocess.DEVNULL)
+    mnt = os.path.join(work, 'folders-mnt'); os.makedirs(mnt, exist_ok=True)
+    subprocess.run(['mount.exfat-fuse', l2, mnt], check=True, capture_output=True)
+    try:
+        subprocess.run(['cp', '-r'] + [os.path.join(src, t) for t in ('Games', 'Work', 'HDF')] + [mnt + '/'], check=True)
+    finally:
+        subprocess.run(['umount', mnt], check=True); subprocess.run(['losetup', '-d', l2], check=True)
 card = bytearray(open(img, 'rb').read())
 
 # ---- the fake system ------------------------------------------------------------------
@@ -227,8 +254,9 @@ for b in fold:
     if (mem.r16(c), mem.r32(c + 2), mem.r16(c + 6), mem.r32(c + 8), mem.r16(c + 12), mem.r16(c + 14)) != \
        (0x4879, DEVBASE, 0x4eb9, syms['folder_main'], 0x588f, 0x4e75):
         die('the seglist does not call folder_main(db)')
-for line in ('folder ALICE68: volume ALICE68 (SDF0:)', 'folder Games: volume Games (SDF1:)',
-             'folder Work/Docs: volume Documents (SDF2:)', 'folder HDF: volume Hardfiles (SDF3:)',
+X = ' (exFAT)' if exfat else ''
+for line in ('folder ALICE68: volume ALICE68 (SDF0:)', 'folder Games%s: volume Games (SDF1:)' % X,
+             'folder Work/Docs%s: volume Documents (SDF2:)' % X, 'folder HDF%s: volume Hardfiles (SDF3:)' % X,
              'alice68.folder=NoSuchFolder: no such folder', 'alice68.folder=Games/readme.txt: not a folder'):
     if line not in logtxt: die('log has no "%s"' % line)
 if 'raw.hdf' not in logtxt or not any(b['name'] == 'DH0' for b in boots): die('the hardfile in HDF/ was not mounted')
@@ -311,6 +339,42 @@ def readall(ctx, h, chunk):
         out += bytes(mem.r_block(BUF, n))
 def write(ctx, h, data):
     mem.w_block(BUF, data); return pkt(ctx, ord('W'), h, BUF, len(data))
+
+if exfat:                                            # read-only: everything reads, nothing writes
+    root = ok(pkt(G, LOCATE, 0, name(''), -2), 'Lock root')
+    ok(pkt(G, EXAMINE, root, FIB >> 2), 'Examine root')
+    chk(fib()['name'] == 'Games' and fib()['type'] == 1, 'root: %s' % fib())
+    ls = {e['name']: e for e in listdir(G, root)}
+    chk(set(ls) == {'Long File Name.txt', 'readme.txt', 'Sub', 'Disk.info'}, 'Games lists %s' % sorted(ls))
+    chk(ls['Long File Name.txt']['size'] == 70000 and ls['Sub']['type'] == 2 and ls['readme.txt']['type'] == -3, 'sizes, types: %s' % ls)
+    for path, chunk in (('readme.txt', 5), ('LONG FILE NAME.TXT', 777), ('Sub/deep.bin', 4096), ('/Games/Sub/../readme.txt', 100)):
+        want = files['Games/' + ('readme.txt' if 'readme' in path else 'Long File Name.txt' if 'LONG' in path else 'Sub/deep.bin')]
+        if '..' in path: path = 'Sub//readme.txt'                       # AmigaDOS: "/" is the parent
+        h, r = openf(G, FINDINPUT, path)
+        chk(h and readall(G, h, chunk) == want, 'read %s in %d-byte pieces' % (path, chunk))
+        ok(pkt(G, END, h), 'Close')
+    sub = ok(pkt(G, LOCATE, 0, name('Sub'), -2), 'Lock Sub')
+    chk([e['name'] for e in listdir(G, sub)] == ['deep.bin'], 'Sub lists')
+    par = ok(pkt(G, PARENT, sub), 'Parent of Sub')
+    chk(pkt(G, SAMELOCK, par, root)[0] == -1, 'the parent of Sub is the root')
+    deep = ok(pkt(G, LOCATE, 0, name('Sub/deep.bin'), -2), 'Lock deep.bin')
+    chk(pkt(G, SAMELOCK, ok(pkt(G, PARENT, deep), 'Parent of deep.bin'), sub)[0] == -1, 'the parent of deep.bin is Sub')
+    ok(pkt(G, INFOP, root, INFO >> 2), 'Info')
+    chk(mem.r32(INFO + 8) == 80 and mem.r32(INFO + 12) > 0 and mem.r32(INFO + 16) <= mem.r32(INFO + 12), 'InfoData: write-protected, blocks')
+    f_ = fh()
+    err(pkt(G, FINDOUTPUT, f_ >> 2, 0, name('new.txt')), 214, 'create a file')
+    err(pkt(G, FINDOUTPUT, f_ >> 2, 0, name('readme.txt')), 214, 'replace a file')
+    err(pkt(G, DELETE, 0, name('readme.txt')), 214, 'delete')
+    err(pkt(G, MKDIR, 0, name('NewDir')), 214, 'make a directory')
+    err(pkt(G, RENAME, 0, name('readme.txt'), 0, name('x.txt')), 214, 'rename')
+    h, r = openf(G, FINDUPDATE, 'readme.txt')
+    chk(h, 'open for update (reading still works)')
+    err(write(G, h, b'x'), 214, 'write')
+    ok(pkt(G, END, h), 'Close')
+    DO = start(2)
+    chk([e['name'] for e in listdir(DO, ok(pkt(DO, LOCATE, 0, name(''), -2), 'Lock'))] == ['letter.txt', 'Disk.info'], 'Documents lists')
+    chk(bytes(card) == open(img, 'rb').read(), 'the card is unchanged')
+    print('exFAT folders: read-only, %d checks; writes refused (214); card unchanged' % checks[0]); print('ALL OK'); sys.exit(0)
 
 root = ok(pkt(G, LOCATE, 0, name(''), -2), 'Lock root')
 ok(pkt(G, EXAMINE, root, FIB >> 2), 'Examine root')

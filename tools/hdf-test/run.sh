@@ -38,6 +38,8 @@ sh "$P/tools/hdf-test/exfat.sh"
 if [ "$(id -u)" = 0 ] && command -v mount.exfat-fuse >/dev/null && command -v mkfs.exfat >/dev/null; then
     printf '%-12s driver %-14s ' isos exfat
     python3 "$P/amiga/test/harness_isos.py" "$P/amiga/out/alice68hdf.device" "$P/amiga/out/alice68hdf.device.elf" "$T" exfat | tail -1
+    printf '%-12s driver %-14s ' folders exfat
+    python3 "$P/amiga/test/harness_folders.py" "$P/amiga/out/alice68hdf.device" "$P/amiga/out/alice68hdf.device.elf" "$T" exfat | tail -1
 else
-    echo "isos         driver exfat          SKIPPED: needs root, losetup, mkfs.exfat and exfat-fuse"
+    echo "isos/folders driver exfat          SKIPPED: needs root, losetup, mkfs.exfat and exfat-fuse"
 fi

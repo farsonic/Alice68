@@ -9,6 +9,10 @@
  *   L name                        (each entry of the root, then of the folder HDF)
  *   N name size                   (xfat_find of the names given after the image, another case)
  *     exfat_test IMAGE [NAME...]
+ * and with -w, the folder engine (the ffs_* calls on exFAT, as folders.c makes them):
+ *   D path / F path size crc32    (every entry; files read in 777-byte pieces)
+ *   S free-clusters cluster-bytes
+ *     exfat_test -w IMAGE
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -55,8 +59,64 @@ static void show(struct hdf_io *io, const char *kind, struct hdf_file *h)
     printf("%s %s %u %u %08x\n", kind, h->name, h->blocks, h->next, c);
 }
 
+static int fails;
+static void walk(struct ffs *v, uint32_t dir, const char *path, int depth)
+{
+    static uint8_t buf[1 << 16];
+    uint32_t pos = 0;
+    struct ffs_ent e;
+    int r;
+    if (depth > 40) { printf("FAIL %s: too deep\n", path); fails++; return; }
+    while ((r = ffs_next(v, dir, &pos, &e)) == 0) {
+        char p[4096];
+        snprintf(p, sizeof p, "%s%s%s", path, path[0] ? "/" : "", e.name);
+        struct ffs_ent f;
+        if (ffs_find(v, dir, e.name, (uint32_t)strlen(e.name), &f) || f.sec != e.sec || f.slot != e.slot) { printf("FAIL %s: ffs_find\n", p); fails++; }
+        if (e.attr & FFS_A_DIR) {
+            uint32_t par;
+            struct ffs_ent self;
+            if (ffs_parent(v, e.first, &par) || par != dir) { printf("FAIL %s: parent\n", p); fails++; }
+            if (ffs_dir_ent(v, e.first, &self) || self.first != e.first || strcmp(self.name, e.name)) { printf("FAIL %s: dir_ent\n", p); fails++; }
+            printf("D %s\n", p);
+            walk(v, e.first, p, depth + 1);
+        } else if (e.xsize > (64u << 20)) {
+            printf("F %s %llu -\n", p, (unsigned long long)e.xsize);
+        } else {
+            struct ffs_file h;
+            ffs_open(&h, &e);
+            uint32_t c = 0, at = 0;
+            int32_t n;
+            while ((n = ffs_read(v, &h, at, buf + (at & 3) + 1, 777)) > 0) { c = crc32(c, buf + (at & 3) + 1, (uint32_t)n); at += (uint32_t)n; }
+            if (n < 0 || at != e.size) { printf("FAIL %s: read %d at %u\n", p, n, at); fails++; }
+            printf("F %s %u %08x\n", p, e.size, c);
+        }
+    }
+    if (r != FFS_END) { printf("FAIL %s: ffs_next %d\n", path, r); fails++; }
+}
+
 int main(int argc, char **argv)
 {
+    if (argc == 3 && !strcmp(argv[1], "-w")) {
+        if (!(img = fopen(argv[2], "rb"))) return 2;
+        struct hdf_io io = { 0, rd, 0, al, fr, lg };
+        struct xfat x;
+        struct ffs v;
+        if (xfat_open(&x, &io) || ffs_init_exfat(&v, &x)) { printf("NOEXFAT\n"); return 1; }
+        walk(&v, x.root, "", 0);
+        uint32_t fr_ = 0;
+        if (ffs_free_clusters(&v, &fr_)) { printf("FAIL free clusters\n"); fails++; }
+        printf("S %u %u\n", fr_, ffs_cluster_bytes(&v));
+        struct ffs_ent e;
+        uint32_t d;
+        if (ffs_resolve(&v, "a/b/c", &d, &e) || strcmp(e.name, "c")) { printf("FAIL resolve a/b/c\n"); fails++; }
+        if (ffs_resolve(&v, "Many/x", &d, &e) != FFS_END) { printf("FAIL resolve a missing path\n"); fails++; }
+        struct ffs_file h;
+        int err;
+        ffs_open(&h, &e);
+        if (ffs_create(&v, x.root, "new", 3, 0, &e) != FFS_WP || ffs_write(&v, &h, 0, "x", 1, &err) != 0 || err != FFS_WP) { printf("FAIL writes not refused\n"); fails++; }
+        xfat_close(&x);
+        return fails != 0;
+    }
     if (argc < 2 || !(img = fopen(argv[1], "rb"))) return 2;
     struct hdf_io io = { 0, rd, 0, al, fr, lg };
     struct xfat v;
