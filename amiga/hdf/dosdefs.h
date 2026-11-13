@@ -106,6 +106,7 @@ ACHECK(AOFF(struct DosList, dol_Name) == 40);
 #define DLT_VOLUME      2
 #define LDF_WRITE       2
 #define LDF_VOLUMES     8
+#define ERROR_COMMENT_TOO_BIG 220
 #define FIBF_DELETE     1
 #define FIBF_WRITE      4
 #define FIBF_ARCHIVE    16

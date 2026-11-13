@@ -18,11 +18,16 @@
  * read-only through a folder: their clusters are in use by the unit.
  * A folder without a Disk.info of its own shows Alice68's SD folder icon
  * (disk_icons.h): read-only, until a real one is written (a Workbench Snapshot).
+ * Amiga attributes FAT cannot hold (comments, flags but ----rwed / ----r-e-, exact
+ * dates) and names it cannot hold are kept as FS-UAE and Amiberry keep them
+ * (uaem.h): NAME.uaem sidecars and %xx names; sidecars and macOS/Windows clutter
+ * are hidden.
  */
 #include "hdf_dev.h"
 
 #include "dosdefs.h"
 #include "disk_icons.h"
+#include "uaem.h"
 
 #define FOLDER_STACK 16384
 extern void folder_main(struct HdfBase *db);
@@ -53,8 +58,17 @@ struct FObj {
     ULONG isroot;                           /* the volume's root */
     ULONG hdf;                              /* a mounted hardfile: never written */
     ULONG virt;                             /* the built-in Disk.info (no entry on the card) */
+    ULONG written;                          /* changed since it was opened: a sidecar's date follows */
     struct ffs_file h;                      /* the object's entry; files: the open file */
     ULONG pos;
+};
+
+/* a sidecar in the directory being listed */
+struct MRef {
+    ULONG hash;                             /* of its file's host name, case folded */
+    ULONG first, size;
+    UBYTE nofat;
+    uint64_t xsize, xvalid;
 };
 
 /* one handler process */
@@ -66,6 +80,10 @@ struct FCtx {
     struct hdf_io io;
     APTR dos;
     struct MsgPort *port;
+    /* the sidecars of one directory, found in one pass (a listing asks for each entry's) */
+    struct MRef *mref;
+    ULONG nmref, capmref, mdir, mgen, mvalid;
+    struct DateStamp now;                   /* when the packet being done came */
 };
 
 static uint32_t slen(const char *s) { uint32_t n = 0; while (s[n]) n++; return n; }
@@ -99,6 +117,7 @@ struct where {
     const char *leaf;                       /* the last name, if it was not found */
     uint32_t leaflen;
     int virt;                               /* the built-in Disk.info (leaf and dir are set too) */
+    char host[FFS_NAME];                    /* the leaf's name on the card (%xx for what it cannot hold) */
 };
 
 /* the built-in Disk.info, in the volume's root while it has none of its own */
@@ -198,6 +217,90 @@ static void share(struct FCtx *x, struct FObj *o)
     }
 }
 
+/* ---- Amiga attributes in NAME.uaem sidecars (uaem.h) ------------------------------------- */
+static ULONG fold_hash(const char *s, uint32_t n)
+{
+    ULONG h = 2166136261u;
+    for (uint32_t i = 0; i < n; i++) {
+        UBYTE c = (UBYTE)s[i];
+        if ((c >= 'a' && c <= 'z') || (c >= 0xe0 && c <= 0xfe && c != 0xf7)) c = (UBYTE)(c - 32);
+        h = (h ^ c) * 16777619u;
+    }
+    return h;
+}
+/* the sidecars of directory dir, in one pass */
+static int mref_load(struct FCtx *x, uint32_t dir)
+{
+    if (x->mvalid && x->mdir == dir && x->mgen == x->db->mgen) return 0;
+    x->nmref = 0; x->mvalid = 0;
+    uint32_t pos = 0;
+    struct ffs_ent e;
+    while (ffs_next(x->fv->fs, dir, &pos, &e) == 0) {
+        uint32_t n = slen(e.name);
+        if ((e.attr & FFS_A_DIR) || n < 6 || e.size > 4096 || (e.name[0] == '.' && e.name[1] == '_')) continue;
+        if (!ffs_name_eq(".uaem", e.name + n - 5, 5)) continue;
+        if (x->nmref == x->capmref) {
+            ULONG cap = x->capmref ? x->capmref * 2 : 32;
+            struct MRef *m = AllocMem(cap * sizeof *m, MEMF_PUBLIC);
+            if (!m) return -1;
+            if (x->mref) { memcpy(m, x->mref, x->nmref * sizeof *m); FreeMem(x->mref, x->capmref * sizeof *m); }
+            x->mref = m; x->capmref = cap;
+        }
+        struct MRef *r = &x->mref[x->nmref++];
+        r->hash = fold_hash(e.name, n - 5);
+        r->first = e.first; r->size = e.size; r->nofat = e.xnofat; r->xsize = e.xsize; r->xvalid = e.xvalid;
+    }
+    x->mdir = dir; x->mgen = x->db->mgen; x->mvalid = 1;
+    return 0;
+}
+/* the attributes the sidecar of host in dir gives: 1 found, 0 none */
+static int meta_get(struct FCtx *x, uint32_t dir, const char *host, struct uaem *m)
+{
+    if (mref_load(x, dir)) return 0;
+    ULONG h = fold_hash(host, slen(host));
+    for (ULONG i = 0; i < x->nmref; i++) {
+        struct MRef *r = &x->mref[i];
+        if (r->hash != h) continue;
+        struct ffs_ent e;
+        memset(&e, 0, sizeof e);
+        e.first = r->first; e.size = r->size; e.xnofat = r->nofat; e.xsize = r->xsize; e.xvalid = r->xvalid;
+        struct ffs_file f;
+        ffs_open(&f, &e);
+        UBYTE line[UAEM_LINE];
+        int32_t n = ffs_read(x->fv->fs, &f, 0, line, sizeof line);
+        return n > 0 && uaem_parse(line, (uint32_t)n, m) == 0;
+    }
+    return 0;
+}
+/* write (or, with remove, delete) the sidecar of host in dir; 0 or an FFS_ error */
+static int meta_put(struct FCtx *x, uint32_t dir, const char *host, const struct uaem *m, int remove)
+{
+    struct ffs *v = x->fv->fs;
+    char sc[FFS_NAME];
+    struct ffs_ent e;
+    x->db->mgen++;
+    if (uaem_sidecar(host, sc, sizeof sc) < 0) return remove ? 0 : FFS_BADNAME;
+    int r = ffs_find(v, dir, sc, slen(sc), &e);
+    if (remove) return r == FFS_END ? 0 : r ? r : ffs_delete(v, &e);
+    if (r == FFS_END) r = ffs_create(v, dir, sc, slen(sc), 0, &e);
+    if (r) return r;
+    char line[UAEM_LINE];
+    uint32_t n = uaem_format(m, line);
+    struct ffs_file f;
+    ffs_open(&f, &e);
+    int err = 0;
+    if ((r = ffs_truncate(v, &f, 0))) return r;
+    if (ffs_write(v, &f, 0, line, n, &err) != (int32_t)n) return err ? err : FFS_FULL;
+    return ffs_flush_file(v, &f);
+}
+/* what the Amiga sees of an entry with no sidecar */
+static void meta_plain(const struct ffs_ent *e, struct uaem *m)
+{
+    m->prot = ((e->attr & FFS_A_RO) ? FIBF_WRITE | FIBF_DELETE : 0) | ((e->attr & FFS_A_ARCH) ? 0 : FIBF_ARCHIVE);
+    ffs_fat_to_amiga(e->date, e->time, &m->days, &m->mins, &m->ticks);
+    m->comment[0] = 0;
+}
+
 /* ---- paths --------------------------------------------------------------------------- */
 static int start_at(struct FCtx *x, LONG lock, struct where *w)
 {
@@ -240,10 +343,13 @@ static int resolve(struct FCtx *x, LONG lock, ULONG bname, struct where *w)
         if (!w_isdir(x, w)) return -ERROR_OBJECT_WRONG_TYPE;
         uint32_t d = w_key(x, w);
         struct ffs_ent e;
-        r = ffs_find(x->fv->fs, d, s + i, j - i, &e);
+        int hl = uaem_encode(s + i, j - i, w->host, sizeof w->host);
+        if (hl < 0) return -ERROR_INVALID_COMPONENT_NAME;
+        r = ffs_find(x->fv->fs, d, w->host, (uint32_t)hl, &e);
+        if (r == 0 && uaem_hidden(e.name)) r = FFS_END;          /* sidecars and clutter are not there */
         if (r == FFS_END) {
             if (j < len) return -ERROR_DIR_NOT_FOUND;
-            w->dir = d; w->leaf = s + i; w->leaflen = j - i;
+            w->dir = d; w->leaf = w->host; w->leaflen = (uint32_t)hl;
             if (d == x->fv->root && ffs_name_eq(DISK_ICON_NAME, s + i, j - i)) {   /* the built-in one */
                 w->isroot = 0; w->virt = 1;
                 virt_ent(x, &w->e);
@@ -265,7 +371,9 @@ static int resolve(struct FCtx *x, LONG lock, ULONG bname, struct where *w)
 static void fill_fib(struct FCtx *x, struct FileInfoBlock *fib, int isroot, const struct ffs_ent *e)
 {
     memset(fib, 0, sizeof *fib);
-    const char *n = isroot ? x->fv->vol : e->name;
+    char an[FFS_NAME];
+    if (!isroot) uaem_decode(e->name, an, sizeof an);
+    const char *n = isroot ? x->fv->vol : an;
     uint32_t k = slen(n);
     if (k > 106) k = 106;
     fib->fib_FileName[0] = (char)k;
@@ -274,10 +382,20 @@ static void fill_fib(struct FCtx *x, struct FileInfoBlock *fib, int isroot, cons
     fib->fib_DirEntryType = fib->fib_EntryType = isroot ? ST_ROOT : dir ? ST_USERDIR : ST_FILE;
     fib->fib_Size = dir ? 0 : (LONG)e->size;
     fib->fib_NumBlocks = dir ? 1 : (LONG)((e->size + 511) / 512);
-    fib->fib_Protection = ((e->attr & FFS_A_RO) ? FIBF_WRITE | FIBF_DELETE : 0) | ((e->attr & FFS_A_ARCH) ? 0 : FIBF_ARCHIVE);
-    uint32_t d, m, t;
-    ffs_fat_to_amiga(e->date, e->time, &d, &m, &t);
-    fib->fib_Date.ds_Days = (LONG)d; fib->fib_Date.ds_Minute = (LONG)m; fib->fib_Date.ds_Tick = (LONG)t;
+    struct uaem m, fat;
+    meta_plain(e, &fat);
+    if (isroot || e->sec == VIRT_SEC || !meta_get(x, e->dir, e->name, &m)) m = fat;
+    else {
+        /* the archive bit is FAT's (every write sets it); the date is the sidecar's (as in
+           FS-UAE: a copy on a PC gives files new dates, the sidecar keeps the Amiga's), and an
+           Amiga write to the file brings the sidecar's up to date (ACTION_END) */
+        m.prot = (m.prot & ~(ULONG)FIBF_ARCHIVE) | (fat.prot & FIBF_ARCHIVE);
+    }
+    fib->fib_Protection = (LONG)m.prot;
+    fib->fib_Date.ds_Days = (LONG)m.days; fib->fib_Date.ds_Minute = (LONG)m.mins; fib->fib_Date.ds_Tick = (LONG)m.ticks;
+    uint32_t cl = slen(m.comment);
+    fib->fib_Comment[0] = (char)cl;
+    memcpy(fib->fib_Comment + 1, m.comment, cl);
     fib->fib_DiskKey = 0;
 }
 
@@ -364,7 +482,7 @@ static LONG do_packet(struct FCtx *x, struct DosPacket *p, LONG *res2)
         uint32_t pos = (uint32_t)fib->fib_DiskKey;
         struct ffs_ent n;
         if (pos == VIRT_POS) FAIL(ERROR_NO_MORE_ENTRIES);
-        r = ffs_next(v, w_key(x, &w), &pos, &n);
+        do r = ffs_next(v, w_key(x, &w), &pos, &n); while (r == 0 && uaem_hidden(n.name));
         if (r == FFS_END) {                            /* the root without a Disk.info: the built-in one last */
             if (w_key(x, &w) != x->fv->root || ffs_find(v, x->fv->root, DISK_ICON_NAME, sizeof DISK_ICON_NAME - 1, &n) != FFS_END)
                 FAIL(ERROR_NO_MORE_ENTRIES);
@@ -428,6 +546,13 @@ static LONG do_packet(struct FCtx *x, struct DosPacket *p, LONG *res2)
     case ACTION_END:
         o = (struct FObj *)p->dp_Arg1;
         if (!o->virt) ffs_flush_file(v, &o->h);
+        if (o->written && !ro) {                       /* written: a sidecar's date follows the file */
+            struct uaem md;
+            if (meta_get(x, o->h.e.dir, o->h.e.name, &md)) {
+                md.days = (uint32_t)x->now.ds_Days; md.mins = (uint32_t)x->now.ds_Minute; md.ticks = (uint32_t)x->now.ds_Tick;
+                meta_put(x, o->h.e.dir, o->h.e.name, &md, 0);
+            }
+        }
         free_obj(x, o);
         return DOSTRUE;
 
@@ -454,6 +579,7 @@ static LONG do_packet(struct FCtx *x, struct DosPacket *p, LONG *res2)
         int err;
         int32_t n = ffs_write(v, &o->h, o->pos, (APTR)p->dp_Arg2, (ULONG)p->dp_Arg3, &err);
         o->pos += (ULONG)n;
+        if (n > 0) o->written = 1;
         share(x, o);
         if (err && !n) { *res2 = dos_err(err); return -1; }
         if (err) *res2 = dos_err(err);
@@ -479,6 +605,7 @@ static LONG do_packet(struct FCtx *x, struct DosPacket *p, LONG *res2)
         LONG ns = base + p->dp_Arg2;
         if (ns < 0) { *res2 = ERROR_SEEK_ERROR; return -1; }
         if ((r = ffs_truncate(v, &o->h, (ULONG)ns))) { *res2 = dos_err(r); return -1; }
+        o->written = 1;
         if (o->pos > o->h.e.size) o->pos = o->h.e.size;
         share(x, o);
         return ns;
@@ -491,7 +618,12 @@ static LONG do_packet(struct FCtx *x, struct DosPacket *p, LONG *res2)
         if (w.virt) FAIL(ERROR_DELETE_PROTECTED);
         if (w.isroot || in_use(x, &w) || hdf_mounted(x, &w.e)) FAIL(ERROR_OBJECT_IN_USE);
         if (w.e.attr & FFS_A_RO) FAIL(ERROR_DELETE_PROTECTED);
+        {
+            struct uaem m;
+            if (meta_get(x, w.e.dir, w.e.name, &m) && (m.prot & FIBF_DELETE)) FAIL(ERROR_DELETE_PROTECTED);
+        }
         if ((r = ffs_delete(v, &w.e))) FAIL(dos_err(r));
+        meta_put(x, w.e.dir, w.e.name, 0, 1);         /* and its sidecar */
         return DOSTRUE;
 
     case ACTION_RENAME_OBJECT: {
@@ -508,12 +640,25 @@ static LONG do_packet(struct FCtx *x, struct DosPacket *p, LONG *res2)
             const UBYTE *b = BADDR(p->dp_Arg4);       /* its last name, as given */
             uint32_t len = b[0], k = len;
             while (k && b[k] != '/' && b[k] != ':') k--;
-            w2.dir = w.e.dir; w2.leaf = (const char *)b + k + 1; w2.leaflen = len - k;
+            int hl = uaem_encode((const char *)b + k + 1, len - k, w2.host, sizeof w2.host);
+            if (hl < 0) FAIL(ERROR_INVALID_COMPONENT_NAME);
+            w2.dir = w.e.dir; w2.leaf = w2.host; w2.leaflen = (uint32_t)hl;
         }
         int dir = w_isdir(x, &w);
         uint32_t key = w_key(x, &w);
         struct ffs_ent old = w.e, ne;
         if ((r = ffs_rename(v, &w.e, w2.dir, w2.leaf, w2.leaflen, &ne))) FAIL(dos_err(r));
+        {                                             /* its sidecar goes with it */
+            char sc[FFS_NAME], nsc[FFS_NAME];
+            struct ffs_ent se, dummy;
+            char nh[FFS_NAME];
+            memcpy(nh, w2.leaf, w2.leaflen); nh[w2.leaflen] = 0;
+            if (uaem_sidecar(old.name, sc, sizeof sc) >= 0 && ffs_find(v, old.dir, sc, slen(sc), &se) == 0) {
+                if (uaem_sidecar(nh, nsc, sizeof nsc) >= 0) ffs_rename(v, &se, w2.dir, nsc, slen(nsc), &dummy);
+                else ffs_delete(v, &se);
+                db->mgen++;
+            }
+        }
         for (struct FObj *q = db->objs; q; q = q->next)       /* locks and files on it follow it */
             if (same(dir, key, &old, q)) { uint32_t sz = q->h.e.size, fi = q->h.e.first; q->h.e = ne; q->h.e.size = sz; q->h.e.first = fi; }
         return DOSTRUE;
@@ -534,23 +679,51 @@ static LONG do_packet(struct FCtx *x, struct DosPacket *p, LONG *res2)
         RESOLVE(p->dp_Arg2, p->dp_Arg3, &w);
         if (r) FAIL(ERROR_OBJECT_NOT_FOUND);
         if (w.isroot || w.virt) return DOSTRUE;       /* the folder's own entry is not the volume's to change */
-        if (p->dp_Type == ACTION_SET_PROTECT) {
-            ULONG m = (ULONG)p->dp_Arg4;
-            uint8_t a = (uint8_t)((w.e.attr & (FFS_A_HIDDEN | FFS_A_SYSTEM)) | ((m & FIBF_WRITE) ? FFS_A_RO : 0) | ((m & FIBF_ARCHIVE) ? 0 : FFS_A_ARCH));
-            r = ffs_set_attr(v, &w.e, a);
-        } else {
-            const struct DateStamp *ds = (const struct DateStamp *)p->dp_Arg4;
-            uint16_t dd, tt;
-            ffs_amiga_to_fat((uint32_t)ds->ds_Days, (uint32_t)ds->ds_Minute, (uint32_t)ds->ds_Tick, &dd, &tt);
-            r = ffs_set_date(v, &w.e, dd, tt);
+        {
+            struct uaem md;
+            int have = meta_get(x, w.e.dir, w.e.name, &md);
+            if (!have) meta_plain(&w.e, &md);
+            if (p->dp_Type == ACTION_SET_PROTECT) {
+                ULONG m = (ULONG)p->dp_Arg4;
+                uint8_t a = (uint8_t)((w.e.attr & (FFS_A_HIDDEN | FFS_A_SYSTEM)) | ((m & FIBF_WRITE) ? FFS_A_RO : 0) | ((m & FIBF_ARCHIVE) ? 0 : FFS_A_ARCH));
+                r = ffs_set_attr(v, &w.e, a);
+                md.prot = m;
+            } else {
+                const struct DateStamp *ds = (const struct DateStamp *)p->dp_Arg4;
+                uint16_t dd, tt;
+                ffs_amiga_to_fat((uint32_t)ds->ds_Days, (uint32_t)ds->ds_Minute, (uint32_t)ds->ds_Tick, &dd, &tt);
+                r = ffs_set_date(v, &w.e, dd, tt);
+                md.days = (uint32_t)ds->ds_Days; md.mins = (uint32_t)ds->ds_Minute; md.ticks = (uint32_t)ds->ds_Tick;
+            }
+            if (r) FAIL(dos_err(r));
+            /* a sidecar for what FAT cannot hold; none when it can hold it all */
+            if (!uaem_plain(md.prot) || md.comment[0]) r = meta_put(x, w.e.dir, w.e.name, &md, 0);
+            else if (have) r = meta_put(x, w.e.dir, w.e.name, 0, 1);
+            if (r) FAIL(dos_err(r));
         }
-        if (r) FAIL(dos_err(r));
         for (struct FObj *q = db->objs; q; q = q->next)
             if (same(w_isdir(x, &w), w_key(x, &w), &w.e, q)) { q->h.e.attr = w.e.attr; q->h.e.date = w.e.date; q->h.e.time = w.e.time; }
         return DOSTRUE;
 
-    case ACTION_SET_COMMENT:                          /* FAT keeps neither: accepted, so that copies work */
-    case ACTION_SET_OWNER:
+    case ACTION_SET_COMMENT: {                        /* in the sidecar */
+        WRITABLE();
+        RESOLVE(p->dp_Arg2, p->dp_Arg3, &w);
+        if (r) FAIL(ERROR_OBJECT_NOT_FOUND);
+        if (w.isroot || w.virt) return DOSTRUE;
+        struct uaem md;
+        int have = meta_get(x, w.e.dir, w.e.name, &md);
+        if (!have) meta_plain(&w.e, &md);
+        const UBYTE *c = BADDR(p->dp_Arg4);
+        uint32_t cl = c ? c[0] : 0;
+        if (cl > UAEM_COMMENT - 1) FAIL(ERROR_COMMENT_TOO_BIG);
+        memcpy(md.comment, c + 1, cl); md.comment[cl] = 0;
+        for (uint32_t i = 0; i < cl; i++) if ((UBYTE)md.comment[i] < 32) md.comment[i] = ' ';   /* one line */
+        if (cl || !uaem_plain(md.prot)) r = meta_put(x, w.e.dir, w.e.name, &md, 0);
+        else r = have ? meta_put(x, w.e.dir, w.e.name, 0, 1) : 0;
+        if (r) FAIL(dos_err(r));
+        return DOSTRUE;
+    }
+    case ACTION_SET_OWNER:                            /* FAT keeps no owner: accepted, so that copies work */
         RESOLVE(p->dp_Arg2, p->dp_Arg3, &w);
         if (r) FAIL(ERROR_OBJECT_NOT_FOUND);
         return DOSTRUE;
@@ -586,9 +759,8 @@ LONG fold_do(struct FCtx *x, struct DosPacket *p)
     ObtainSemaphore(&db->fsem);
     struct ffs *v = x->fv->fs;
     ffs_set_io(v, &x->io);                             /* this process's card requests */
-    struct DateStamp ds;
-    DateStamp(x->dos, &ds);
-    ffs_amiga_to_fat((uint32_t)ds.ds_Days, (uint32_t)ds.ds_Minute, (uint32_t)ds.ds_Tick, &v->date, &v->time);
+    DateStamp(x->dos, &x->now);
+    ffs_amiga_to_fat((uint32_t)x->now.ds_Days, (uint32_t)x->now.ds_Minute, (uint32_t)x->now.ds_Tick, &v->date, &v->time);
     LONG res2;
     LONG res1 = do_packet(x, p, &res2);
     int e = ffs_sync(v);

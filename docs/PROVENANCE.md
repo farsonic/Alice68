@@ -28,6 +28,9 @@ Alice68's history starts with three commits that keep the inputs apart:
      no code from other exFAT implementations - exfatprogs and exfat-fuse are used only
      as test tools, on the PC);
    - the USB mouse report parser (`alice_hid.c`, from the USB HID 1.11 specification);
+   - the folders' `.uaem` sidecars and `%xx` names (`amiga/hdf/uaem.c`), written from
+     FS-UAE's published description of the format so that folders work in FS-UAE and
+     Amiberry too; no FS-UAE or Amiberry code;
    - the WiFi (`third_party/Emu68/src/alice/`, run by the kernel on CPU1) and
      `alice68net.device` (`amiga/net/`), written for Alice68 from Linux brcmfmac and
      OpenBSD bwfm (ISC) as references; no code from other Amiga or RISC OS WiFi drivers

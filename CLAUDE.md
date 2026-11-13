@@ -123,6 +123,8 @@ tools/splash-preview/build.sh > out.ppm  # the splash, drawn by the kernel's own
   files (`._*`) ignored; hardfile writes only inside the file's own clusters, never the FAT.
 - Folders (`amiga/hdf/folders.c` + `fatfs.c`, `alice68.folder=` in config.txt, `ALICE68`
   always): the only code that writes the FAT; mounted hardfiles stay read-only through them.
+  Amiga attributes FAT can't hold go in FS-UAE/Amiberry-compatible `NAME.uaem` sidecars, names
+  in `%xx` (`uaem.c`, tested by `tools/hdf-test/uaem_test.c`); keep that format compatible.
   Tests: `tools/hdf-test/fatfs.sh` (PC, fsck.fat + mtools), `amiga/test/harness_folders.py`.
 - CD images (`amiga/hdf/isos.c` + `iso9660.c`): read-only, never written; a mounted image is
   read-only through the folders too. Tests: `tools/hdf-test/iso.sh` (PC, genisoimage),

@@ -52,6 +52,12 @@ files = {
     'Games/readme.txt': b'hello from the PC\n',
     'Games/Sub/deep.bin': blob(3000),
     'Work/Docs/letter.txt': b'Dear Amiga,\n',
+    # made on a PC or in FS-UAE: a sidecar with the script bit and a comment, an escaped name, clutter
+    'Games/Sub/Script': b'echo hi\n',
+    'Games/Sub/Script.uaem': b'-s--rwed 2020-05-06 07:08:09.10 made on a PC\n',
+    'Games/Sub/What%3f.txt': b'question\n',
+    'Games/Sub/._deep.bin': bytes(32),
+    'Games/Sub/.DS_Store': b'x',
 }
 raw = bytearray(2048 * 512)                          # a single-partition hardfile (DOS\1, WinUAE geometry)
 raw[0:4] = b'DOS\x01'
@@ -354,7 +360,7 @@ if exfat:                                            # read-only: everything rea
         chk(h and readall(G, h, chunk) == want, 'read %s in %d-byte pieces' % (path, chunk))
         ok(pkt(G, END, h), 'Close')
     sub = ok(pkt(G, LOCATE, 0, name('Sub'), -2), 'Lock Sub')
-    chk([e['name'] for e in listdir(G, sub)] == ['deep.bin'], 'Sub lists')
+    chk(sorted(e['name'] for e in listdir(G, sub)) == ['Script', 'What?.txt', 'deep.bin'], 'Sub lists: sidecars and clutter hidden')
     par = ok(pkt(G, PARENT, sub), 'Parent of Sub')
     chk(pkt(G, SAMELOCK, par, root)[0] == -1, 'the parent of Sub is the root')
     deep = ok(pkt(G, LOCATE, 0, name('Sub/deep.bin'), -2), 'Lock deep.bin')
@@ -494,6 +500,45 @@ lsd = [e['name'] for e in listdir(DO, ok(pkt(DO, LOCATE, 0, name(''), -2), 'Lock
 chk(lsd == ['letter.txt', 'Disk.info'], 'Documents: %s' % lsd)
 ok(pkt(DO, EXAMINE, ok(pkt(DO, LOCATE, 0, name(''), -2), 'Lock'), FIB >> 2), 'Examine')
 chk(fib()['name'] == 'Documents', 'the volume name, not the folder name')
+# ---- Amiga attributes in NAME.uaem sidecars (FS-UAE / Amiberry's format) ---------------------------------
+MSUB = ok(pkt(G, LOCATE, 0, name('Sub'), -2), 'Lock Sub')
+chk(sorted(e['name'] for e in listdir(G, MSUB)) == ['Script', 'What?.txt', 'deep.bin'], 'Sub lists: sidecars and clutter hidden')
+def exam(path):
+    l = ok(pkt(G, LOCATE, 0, name(path), -2), 'Lock ' + path)
+    ok(pkt(G, EXAMINE, l, FIB >> 2), 'Examine ' + path)
+    f = fib(); f['comment'] = bytes(mem.r_block(FIB + 145, mem.r8(FIB + 144))).decode('latin1'); f['ticks'] = mem.r32(FIB + 140)
+    ok(pkt(G, FREE, l), 'UnLock')
+    return f
+f = exam('Sub/Script')
+chk(f['prot'] == 0x40 and f['comment'] == 'made on a PC', 'a PC-made sidecar: script bit, comment: %x %r' % (f['prot'], f['comment']))
+chk((f['days'], f['mins'], f['ticks']) == (15466, 7 * 60 + 8, 9 * 50 + 5), 'its date: %s' % ((f['days'], f['mins'], f['ticks']),))
+h, r = openf(G, FINDINPUT, 'Sub/What?.txt')
+chk(h and readall(G, h, 100) == b'question\n', 'a %3f name read as What?.txt'); ok(pkt(G, END, h), 'Close')
+for hidden in ('Sub/Script.uaem', 'Sub/._deep.bin', 'Sub/.DS_Store'):
+    err(pkt(G, LOCATE, 0, name(hidden), -2), 205, 'hidden: ' + hidden)
+# made on the Amiga
+h, r = openf(G, FINDOUTPUT, 'Sub/new note'); write(G, h, b'v1'); ok(pkt(G, END, h), 'Close')
+COMMENT = bstr('hello from the Amiga')
+ok(pkt(G, 28, 0, 0, name('Sub/new note'), COMMENT), 'SetComment')
+chk(exam('Sub/new note')['comment'] == 'hello from the Amiga', 'the comment reads back')
+ok(pkt(G, PROTECT, 0, 0, name('Sub/new note'), 0x40), 'SetProtection: the script bit')
+chk(exam('Sub/new note')['prot'] & 0xff == 0x40, 'the script bit reads back')
+ok(pkt(G, PROTECT, 0, 0, name('Sub/new note'), 0x01), 'SetProtection: no delete only (FAT cannot say it)')
+err(pkt(G, DELETE, 0, name('Sub/new note')), 222, 'delete-protected through the sidecar')
+h, r = openf(G, FINDUPDATE, 'Sub/new note'); write(G, h, b'v2'); ok(pkt(G, END, h), 'Close')
+fn = exam('Sub/new note')
+chk((fn['days'], fn['mins'], fn['ticks']) == (17841, 13 * 60 + 37, 2100), 'a write brings the sidecar date up to date: %s' % fn)
+ok(pkt(G, PROTECT, 0, 0, name('Sub/new note'), 0), 'SetProtection back to ----rwed')
+ok(pkt(G, 28, 0, 0, name('Sub/new note'), bstr('')), 'SetComment empty')
+ok(pkt(G, RENAME, 0, name('Sub/Script'), 0, name('Sub/Script2')), 'Rename a file with a sidecar')
+chk(exam('Sub/Script2')['comment'] == 'made on a PC', 'the sidecar went with it')
+h, r = openf(G, FINDOUTPUT, 'Sub/a*b?'); write(G, h, b'odd'); ok(pkt(G, END, h), 'Close')
+chk('a*b?' in [e['name'] for e in listdir(G, MSUB)], 'a name FAT cannot hold, listed as the Amiga gave it')
+h, r = openf(G, FINDOUTPUT, 'Sub/gone'); ok(pkt(G, END, h), 'Close')
+ok(pkt(G, 28, 0, 0, name('Sub/gone'), bstr('bye')), 'SetComment')
+ok(pkt(G, DELETE, 0, name('Sub/gone')), 'Delete a file with a sidecar')
+print('sidecars: PC-made read, Amiga-made written; names escaped; clutter hidden')
+
 print('packets OK: %d checks, %d card reads, %d writes' % (checks[0], stats['reads'], stats['writes']))
 
 # ---- what mtools and fsck.fat say about the card ------------------------------------------------------
@@ -509,5 +554,10 @@ chk(mtype('Games/ReadMe.txt') == files['Games/readme.txt'], 'mtools: the renamed
 chk(mtype('HDF/raw.hdf') == files['HDF/raw.hdf'], 'mtools: the hardfile untouched')
 listing = subprocess.run(['mdir', '-b', '-i', img, '::/Games'], capture_output=True, text=True, env=env).stdout
 chk('Saves' not in listing, 'Saves deleted: %s' % listing)
+sub_dir = subprocess.run(['mdir', '-b', '-i', img, '::/Games/Sub'], capture_output=True, text=True, env=env).stdout
+chk('Script2.uaem' in sub_dir and 'Script.uaem' not in sub_dir.replace('Script2.uaem', ''), 'mtools: the sidecar renamed: %s' % sub_dir)
+chk('new note.uaem' not in sub_dir and 'gone' not in sub_dir, 'mtools: sidecars removed when nothing needs them: %s' % sub_dir)
+chk(mtype('Games/Sub/a%2ab%3f') == b'odd', 'mtools: a*b? stored as a%2ab%3f')
+chk(mtype('Games/Sub/Script2.uaem') == b'-s--rwed 2020-05-06 07:08:09.10 made on a PC\n', 'mtools: the sidecar unchanged by the rename')
 print('card: fsck.fat clean, mtools reads it back')
 print('ALL OK')

@@ -131,6 +131,7 @@ struct HdfBase {
     struct FVol *fvol[FOLDER_MAX];
     ULONG nfvols;
     struct FObj *objs;                      /* every lock and open file, all volumes */
+    ULONG mgen;                             /* +1 on every change a folder makes: the sidecar caches start again */
     APTR fseg;                              /* the handlers' seglist (RAM: a jump into this ROM) */
     /* CD images (*.iso) as read-only volumes (isos.c) */
     struct IVol *ivol[ISO_MAX];

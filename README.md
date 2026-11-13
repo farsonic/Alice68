@@ -622,9 +622,18 @@ alice68.folder=Amiga/Work:Work    # the folder Amiga/Work, as volume Work:
 - **Names:** long names, any case, Latin-1 (`ä`, `é`). Characters FAT does not allow
   (`* ? " < > | \`) are refused, as are names ending in a dot or a space. Each change is
   on the card when the DOS call returns.
-- **What FAT can't keep:** comments (they are accepted and dropped, so that `Copy CLONE`
-  works), and protection bits other than write/delete protection (FAT's read-only flag)
-  and the archive bit. Every file shows as executable.
+- **Amiga attributes** FAT can't hold (comments, the script, pure and hidden bits, delete
+  protection on its own, dates to 1/50 s) are kept in a small sidecar file `NAME.uaem`
+  next to the file, and names with characters FAT forbids (`* ? " < > | \ %`, a trailing
+  dot or space) are stored with `%xx` (`What?.txt` is `What%3f.txt` on the card). This
+  is the format **FS-UAE and Amiberry** use for their folder drives, so the same folder
+  works in those emulators on a PC or Mac, with its attributes. Sidecars and other
+  machines' clutter (`._*`, `.DS_Store`, `_UAEFSDB.___`) are hidden from the Amiga. A
+  sidecar is only written when it's needed, and it's renamed and deleted with its file.
+  WinUAE keeps attributes its own way (`_UAEFSDB.___`) and won't see them, but still sees
+  the files. The dates in sidecars are the Amiga's clock time; FS-UAE writes UTC, so a
+  date can be off by your time zone between the two. Owners (UID/GID) and links aren't
+  kept.
 - **Hardfiles and CD images in a folder:** a hardfile or CD image that is mounted (from
   the root, the `HDF` or the `ISO` folder) can be read through a folder, but not changed,
   deleted or replaced: its clusters belong to its unit or volume. New `.hdf` and `.iso`

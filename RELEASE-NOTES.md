@@ -9,6 +9,14 @@
   and DVD images work. Written from Microsoft's published exFAT specification
   (`amiga/hdf/exfat.c`): the boot checksum, FAT chains and contiguous files, entry set
   checksums, Latin-1 names. README has Mac and Windows recipes for the card.
+- **Amiga attributes in folders, as FS-UAE and Amiberry keep them.** Comments, the script,
+  pure and hidden bits, delete protection and exact dates go into a `NAME.uaem` sidecar
+  when FAT can't hold them, and names with characters FAT forbids are stored as `%xx`.
+  Sidecars follow renames and deletes, a write to the file brings the sidecar's date up
+  to date, and sidecars, `._*`, `.DS_Store` and `_UAEFSDB.___` are hidden. A folder can
+  now go back and forth between the card and FS-UAE or Amiberry on a PC with its
+  attributes. Tested on the PC (`uaem.c`) and on the 68k emulator (sidecars made on a PC
+  read, ones made on the Amiga checked with mtools and fsck.fat).
 - **Folders on the exFAT partition (read-only).** `alice68.folder=NAME` looks on the FAT32
   partition first, then on the exFAT one; exFAT folders mount read-only until writing
   exFAT is done. The folder handler now works through the engine of its own partition
