@@ -602,9 +602,15 @@ first exFAT partition and mounts its hardfiles (root and `HDF`) and CD images (r
   the allocation bitmap and FAT, then the directory entry (with its checksum); deleting
   clears the entry before freeing its space. While changes are on their way the volume is
   marked "dirty", and the mark is cleared when they're done. If the Pi loses power in the
-  middle, the volume is left marked dirty and Alice68 mounts it **read-only** until it has
-  been checked on a PC (Windows offers to, or `fsck.exfat`/First Aid on a Mac): the worst
-  it should find is a file holding a little more space than it needs. Amiga attributes
+  middle, the volume is left marked dirty, and at the next boot Alice68 **checks and
+  repairs it itself**, the way AmigaOS validates a disk, before writing to it (with
+  `alice68.exfat=rw`). The check goes through every folder and file and the record of
+  used space; it fixes what a cut-off write can leave (space marked used that nothing
+  uses or the other way round, a file holding more clusters than it needs, a size its
+  clusters can't cover, a damaged entry, a file left in two places by a move) and logs
+  what it did (`exFAT: not cleanly removed: checked ... fixed ...`). Anything else, such
+  as two files sharing space, it doesn't touch: the volume then stays read-only and the
+  log says why, and a PC's disk check (Windows offers one, First Aid on a Mac) is needed. Amiga attributes
   are kept in `.uaem` sidecars as in FAT folders. A hardfile or CD image that is mounted
   can't be changed through the volume, and a hardfile written on the Amiga keeps its size
   and clusters, as on FAT. The volume is not bootable yet.

@@ -94,7 +94,8 @@ int xfat_open(struct xfat *v, struct hdf_io *io)
     v->sec_no = v->fwin_first = ~0u;
     v->sec = io->alloc(io->ctx, 512);
     v->fwin = io->alloc(io->ctx, XFAT_FATWIN * 512);
-    if (!v->sec || !v->fwin) { xfat_close(v); return -1; }
+    v->bounce = io->alloc(io->ctx, 512);
+    if (!v->sec || !v->fwin || !v->bounce) { xfat_close(v); return -1; }
     uint8_t *s = v->sec;
     if (io->read(io->ctx, 0, 1, s) || s[510] != 0x55 || s[511] != 0xaa) { xfat_close(v); return -1; }
     uint32_t start = ~0u;
@@ -147,8 +148,7 @@ int xfat_open(struct xfat *v, struct hdf_io *io)
     v->nfats = nfats;
     v->bm_lo = ~0u;
     v->fat_end = v->fat_start + fat_len;
-    if (v->flags & 2) v->ro = "the volume was not cleanly removed: check it on a PC first";
-    else if (v->flags & 4) v->ro = "the volume reports a media failure";
+    if (v->flags & 4) v->ro = "the volume reports a media failure";
     else if (nfats != 1) v->ro = "two FATs (TexFAT): not written here";
 
     /* the volume label and the Allocation Bitmap, from the root directory */
@@ -168,7 +168,7 @@ int xfat_open(struct xfat *v, struct hdf_io *io)
     }
     hdf_log(io, "exFAT partition at sector %lu, %lu clusters of %lu bytes%s%s%s", start, count, (uint32_t)512 << shift,
             v->label[0] ? ", \"" : "", v->label, v->label[0] ? "\"" : "");
-    if (v->flags & 2) hdf_log(io, "exFAT: the volume was not cleanly removed (run a disk check on the card)");
+    if (v->flags & 2) hdf_log(io, "exFAT: the volume was not cleanly removed");
     return 0;
 }
 
@@ -709,6 +709,14 @@ const char *xfat_writable(struct xfat *x)
     if (!x->io->write) return x->ro = "the card is read-only";
     if (up_load(x)) return x->ro = "no up-case table";
     if (bm_load(x)) return x->ro = "the allocation bitmap cannot be read";
+    if (x->flags & 2) {                                          /* not cleanly removed: the validator first */
+        struct xchk r;
+        int e = xfat_check(x, 1, &r);
+        if (e) return x->ro = r.bad ? r.bad : "the check could not finish";
+        hdf_log(x->io, "exFAT: not cleanly removed: checked %lu folders, %lu files; fixed %lu checksums, %lu entries, %lu chains, %lu sizes, %lu clusters freed, %lu marked",
+                r.dirs, r.files, r.sums, r.dropped, r.trimmed, r.shortened, r.freed, r.marked);
+        x->flags &= (uint16_t)~2u;
+    }
     return 0;
 }
 
@@ -1162,5 +1170,200 @@ int xfs_sync(struct ffs *v)
     if (!x->ro) { bm_flush(x); fwin_flush(x); if (!x->err) set_dirty(x, 0); }
     int e = x->err ? x->err : v->err;
     x->err = 0; v->err = 0;
+    return e;
+}
+
+/* ---- the validator (xfat_check) ------------------------------------------------------------- */
+struct chk {
+    struct xfat *x;
+    struct xchk *r;
+    int repair;
+    uint8_t *used;                  /* clusters something refers to */
+    struct xfat_dir *stack;         /* directories still to walk */
+    uint32_t nstack, capstack;
+};
+
+/* 0 marked, 1 someone has it already */
+static int chk_mark(struct chk *k, uint32_t c)
+{
+    uint32_t i = c - 2;
+    uint8_t m = (uint8_t)(1u << (i & 7));
+    if (k->used[i >> 3] & m) return 1;
+    k->used[i >> 3] |= m;
+    return 0;
+}
+
+/* the clusters of a chain (want: how many, ~0 = to its end); *got how many it has.
+   0 ok; 1 the first cluster is someone else's (nothing marked); -1 it crosses into
+   someone else's later, or runs outside the heap, or loops */
+static int chk_chain(struct chk *k, uint32_t first, uint32_t want, int nofat, uint32_t *got, uint32_t *last)
+{
+    struct xfat *x = k->x;
+    uint32_t n = 0, c = first;
+    *got = 0; *last = 0;
+    if (!clus_ok(x, first)) return -1;
+    if (nofat && want != ~0u && (uint64_t)first - 2 + want > x->clusters) return -1;
+    while (want == ~0u || n < want) {
+        if (!clus_ok(x, c)) break;                               /* a FAT chain ending early */
+        if (chk_mark(k, c)) {
+            if (!n) return 1;
+            return -1;
+        }
+        n++; *last = c;
+        if (n > x->clusters) return -1;
+        if (want != ~0u && n == want) break;
+        c = nofat ? c + 1 : fat_next(x, c);
+    }
+    *got = n;
+    return 0;
+}
+
+static int chk_push(struct chk *k, const struct xfat_dir *d)
+{
+    if (k->nstack == k->capstack) {
+        uint32_t cap = k->capstack ? k->capstack * 2 : 32;
+        struct xfat_dir *n = k->x->io->alloc(k->x->io->ctx, cap * sizeof *n);
+        if (!n) return FFS_IO;
+        if (k->stack) { copy(n, k->stack, k->nstack * sizeof *n); k->x->io->free(k->x->io->ctx, k->stack, k->capstack * sizeof *n); }
+        k->stack = n; k->capstack = cap;
+    }
+    k->stack[k->nstack++] = *d;
+    return 0;
+}
+
+/* drop entries [at, at + n): not in use */
+static int chk_drop(struct chk *k, const struct xfat_dir *d, uint32_t at, uint8_t *buf, uint32_t n)
+{
+    k->r->dropped++;
+    if (!k->repair) return 0;
+    for (uint32_t i = 0; i < n; i++) buf[32 * i] &= 0x7f;
+    return put_ents(k->x, d, at, buf, n);
+}
+
+static int chk_dir(struct chk *k, const struct xfat_dir *d)
+{
+    struct xfat *x = k->x;
+    uint8_t set[19 * 32];
+    for (uint32_t idx = 0; ; ) {
+        const uint8_t *p;
+        int r = entry(x, d, idx, &p);
+        if (r == -1) return 0;
+        if (r) return FFS_IO;
+        uint8_t t = p[0];
+        if (t == T_END) return 0;
+        if (!(t & 0x80)) { idx++; continue; }                  /* not in use */
+        if (t == T_STREAM || t == T_NAME) {                      /* a piece of a set without its File entry */
+            copy(set, p, 32);
+            if ((r = chk_drop(k, d, idx, set, 1))) return r;
+            idx++; continue;
+        }
+        if (t != T_FILE) { idx++; continue; }                    /* bitmap, up-case table, label, GUID, vendor */
+        uint32_t n = 1u + p[1];
+        if (n < 3 || n > 19) { copy(set, p, 32); if ((r = chk_drop(k, d, idx, set, 1))) return r; idx++; continue; }
+        if ((r = get_ents(x, d, idx, set, n))) { if (r != FFS_CORRUPT) return r; copy(set, p, 32); if ((r = chk_drop(k, d, idx, set, 1))) return r; idx++; continue; }
+        uint8_t *st = set + 32;
+        uint32_t namelen = st[3], names = 0;
+        for (uint32_t i = 2; i < n && set[32 * i] == T_NAME; i++) names++;
+        if (st[0] != T_STREAM || !namelen || names < (namelen + 14) / 15) {
+            if ((r = chk_drop(k, d, idx, set, st[0] == T_STREAM ? 2 + names : 1))) return r;
+            idx += st[0] == T_STREAM ? 2 + names : 1;
+            continue;
+        }
+        int changed = 0;
+        uint16_t want = (uint16_t)le16(set + 2);
+        set_sum(set, n);
+        if ((uint16_t)le16(set + 2) != want) { k->r->sums++; changed = 1; }
+        int isdir = (le16(set + 4) & XFAT_A_DIR) != 0;
+        uint32_t first = le32(st + 20);
+        uint64_t size = le64(st + 24);
+        int nofat = (st[1] & 2) != 0;
+        if ((st[1] & 1) && first) {
+            uint32_t need = nclus(x, size), got, last;
+            if (!need) need = 1;
+            int c = chk_chain(k, first, need, nofat, &got, &last);
+            if (c == 1) {                                        /* a duplicate (a move cut off): this one goes */
+                if ((r = chk_drop(k, d, idx, set, n))) return r;
+                idx += n;
+                continue;
+            }
+            if (c < 0) { k->r->bad = "two files share clusters, or a chain leaves the volume: check it on a PC"; return FFS_CORRUPT; }
+            if (got < need) {                                    /* the chain is shorter than the file */
+                k->r->shortened++;
+                uint64_t ns = (uint64_t)got * cbytes(x);
+                put64(st + 24, ns);
+                if (le64(st + 8) > ns) put64(st + 8, ns);
+                size = ns;
+                set_sum(set, n);
+                changed = 1;
+            } else if (!nofat && clus_ok(x, fat_next(x, last))) { /* longer than the file: the rest is let go */
+                k->r->trimmed++;
+                if (k->repair && (r = fat_set(x, last, EOC))) return r;
+            }
+            if (isdir) {
+                struct xfat_dir sub = { first, size, nofat };
+                if (size && (r = chk_push(k, &sub))) return r;
+            }
+        }
+        if (changed && k->repair && (r = put_ents(x, d, idx, set, n))) return r;
+        if (isdir) k->r->dirs++; else k->r->files++;
+        idx += n;
+    }
+}
+
+static int chk_pass(struct chk *k)
+{
+    struct xfat *x = k->x;
+    uint32_t got, last;
+    int r;
+    zero(k->used, (uint32_t)x->bm_len);
+    k->nstack = 0;
+    /* the volume's own structures */
+    if (chk_chain(k, x->bm_first, nclus(x, x->bm_len), 0, &got, &last) || got < nclus(x, x->bm_len)) { k->r->bad = "the allocation bitmap's clusters are damaged"; return FFS_CORRUPT; }
+    if (x->up_first && (chk_chain(k, x->up_first, nclus(x, x->up_len), 0, &got, &last) || got < nclus(x, x->up_len))) { k->r->bad = "the up-case table's clusters are damaged"; return FFS_CORRUPT; }
+    if (chk_chain(k, x->root, ~0u, 0, &got, &last)) { k->r->bad = "the root directory's clusters are damaged"; return FFS_CORRUPT; }
+    struct xfat_dir root;
+    xfat_root(x, &root);
+    if ((r = chk_push(k, &root))) return r;
+    while (k->nstack) {
+        struct xfat_dir d = k->stack[--k->nstack];
+        x->wc_first = 0;
+        if ((r = chk_dir(k, &d))) return r;
+    }
+    /* what the bitmap says against what is used */
+    for (uint32_t c = 2; c < x->clusters + 2; c++) {
+        uint32_t i = c - 2;
+        int u = (k->used[i >> 3] >> (i & 7)) & 1, b = bm_get(x, c);
+        if (u == b) continue;
+        if (b) k->r->freed++; else k->r->marked++;
+        if (k->repair) bm_set(x, c, u);
+    }
+    return 0;
+}
+
+int xfat_check(struct xfat *x, int repair, struct xchk *r)
+{
+    zero(r, sizeof *r);
+    struct chk k;
+    zero(&k, sizeof k);
+    k.x = x; k.r = r;
+    int e = bm_load(x);
+    if (e) { r->bad = "the allocation bitmap cannot be read"; return e; }
+    if (!x->up_first || up_load(x)) { r->bad = "no up-case table"; return FFS_CORRUPT; }
+    k.used = x->io->alloc(x->io->ctx, (uint32_t)x->bm_len);
+    if (!k.used) { r->bad = "not enough memory to check it"; return FFS_IO; }
+    e = chk_pass(&k);                                            /* pass 1: look */
+    if (!e && repair && (r->sums | r->dropped | r->trimmed | r->shortened | r->freed | r->marked)) {
+        struct xchk seen = *r;
+        zero(r, sizeof *r);
+        k.repair = 1;
+        x->dirty_on_card = 1;                                    /* it is: set by whoever was cut off */
+        e = chk_pass(&k);                                        /* pass 2: the same, fixing */
+        if (!e && ((e = fwin_flush(x)) == 0)) e = bm_flush(x);
+        if (!e) *r = seen;
+    }
+    if (!e && repair) { x->dirty_on_card = 1; e = set_dirty(x, 0); }
+    if (k.stack) x->io->free(x->io->ctx, k.stack, k.capstack * sizeof *k.stack);
+    x->io->free(x->io->ctx, k.used, (uint32_t)x->bm_len);
+    x->sec_no = ~0u; x->wc_first = 0;
     return e;
 }

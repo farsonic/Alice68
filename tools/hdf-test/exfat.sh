@@ -222,7 +222,8 @@ sys.exit(1 if fails else 0)
 PY
 umount "$T/mnt"; losetup -d "$L"
 # power cuts: the same sequence, the card "switched off" after N sector writes (N spread over the
-# whole run); fsck.exfat must always be able to repair it, and find it clean afterwards
+# whole run); Alice68's validator (xfat_check) must repair every one so that fsck.exfat finds it
+# clean and the volume is no longer marked dirty
 TOTAL=$(sed -n 's/^DONE //p' "$T/wout.txt")
 python3 -I - "$T" "$TOTAL" "$OFF" <<'PY'
 import subprocess, sys
@@ -234,18 +235,120 @@ for b in budgets:
     img = T + '/cut.img'
     subprocess.run(['cp', '--sparse=always', T + '/card.img', img], check=True)
     subprocess.run([T + '/exfat_test', '-W', img, str(b)], capture_output=True)
+    c = subprocess.run([T + '/exfat_test', '-C', img], capture_output=True, text=True).stdout.split()
+    if c[:2] != ['C', 'ok']: fails.append('cut after %d writes: the validator: %s' % (b, ' '.join(c))); continue
+    if any(int(v) for v in c[4:]): repaired += 1
+    else: clean += 1
+    with open(img, 'rb') as f: f.seek(off + 106); flags = int.from_bytes(f.read(2), 'little')
+    if flags & 2: fails.append('cut after %d writes: still marked dirty' % b)
     L = subprocess.run(['losetup', '-f', '--show', '-o', str(off), img], capture_output=True, text=True, check=True).stdout.strip()
     try:
         n = subprocess.run(['fsck.exfat', '-n', L], capture_output=True, text=True)
-        if n.returncode == 0: clean += 1; continue
-        y = subprocess.run(['fsck.exfat', '-y', L], capture_output=True, text=True)
-        again = subprocess.run(['fsck.exfat', '-n', L], capture_output=True, text=True)
-        if again.returncode != 0: fails.append('cut after %d writes: fsck.exfat -y could not repair it:\n%s\n%s' % (b, n.stdout[-600:], y.stdout[-600:]))
-        else: repaired += 1
+        if n.returncode != 0: fails.append('cut after %d writes, validated (%s): fsck.exfat:\n%s' % (b, ' '.join(c), n.stdout[-600:]))
     finally:
         subprocess.run(['losetup', '-d', L])
-print('exFAT   cuts    %d power cuts over %d writes: %d clean, %d repaired by fsck.exfat  %s' % (len(budgets), total, clean, repaired, 'OK' if not fails else 'FAILED'))
+print('exFAT   cuts    %d power cuts over %d writes, each validated on "the Amiga": %d already consistent, %d repaired; fsck.exfat clean  %s' % (len(budgets), total, clean, repaired, 'OK' if not fails else 'FAILED'))
 for f in fails[:5]: print('   ', f)
+sys.exit(1 if fails else 0)
+PY
+# the validator against damage made by hand: what it can fix (all at once), then what it must not touch
+python3 -I - "$T" "$OFF" <<'PY'
+import hashlib, os, struct, subprocess, sys, zlib
+T, off = sys.argv[1], int(sys.argv[2])
+img = T + '/dmg.img'
+subprocess.run(['cp', '--sparse=always', T + '/w.img', img], check=True)    # the written card: clean
+f = open(img, 'r+b')
+def rd(sec, n=1): f.seek(off + sec * 512); return bytearray(f.read(n * 512))
+def wr(sec, b): f.seek(off + sec * 512); f.write(b)
+bs = rd(0)
+fat_off, heap, count, root = struct.unpack_from('<I', bs, 80)[0], struct.unpack_from('<I', bs, 88)[0], struct.unpack_from('<I', bs, 92)[0], struct.unpack_from('<I', bs, 96)[0]
+spc = 1 << bs[109]
+def fat(c): f.seek(off + (fat_off + c // 128) * 512 + c % 128 * 4); return struct.unpack('<I', f.read(4))[0]
+def setfat(c, v): f.seek(off + (fat_off + c // 128) * 512 + c % 128 * 4); f.write(struct.pack('<I', v))
+def csec(c): return heap + (c - 2) * spc
+def chain(first, nofat, size):
+    out, c = [], first
+    while c and len(out) < max(1, -(-size // (spc * 512))) if size else c and c < 0xfffffff7:
+        out.append(c); c = c + 1 if nofat else fat(c)
+        if not size and len(out) > count: break
+    return out
+def dir_ents(first, nofat, size):
+    cl = chain(first, nofat, size)
+    raw = b''.join(bytes(rd(csec(c), spc)) for c in cl)
+    return cl, raw
+def sets(first, nofat, size):
+    cl, raw = dir_ents(first, nofat, size)
+    i, out = 0, {}
+    while i * 32 < len(raw):
+        e = raw[i * 32:i * 32 + 32]
+        if e[0] == 0: break
+        if e[0] == 0x85:
+            n = e[1] + 1; st = raw[(i + 1) * 32:(i + 2) * 32]
+            name = b''.join(raw[(i + k) * 32 + 2:(i + k) * 32 + 32] for k in range(2, n)).decode('utf-16-le')[:st[3]]
+            out[name] = (i, n, struct.unpack_from('<I', st, 20)[0], st[1] & 2 != 0, struct.unpack_from('<Q', st, 24)[0])
+            i += n
+        else: i += 1
+    return cl, out
+def ent_pos(cl, i): return csec(cl[i * 32 // (spc * 512)]) + (i * 32 % (spc * 512)) // 512, i * 32 % 512
+rcl, rs = sets(root, False, 0)
+bm = next(e for e in [bytes(dir_ents(root, False, 0)[1][k:k + 32]) for k in range(0, 4096, 32)] if e[0] == 0x81)
+bm_first = struct.unpack_from('<I', bm, 20)[0]
+def bmbit(c, on):
+    i = c - 2; s = csec(bm_first) + i // 8 // 512; b = rd(s); o = i // 8 % 512
+    b[o] = b[o] | (1 << (i % 8)) if on else b[o] & ~(1 << (i % 8)) & 0xff; wr(s, b)
+nd = rs['New Dir']; ncl, ns = sets(nd[2], nd[3], nd[4])
+# 1. a leaked cluster: marked used, nobody's
+bmbit(count, 1)
+# 2. a used cluster marked free: the first of "turn A"
+ta = ns['turn A']; bmbit(ta[2], 0)
+# 3. a wrong checksum: a set's modify time changed without it
+sec, o = ent_pos(ncl, ns['empty'][0]); b = rd(sec); b[o + 12] ^= 0x01; wr(sec, b)
+# 4. a chain longer than its file: "turn A" (a FAT chain) given one more cluster
+tchain = chain(ta[2], ta[3], ta[4]); extra = count - 1; setfat(tchain[-1], extra); setfat(extra, 0xffffffff); bmbit(extra, 1)
+# 5. a duplicate set (a move cut off): "a/b/c/note été.txt"'s set copied into free entries of the root
+a = rs['a']; acl, a_s = sets(a[2], a[3], a[4]); b_ = a_s['b']; bcl, b_s = sets(b_[2], b_[3], b_[4]); c_ = b_s['c']; ccl, c_s = sets(c_[2], c_[3], c_[4])
+nt = c_s['note \u00e9t\u00e9.txt']; craw = dir_ents(c_[2], c_[3], c_[4])[1]; dup = craw[nt[0] * 32:(nt[0] + nt[1]) * 32]
+rraw = dir_ents(root, False, 0)[1]; free_at = next(i for i in range(len(rraw) // 32) if rraw[i * 32] == 0)
+for k in range(nt[1]):
+    sec, o = ent_pos(rcl, free_at + k); b = rd(sec); b[o:o + 32] = dup[k * 32:k * 32 + 32]; wr(sec, b)
+f.close()
+fails = []
+c = subprocess.run([T + '/exfat_test', '-C', img], capture_output=True, text=True).stdout.split()
+want = {'sums': 1, 'dropped': 1, 'trimmed': 1, 'freed': 2, 'marked': 1}
+got = dict(zip(['dirs', 'files', 'sums', 'dropped', 'trimmed', 'shortened', 'freed', 'marked'], [int(v) for v in c[2:]])) if c[:2] == ['C', 'ok'] else None
+if not got or any(got[k] != v for k, v in want.items()): fails.append('validator: %s, want %s' % (' '.join(c), want))
+L = subprocess.run(['losetup', '-f', '--show', '-o', str(off), img], capture_output=True, text=True, check=True).stdout.strip()
+fs = subprocess.run(['fsck.exfat', '-n', L], capture_output=True, text=True)
+if fs.returncode: fails.append('fsck.exfat after the repair:\n' + fs.stdout[-800:])
+os.makedirs(T + '/dmnt', exist_ok=True)
+subprocess.run(['mount.exfat-fuse', '-o', 'ro', L, T + '/dmnt'], check=True, capture_output=True)
+try:
+    note = 'a/b/c/note \u00e9t\u00e9.txt'
+    for l in open(T + '/wout.txt', encoding='latin-1').read().splitlines():
+        if l.startswith('E '):
+            path, size, crc = l[2:].rsplit(' ', 2)
+            if path == note:                                 # the duplicate: one of the two stays (either is right)
+                there = [q for q in (note, 'note \u00e9t\u00e9.txt') if os.path.exists(os.path.join(T + '/dmnt', q))]
+                if len(there) != 1: fails.append('the moved file: %d copies' % len(there)); continue
+                path = there[0]
+            b = open(os.path.join(T + '/dmnt', path), 'rb').read()
+            if (len(b), '%08x' % zlib.crc32(b)) != (int(size), crc): fails.append('%s changed by the repair' % path)
+finally:
+    subprocess.run(['umount', T + '/dmnt']); subprocess.run(['losetup', '-d', L])
+# what it must not touch: two different files sharing a cluster
+img2 = T + '/dmg2.img'
+subprocess.run(['cp', '--sparse=always', T + '/w.img', img2], check=True)
+f = open(img2, 'r+b')
+tb = ns['Gr\u00fc\u00dfe \u00e4\u00f6\u00ff.txt'] if 'Gr\u00fc\u00dfe \u00e4\u00f6\u00ff.txt' in ns else None
+la = rs['Lots']; lcl, ls_ = sets(la[2], la[3], la[4]); bigm = ls_['big moved.bin']
+setfat(tchain[0], bigm[2] + 1) if not ta[3] else None
+f.close()
+before = hashlib.md5(open(img2, 'rb').read()).hexdigest()
+c2 = subprocess.run([T + '/exfat_test', '-C', img2], capture_output=True, text=True).stdout.strip()
+if not c2.startswith('C bad') or hashlib.md5(open(img2, 'rb').read()).hexdigest() != before:
+    fails.append('two files sharing a cluster: %s, the image %s' % (c2, 'unchanged' if hashlib.md5(open(img2, 'rb').read()).hexdigest() == before else 'CHANGED'))
+print('exFAT   damage  fixed: %s; refused (image untouched): %s  %s' % (' '.join(c[2:]) if c else '?', c2[6:] if c2.startswith('C bad') else c2, 'OK' if not fails else 'FAILED'))
+for x in fails[:10]: print('   ', x)
 sys.exit(1 if fails else 0)
 PY
 # a broken boot checksum: the partition is refused, with a reason

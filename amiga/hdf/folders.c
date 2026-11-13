@@ -999,8 +999,12 @@ void folders_mount(struct HdfBase *db, struct hdf_io *io, APTR eb, APTR cd, cons
     if (xfat_open(&db->xfat, &quiet) == 0) {
         if (ffs_init_exfat(&db->xffs, &db->xfat) == 0) {
             db->xffs_up = 1;
+            ffs_set_io(&db->xffs, io);                 /* the validator's lines go to the log */
             if (xm == 2) { const char *why = xfat_writable(&db->xfat); if (why) hdf_log(io, "exFAT partition: not written: %s", why); }
-            else if (!db->xfat.ro) db->xfat.ro = "alice68.exfat=rw in config.txt writes it";
+            else if (!db->xfat.ro) {
+                if (db->xfat.flags & 2) hdf_log(io, "exFAT partition: not cleanly removed; with alice68.exfat=rw it is checked and repaired at boot");
+                db->xfat.ro = "alice68.exfat=rw in config.txt writes it";
+            }
         } else xfat_close(&db->xfat);
     }
     for (int i = 0; i < n && db->nfvols < FOLDER_MAX; i++) {

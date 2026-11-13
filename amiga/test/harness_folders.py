@@ -104,6 +104,9 @@ else:
         subprocess.run(['cp', '-r'] + [os.path.join(src, t) for t in ('Games', 'Work', 'HDF')] + [mnt + '/'], check=True)
     finally:
         subprocess.run(['umount', mnt], check=True); subprocess.run(['losetup', '-d', l2], check=True)
+    if exfatrw:                                      # as after a power cut: the boot's validator must run first
+        with open(img, 'r+b') as f:
+            f.seek(P2 * 512 + 106); fl = int.from_bytes(f.read(2), 'little'); f.seek(P2 * 512 + 106); f.write((fl | 2).to_bytes(2, 'little'))
 card = bytearray(open(img, 'rb').read())
 
 # ---- the fake system ------------------------------------------------------------------
@@ -356,6 +359,7 @@ if exfat:
     X4 = start(4)
     chk(sorted(e['name'] for e in listdir(X4, ok(pkt(X4, LOCATE, 0, name(''), -2), 'Lock'))) == ['Disk.info', 'Games', 'HDF', 'Work'], 'the partition volume lists its root')
 if exfatrw:                                          # writing exFAT through the packets
+    chk('exFAT: not cleanly removed: checked' in logtxt and 'not written' not in logtxt, 'the boot validator ran and allowed writing')
     ok(pkt(G, MKDIR, 0, name('Made here')), 'CreateDir on exFAT')
     data = bytes(range(256)) * 300
     h, r = openf(G, FINDOUTPUT, 'Made here/file \xe4.bin'); chk(h and write(G, h, data)[0] == len(data), 'write 76800 bytes'); ok(pkt(G, END, h), 'Close')

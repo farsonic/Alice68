@@ -18,6 +18,9 @@
  * leaves, X path for every name it removed, then "DONE writes"; with a budget the card
  * "loses power" after that many sector writes (they fail from then on):
  *     exfat_test -W IMAGE [BUDGET]
+ * and with -C, the validator (xfat_check with repair): "C ok dirs files sums dropped trimmed
+ * shortened freed marked" or "C bad reason"
+ *     exfat_test -C IMAGE
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -247,6 +250,19 @@ static int write_test(void)
 
 int main(int argc, char **argv)
 {
+    if (argc == 3 && !strcmp(argv[1], "-C")) {
+        if (!(img = fopen(argv[2], "r+b"))) return 2;
+        struct hdf_io io = { 0, rd, wr, al, fr, lg };
+        static struct xfat x;
+        if (xfat_open(&x, &io)) { printf("NOEXFAT\n"); return 1; }
+        struct xchk r;
+        int e = xfat_check(&x, 1, &r);
+        if (e) printf("C bad %s\n", r.bad ? r.bad : "?");
+        else printf("C ok %u %u %u %u %u %u %u %u\n", r.dirs, r.files, r.sums, r.dropped, r.trimmed, r.shortened, r.freed, r.marked);
+        xfat_close(&x);
+        fclose(img);
+        return e != 0;
+    }
     if (argc >= 3 && !strcmp(argv[1], "-W")) {
         if (!(img = fopen(argv[2], "r+b"))) return 2;
         if (argc > 3) budget = atol(argv[3]);

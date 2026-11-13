@@ -22,8 +22,9 @@ User-facing docs: README.md. History of where code came from: docs/PROVENANCE.md
   handlers share `dosdefs.h`. `exfat.c`: the card's first exFAT partition (hardfiles, CD images,
   folders and the partition itself as a volume; no 4 GB limit; written only with `alice68.exfat=rw`),
   from Microsoft's exFAT specification. Write order: data, bitmap+FAT, then the entry set (deletes:
-  entries first); VolumeDirty while changes are pending; a volume found dirty, with two FATs or
-  a media failure is never written (`xfat_writable`). Folders on it go
+  entries first); VolumeDirty while changes are pending; a volume found dirty is validated and repaired
+  at boot first (`xfat_check`: pass 1 looks, pass 2 fixes only if everything is fixable); one with
+  two FATs or a media failure is never written (`xfat_writable`). Folders on it go
   through the same `ffs_*` calls: `fatfs.c` hands each to `xfs_*` when `v->x` is set; exFAT has no
   `..` entries, so `exfat.c` keeps a table of the directories it has seen (parent, position). Tests
   `tools/hdf-test/exfat.sh` (mkfs.exfat, exfat-fuse, fsck.exfat, power cuts; needs root),

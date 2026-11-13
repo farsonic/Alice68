@@ -9,12 +9,22 @@
   and DVD images work. Written from Microsoft's published exFAT specification
   (`amiga/hdf/exfat.c`): the boot checksum, FAT chains and contiguous files, entry set
   checksums, Latin-1 names. README has Mac and Windows recipes for the card.
+- **An exFAT validator on the Amiga.** A volume left marked dirty (a power cut while
+  writing) is checked and repaired at boot by `alice68hdf.device`, as AmigaOS validates its
+  disks, before it is written: no PC needed. Two passes: the first only looks; the second
+  runs only if every problem is one it can fix (leaked or unmarked clusters, chains longer
+  than their file, sizes their chain can't cover, a set whose checksum alone is wrong, a
+  broken set, a duplicate left by a move). Anything else leaves the volume read-only and
+  untouched, with the reason logged. Tested on the PC: the 41 power-cut images all repaired
+  by it to fsck.exfat's satisfaction, hand-made damage of each kind fixed with every file
+  unchanged, and two files sharing a cluster refused without a byte changed; on the 68k
+  emulator, a dirty card checked at boot and then written.
 - **The exFAT partition as an Amiga volume, and writing it.** The partition itself is now
   a volume (named by its label), next to any folders on it. `alice68.exfat=rw` in
   `config.txt` lets Alice68 write it (`ro`, the default, mounts it read-only; `off` not at
   all). Writing keeps exFAT's order for safety (data, then bitmap and FAT, then the
   checksummed entry; deletes the other way round) and marks the volume dirty while changes
-  are on their way; after a power cut the volume mounts read-only until checked on a PC.
+  are on their way.
   Files stay contiguous where they can and become FAT chains when they can't; directories
   grow; names are hashed with the volume's own up-case table. Tested on the PC: a long
   sequence of changes checked by fsck.exfat and read back by exfat-fuse, and 41 power cuts

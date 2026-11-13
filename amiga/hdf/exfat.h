@@ -113,8 +113,22 @@ int  xfat_find_files(struct xfat *v, int iso, struct hdf_file *files, int max);
    xfat_writable() said yes. Order on the card: data, then bitmap and FAT, then the entry set
    (checksummed); deleting clears the entries before freeing the clusters. VolumeDirty is set
    while changes are on their way and cleared at xfs_sync. */
-/* may it be written? 0 yes; else why not (and v->ro says it) */
+/* may it be written? 0 yes; else why not (and v->ro says it). A volume not cleanly removed is
+   checked and repaired first (xfat_check), and written only if that worked. */
 const char *xfat_writable(struct xfat *v);
+
+/* the validator: the whole tree against the Allocation Bitmap. Pass 1 only looks; if every
+   problem is one it can fix (leaked or unmarked clusters, chains longer than their file,
+   sizes their chain cannot hold, a set whose checksum alone is wrong, a broken set or a
+   duplicate left by a cut-off move), pass 2 fixes them (with repair) and clears VolumeDirty.
+   Anything else (two files sharing clusters, a chain outside the heap): nothing written,
+   r->bad says what. 0 = fine (or fixed), else FFS_CORRUPT / FFS_IO. */
+struct xchk {
+    uint32_t dirs, files;
+    uint32_t sums, dropped, trimmed, shortened, freed, marked;   /* what needed fixing */
+    const char *bad;
+};
+int  xfat_check(struct xfat *v, int repair, struct xchk *r);
 void xfs_done(struct ffs *v);
 int  xfs_sync(struct ffs *v);
 int  xfs_next(struct ffs *v, uint32_t dir, uint32_t *pos, struct ffs_ent *o);
