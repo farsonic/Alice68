@@ -518,7 +518,8 @@ not seen in a scan), access-point mode.
 ## Hardfiles (`.hdf`) on the SD card
 
 Copy hardfiles onto the SD card's FAT boot partition, in the root folder or in a folder
-named `HDF`. At start, `alice68hdf.device` (in Emu68's ROM board) finds every `*.hdf`
+named `HDF`, or onto an [exFAT partition](#a-second-partition-in-exfat-big-cards-big-files)
+after it. At start, `alice68hdf.device` (in Emu68's ROM board) finds every `*.hdf`
 there and mounts it. It needs `dtoverlay=emmc,unit0=rw` in `config.txt`; use `unit0=ro`
 for read-only.
 
@@ -563,9 +564,34 @@ whose name is taken is mounted as `HF<unit><partition>` (e.g. `HF10`) instead.
 | `hdf.readonly` | No writes: the hardfiles show as write-protected. |
 | `hdf=off` | No hardfiles at all. |
 
-Limits: FAT32 holds files up to 4 GB. Copy files only while the Pi is off. `C:Alice68-HDF`
+Limits: FAT32 holds files up to 4 GB; put bigger hardfiles on an exFAT partition.
+Copy files only while the Pi is off. `C:Alice68-HDF`
 lists the hardfiles found and the driver's log, including why anything was left out.
 `tools/hdf-test/run.sh` runs the tests on a PC.
+
+### A second partition in exFAT (big cards, big files)
+
+The Pi only boots from FAT32, which can't hold a file over 4 GB, and Windows won't format
+FAT32 over 32 GB. So on a big card, keep a small FAT32 partition first for the Pi (its
+firmware, `kernel8.img`, the config files and the `ALICE68` folder) and make the rest of
+the card **exFAT**, which Windows and macOS format at any size. Alice68 finds the card's
+first exFAT partition and mounts its hardfiles (root and `HDF`) and CD images (root and
+`ISO`) the same way, with no 4 GB limit: a 20 GB hardfile or a DVD image is fine.
+
+- **On a Mac:** Disk Utility, View > Show All Devices, select the card, Partition. Make
+  the first partition MS-DOS (FAT), 512 MB to 1 GB, and the second ExFAT with the rest.
+  Scheme: Master Boot Record.
+- **On Windows:** Disk Management shrinks and adds partitions on most cards in Windows 10
+  and 11; if it won't, `diskpart` does (`select disk N`, `clean`, `create partition
+  primary size=1024`, `format fs=fat32 quick`, `create partition primary`,
+  `format fs=exfat quick`). Check the disk number twice: `clean` erases the disk.
+- **Then** copy the release's files onto the FAT32 partition as usual, and your hardfiles
+  and CD images onto the exFAT one. The boot log shows `exFAT partition at sector ...`
+  and each file found there.
+- **Not yet:** SD-card folders (`alice68.folder=`) are still on the FAT32 partition only;
+  exFAT folders are coming next. A hardfile written to on the Amiga keeps its size and
+  clusters, as on FAT.
+- The card needs an MBR partition table, not GPT: both recipes above make one.
 
 ## Folders of the SD card as Amiga volumes
 
@@ -627,7 +653,8 @@ a 68k emulator.
 ## CD images (`.iso`) on the SD card
 
 Copy CD images onto the SD card's FAT boot partition, in the root folder or in a folder
-named `ISO`. At start, `alice68hdf.device` finds every `*.iso` there and mounts it as a
+named `ISO`, or onto an [exFAT partition](#a-second-partition-in-exfat-big-cards-big-files)
+after it. At start, `alice68hdf.device` finds every `*.iso` there and mounts it as a
 **read-only** volume, the way a CD would be. No CD filesystem has to be installed: the
 driver reads the images itself.
 
@@ -644,9 +671,8 @@ driver reads the images itself.
 - **The icon:** an image without a `Disk.info` of its own (most PC-made discs) shows
   Alice68's CD icon on Workbench, and its window shows **all files** (Show > All Files),
   since such discs have few `.info` files. Amiga CDs keep their own icon and settings.
-- **Size: up to 4 GB.** That is FAT32's limit for one file, so a DVD image works if it is
-  under 4 GB: most single-layer DVDs (4.7 GB) are too big, and exFAT cards are not
-  supported. Inside an image, AmigaDOS itself can't show or seek past 2 GB in one file.
+- **Size:** up to 4 GB on the FAT32 partition, FAT32's limit for one file; a DVD image
+  (4.7 GB and up) goes on an exFAT partition, which has no such limit. Inside an image, AmigaDOS itself can't show or seek past 2 GB in one file.
   DVDs that carry only UDF (no ISO 9660 side) can't be read; most data DVDs carry both.
 - `iso=off` in `cmdline.txt` mounts none of them.
 - Plain data CDs only: no audio tracks, no multi-session images (only the first session),

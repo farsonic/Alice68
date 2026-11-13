@@ -19,7 +19,9 @@ User-facing docs: README.md. History of where code came from: docs/PROVENANCE.md
   `hdf_core.[ch]`, `Alice68-HDF`), `amiga.h` (minimal NDK types with offset asserts), `lvo.S`.
   `alice68hdf.device` also mounts SD-card folders (`folders.c` + `fatfs.c`) and CD images
   (`isos.c` + `iso9660.c`, `*.iso` in the root and `ISO/`, read-only, `CD0:`...); the two DOS
-  handlers share `dosdefs.h`.
+  handlers share `dosdefs.h`. `exfat.c`: the card's first exFAT partition (hardfiles and CD images,
+  no 4 GB limit; read-only so far), from Microsoft's exFAT specification; tests `tools/hdf-test/exfat.sh`
+  (mkfs.exfat, exfat-fuse, fsck.exfat; needs root) and `harness_isos.py ... exfat`.
 - `third_party/Emu68/src/alice/` — the kernel's network: `alice_net.h` (the 128 KB Zorro II network
   board, shared with the 68k: 32-bit fields only), `alice_net.c` (board, CPU1 coroutine, commands,
   frame slots, WiFi connection manager, firmware taken from the board, `wifi.*` cmdline options),
@@ -50,7 +52,7 @@ User-facing docs: README.md. History of where code came from: docs/PROVENANCE.md
 sudo apt-get update
 sudo apt-get install -y build-essential cmake ninja-build device-tree-compiler xxd \
     gcc-14-powerpc-linux-gnu g++-14-powerpc-linux-gnu gcc-m68k-linux-gnu \
-    dosfstools mtools fdisk genisoimage python3-pil python3-numpy
+    dosfstools mtools fdisk genisoimage exfatprogs exfat-fuse python3-pil python3-numpy
 pip install machine68k==0.3.0          # the 68k emulator the driver tests run on
 mkdir -p ~/toolchains && cd ~/toolchains
 curl -LO https://developer.arm.com/-/media/Files/downloads/gnu/15.2.rel1/binrel/arm-gnu-toolchain-15.2.rel1-x86_64-aarch64_be-none-linux-gnu.tar.xz

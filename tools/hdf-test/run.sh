@@ -1,7 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-only
 # Alice68 hardfile, folder and CD image tests: test cards, the cores on the PC, the driver on a 68k emulator.
-#   tools/hdf-test/run.sh   (after amiga/build.sh; needs mkfs.fat, mtools, sfdisk, genisoimage, machine68k)
+#   tools/hdf-test/run.sh   (after amiga/build.sh; needs mkfs.fat, mtools, sfdisk, genisoimage, machine68k;
+#   exfatprogs, exfat-fuse and root for the exFAT tests, which are skipped without them)
 set -e
 P=$(cd "$(dirname "$0")/../.." && pwd); T=${TMPDIR:-/tmp}/alice68-hdf-test
 rm -rf "$T"; mkdir -p "$T"
@@ -31,3 +32,12 @@ for o in '' isooff; do
     printf '%-12s driver %-14s ' isos "${o:-default}"
     python3 "$P/amiga/test/harness_isos.py" "$P/amiga/out/alice68hdf.device" "$P/amiga/out/alice68hdf.device.elf" "$T" $o | tail -1
 done
+# exFAT: the reader against mkfs.exfat / exfat-fuse cards (fsck.exfat checked), then CD images on an
+# exFAT partition through the driver on the 68k emulator (both need root, losetup and exfat-fuse)
+sh "$P/tools/hdf-test/exfat.sh"
+if [ "$(id -u)" = 0 ] && command -v mount.exfat-fuse >/dev/null && command -v mkfs.exfat >/dev/null; then
+    printf '%-12s driver %-14s ' isos exfat
+    python3 "$P/amiga/test/harness_isos.py" "$P/amiga/out/alice68hdf.device" "$P/amiga/out/alice68hdf.device.elf" "$T" exfat | tail -1
+else
+    echo "isos         driver exfat          SKIPPED: needs root, losetup, mkfs.exfat and exfat-fuse"
+fi

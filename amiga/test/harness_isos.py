@@ -5,7 +5,10 @@ images made by genisoimage (Rock Ridge + Joliet, Joliet only, a second image
 with the same label, a broken one, a macOS "._" file) and a folder over them;
 a fake exec, expansion.library, dos.library and brcm-emmc.device.
 
-    harness_isos.py DEVICE.hunk DEVICE.elf WORKDIR [isooff]
+    harness_isos.py DEVICE.hunk DEVICE.elf WORKDIR [isooff] [exfat]
+
+exfat: the images on an exFAT partition (mkfs.exfat, filled through exfat-fuse; needs
+root and losetup), with a small FAT32 boot partition before it, as on a big card.
 
 Checks the boot nodes the device makes for the images, then starts a handler
 (iso_start) and sends it DOS packets (iso_do): listing, reading, seeking,
@@ -28,6 +31,7 @@ HEAP, HEAP_END = 0x400000, 0xC00000
 STACK = 0x200000
 hunk, elf, work = sys.argv[1:4]
 iso_off = 'isooff' in sys.argv[4:]
+exfat = 'exfat' in sys.argv[4:]
 card_ro = False
 env = dict(os.environ, MTOOLS_SKIP_CHECK='1', LC_ALL='C.UTF-8')
 
@@ -59,11 +63,34 @@ make_iso('joliet', 'Game Disc', os.path.join(src, 'card', 'Game.iso'), ['-J'])
 make_iso('dup', 'Game Disc', os.path.join(src, 'card', 'ISO', 'dup.iso'), ['-J'])
 open(os.path.join(src, 'card', 'ISO', 'broken.iso'), 'wb').write(blob(65536))
 open(os.path.join(src, 'card', 'ISO', '._Test Disc.iso'), 'wb').write(b'\0' * 4096)
-open(os.path.join(src, 'card', 'config.txt'), 'w').write('[all]\nalice68.folder=ISO:Images\n')
+if not exfat: open(os.path.join(src, 'card', 'config.txt'), 'w').write('[all]\nalice68.folder=ISO:Images\n')
 if iso_off: open(os.path.join(src, 'card', 'cmdline.txt'), 'w').write('iso=off\n')
-subprocess.run(['mkfs.fat', '-F', '32', '-s', '1', '-C', img, '40000'], check=True, stdout=subprocess.DEVNULL)
-for top in sorted(os.listdir(os.path.join(src, 'card'))):
-    subprocess.run(['mcopy', '-s', '-i', img, os.path.join(src, 'card', top), '::/'], check=True, env=env)
+if not exfat:
+    subprocess.run(['mkfs.fat', '-F', '32', '-s', '1', '-C', img, '40000'], check=True, stdout=subprocess.DEVNULL)
+    for top in sorted(os.listdir(os.path.join(src, 'card'))):
+        subprocess.run(['mcopy', '-s', '-i', img, os.path.join(src, 'card', top), '::/'], check=True, env=env)
+else:
+    # MBR: FAT32 (the Pi's boot partition: cmdline.txt) at 2048, exFAT with the images after it
+    P1, N1, P2, N2 = 2048, 69632, 71680, 65536
+    with open(img, 'wb') as f: f.truncate((P2 + N2) * 512)
+    subprocess.run(['sfdisk', '-q', img], input=b'label: dos\n%d,%d,c\n%d,%d,7\n' % (P1, N1, P2, N2), check=True)
+    def loopdev(st, n):
+        return subprocess.run(['losetup', '-f', '--show', '-o', str(st * 512), '--sizelimit', str(n * 512), img],
+                              check=True, capture_output=True).stdout.decode().strip()
+    l1 = loopdev(P1, N1)
+    subprocess.run(['mkfs.fat', '-F', '32', '-s', '1', l1], check=True, stdout=subprocess.DEVNULL)
+    for top in ('cmdline.txt',):
+        if os.path.exists(os.path.join(src, 'card', top)):
+            subprocess.run(['mcopy', '-i', l1, os.path.join(src, 'card', top), '::/'], check=True, env=env)
+    subprocess.run(['losetup', '-d', l1], check=True)
+    l2 = loopdev(P2, N2)
+    subprocess.run(['mkfs.exfat', '-L', 'Big Card', l2], check=True, stdout=subprocess.DEVNULL)
+    mnt = os.path.join(work, 'isos-mnt'); os.makedirs(mnt, exist_ok=True)
+    subprocess.run(['mount.exfat-fuse', l2, mnt], check=True, capture_output=True)
+    try:
+        subprocess.run(['cp', '-r', os.path.join(src, 'card', 'ISO'), os.path.join(src, 'card', 'Game.iso'), mnt + '/'], check=True)
+    finally:
+        subprocess.run(['umount', mnt], check=True); subprocess.run(['losetup', '-d', l2], check=True)
 card = bytearray(open(img, 'rb').read())
 
 # ---- the fake system ------------------------------------------------------------------
@@ -369,6 +396,10 @@ chk(pkt(ISFS)[0] == -1 and pkt(CURVOL, 0)[0] == dl >> 2, 'IsFileSystem, current 
 ok(pkt(FREE, root), 'UnLock root')
 print('packets OK: %d checks, %d card reads' % (checks[0], stats['reads']))
 
+if exfat:
+    if 'exFAT partition at sector 71680' not in logtxt: die('the exFAT partition was not reported')
+    print('exFAT: CD images found and read on the exFAT partition')
+    print('ALL OK'); sys.exit(0)
 # ---- the folder over the images: a mounted one is never written ------------------------------------------
 fold = [b for b in boots if b['dev'] == 'alice68hdf.device' and 0x4000 <= b['unit'] < 0x5000]
 if len(fold) != 1: die('the Images folder: %d boot nodes' % len(fold))

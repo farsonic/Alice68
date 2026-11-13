@@ -1,5 +1,19 @@
 # Alice68 release notes
 
+## Unreleased
+
+- **exFAT partitions: hardfiles and CD images with no 4 GB limit.** A card can now have a
+  small FAT32 partition for the Pi and an exFAT partition after it, the format Windows and
+  macOS give any size of card. `alice68hdf.device` finds the first exFAT partition and
+  mounts its hardfiles (root and `HDF`) and CD images (root and `ISO`), so 20 GB hardfiles
+  and DVD images work. Written from Microsoft's published exFAT specification
+  (`amiga/hdf/exfat.c`): the boot checksum, FAT chains and contiguous files, entry set
+  checksums, Latin-1 names. README has Mac and Windows recipes for the card. SD-card
+  folders on exFAT come next. Tested on the PC (`tools/hdf-test/exfat.sh`: cards made by
+  mkfs.exfat and filled through exfat-fuse, a fragmented file, a 4.5 GB file, checked with
+  fsck.exfat) and on the 68k emulator (CD images on an exFAT partition, through the
+  driver); not yet on a Pi.
+
 ## 0.5.0 — CD images, mouse wheel, ShowConfig
 
 Download: `Alice68-0.5.0-Pi4.zip` from the

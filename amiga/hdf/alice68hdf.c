@@ -41,6 +41,7 @@ const char hdf_devname[] = "alice68hdf.device";
 const char hdf_idstring[] = "alice68hdf.device 0.7 (09.11.2026) Alice68 hardfiles, folders and CD images";
 
 #include "hdf_dev.h"
+#include "exfat.h"
 
 void *memcpy(void *d, const void *s, unsigned long n) { UBYTE *a = d; const UBYTE *b = s; while (n--) *a++ = *b++; return d; }
 void *memset(void *d, int c, unsigned long n) { UBYTE *a = d; while (n--) *a++ = (UBYTE)c; return d; }
@@ -728,6 +729,15 @@ APTR dev_init(struct HdfBase *db, APTR seglist)
         offer_wifi(&f, &io);
         fat_close(&f);
     }
+    /* an exFAT partition on the card (exfat.c): its hardfiles and CD images too */
+    if (files) {
+        struct xfat x;
+        if (xfat_open(&x, &io) == 0) {
+            n += xfat_find_files(&x, 0, files + n, HDF_MAX_FILES - n);
+            if (isos) ni += xfat_find_files(&x, 1, isos + ni, ISO_MAX - ni);
+            xfat_close(&x);
+        }
+    }
     hdf_parse_opts(cmdline ? cmdline : "", &db->opts);
     if (cmdline) FreeMem(cmdline, 1024);
     db->readonly = db->opts.readonly || card_ro;
@@ -739,7 +749,7 @@ APTR dev_init(struct HdfBase *db, APTR seglist)
         for (int i = 0; i < n; i++) hdf_file_free(&io, &files[i]);
         n = 0;
     } else if (!n) {
-        hdf_log(&io, "no hardfiles (*.hdf) in the FAT partition's root or HDF folder");
+        hdf_log(&io, "no hardfiles (*.hdf) in the root or HDF folder of the card's FAT or exFAT partition");
     }
 
     int n_boot = 0, n_other = 0, n_left = 0;            /* hardfiles, for the summary line */

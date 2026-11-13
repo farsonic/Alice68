@@ -23,7 +23,11 @@ Alice68's history starts with three commits that keep the inputs apart:
    - the 68k driver and log tool;
    - `alice68hdf.device` (`amiga/hdf/`): hardfiles, the SD-card folders (its own FAT
      engine) and CD images (`iso9660.c`, written from ECMA-119, the Joliet
-     specification and IEEE P1282 Rock Ridge; no code from other ISO readers);
+     specification and IEEE P1282 Rock Ridge; no code from other ISO readers) and the
+     exFAT partition (`exfat.c`, written from Microsoft's published exFAT specification;
+     no code from other exFAT implementations - exfatprogs and exfat-fuse are used only
+     as test tools, on the PC);
+   - the USB mouse report parser (`alice_hid.c`, from the USB HID 1.11 specification);
    - the WiFi (`third_party/Emu68/src/alice/`, run by the kernel on CPU1) and
      `alice68net.device` (`amiga/net/`), written for Alice68 from Linux brcmfmac and
      OpenBSD bwfm (ISC) as references; no code from other Amiga or RISC OS WiFi drivers
