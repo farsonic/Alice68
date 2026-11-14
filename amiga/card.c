@@ -24,7 +24,8 @@
 void *memcpy(void *d, const void *s, unsigned long n) { UBYTE *a = d; const UBYTE *b = s; while (n--) *a++ = *b++; return d; }
 void *memset(void *d, int c, unsigned long n) { UBYTE *a = d; while (n--) *a++ = (UBYTE)c; return d; }
 
-#define VERSTR "Alice68-Card 1.0"
+#define VERSTR "Alice68-Card 1.1"
+#define PMASK  "********"                     /* a WiFi password as shown: never the password itself */
 static const char verstring[] __attribute__((used)) = "$VER: " VERSTR " (14.11.2026)";
 ULONG lvo_y(APTR base, LONG off, ULONG d0, ULONG d1, ULONG d2, ULONG d3, ULONG a0, ULONG a1, ULONG a2, ULONG a3);
 #define LY(b, o, d0, d1, d2, d3, a0, a1, a2, a3) lvo_y((APTR)(b), (o), (ULONG)(d0), (ULONG)(d1), (ULONG)(d2), (ULONG)(d3), (ULONG)(a0), (ULONG)(a1), (ULONG)(a2), (ULONG)(a3))
@@ -81,6 +82,7 @@ static void RectFill(APTR rp, LONG a, LONG b, LONG c, LONG d) { LY(gfx, -306, (U
 #define TEXT_KIND       13
 #define PLACETEXT_LEFT  1
 #define PLACETEXT_IN    0x10
+#define IDCMP_NEWSIZE       0x2u
 #define IDCMP_REFRESHWINDOW 0x4u
 #define IDCMP_MOUSEBUTTONS  0x8u
 #define IDCMP_MOUSEMOVE     0x10u
@@ -211,6 +213,7 @@ static APTR vi;
 static APTR glist_top, glist_page[5];
 static int page = -1;
 static int x0, y0;
+static int W = 616, H = 240;                 /* the room inside the borders (make_gadgets) */
 
 static int on_window(int g) { return gpage[g] < 0 || gpage[g] == page; }
 static void setattr(int g, ULONG tag, ULONG val)
@@ -443,7 +446,7 @@ static void opts_show(void)
     for (int i = 0; i < opt_count; i++) {
         int g = G_OPT0 + i;
         if (opt_items[i].kind == OPT_CHOICE) setattr(g, GTCY_Active, ov.cur[i]);
-        else strset(g, ov.text[i]);
+        else strset(g, opt_items[i].secret && ov.text[i][0] ? PMASK : ov.text[i]);
     }
 }
 
@@ -541,6 +544,58 @@ static void set_kickstart(const char *name)
     lines_show();
 }
 
+/* ---- the WiFi password: shown as PMASK, never as it is -------------------------------------- */
+static int secret_item(void) { for (int i = 0; i < opt_count; i++) if (opt_items[i].secret) return i; return -1; }
+static int at_psk(const char *line, const char *p)
+{
+    static const char k[] = "wifi.psk=";
+    if (p != line && p[-1] != ' ') return 0;
+    for (int i = 0; k[i]; i++) if (p[i] != k[i]) return 0;
+    return 1;
+}
+/* a command line with wifi.psk='s value replaced by PMASK */
+static void psk_mask(const char *in, char *out, unsigned max)
+{
+    struct sb b = { out, 0, max };
+    out[0] = 0;
+    for (const char *p = in; *p; ) {
+        if (at_psk(in, p)) {
+            ss(&b, "wifi.psk=" PMASK);
+            p += 9;
+            int q = *p == '"';
+            if (q) p++;
+            while (*p && (q ? *p != '"' : *p != ' ' && *p != '\n')) p++;
+            if (q && *p == '"') p++;
+            continue;
+        }
+        sc(&b, *p++);
+    }
+}
+/* the reverse, for a line typed in: wifi.psk=PMASK stands for the password as it is now */
+static void psk_unmask(const char *in, char *out, unsigned max)
+{
+    char real[96] = "";
+    int si = secret_item();
+    if (si >= 0) opt_written(&ov, si, real, sizeof real);
+    struct sb b = { out, 0, max };
+    out[0] = 0;
+    for (const char *p = in; *p; ) {
+        if (at_psk(in, p)) {
+            const char *v = p + 9;
+            int q = *v == '"';
+            const char *m = v + q;
+            int masked = 1;
+            for (int i = 0; PMASK[i]; i++) if (m[i] != PMASK[i]) masked = 0;
+            if (masked && (q ? m[8] == '"' : !m[8] || m[8] == ' ')) {
+                ss(&b, real);
+                p = m + 8 + q;
+                continue;
+            }
+        }
+        sc(&b, *p++);
+    }
+}
+
 /* ---- loading and saving ------------------------------------------------------------- */
 static int changed(void)
 {
@@ -564,7 +619,7 @@ static void text_page_show(void)
 {
     cmd_compute();
     char shown_cmd[1100];
-    scpy(shown_cmd, cmd_out, sizeof shown_cmd);
+    psk_mask(cmd_out, shown_cmd, sizeof shown_cmd);
     for (char *p = shown_cmd; *p; p++) if (*p == '\n') *p = 0;
     strset(G_CMD, shown_cmd);
     lines_show();
@@ -721,7 +776,7 @@ static void page_frame(void)
 {
     APTR rp = *(APTR *)(win + 50);
     struct TagItem t[] = { { GT_VisualInfo, (ULONG)vi }, { GTBB_Recessed, 1 }, { TAG_DONE, 0 } };
-    DrawBevelBoxA(rp, x0, y0 + 18, 616, 198, t);
+    DrawBevelBoxA(rp, x0, y0 + 16, W, H - 16 - 16 + 1, t);
 }
 static void show_page(int p)
 {
@@ -730,10 +785,59 @@ static void show_page(int p)
     if (page >= 0 && glist_page[page]) RemoveGList(win, glist_page[page], -1);
     page = p;
     SetAPen(rp, 0);
-    RectFill(rp, x0, y0 + 18, x0 + 615, y0 + 215);
+    RectFill(rp, x0, y0 + 16, x0 + W - 1, y0 + H - 15);
     if (glist_page[page]) { AddGList(win, glist_page[page], -1, -1); RefreshGList(glist_page[page], win, -1); }
     GT_RefreshWindow(win);
     page_frame();
+}
+
+static UWORD scr_w = 640, scr_h = 256;
+static LONG WindowLimits(APTR w, LONG a, LONG b, ULONG c, ULONG d) { return (LONG)LY(intui, -318, (ULONG)a, (ULONG)b, c, d, w, 0, 0, 0); }
+static void RefreshWindowFrame(APTR w) { LY(intui, -456, 0, 0, 0, 0, w, 0, 0, 0); }
+static int make_gadgets(void);
+static void text_page_show(void);
+static void bt_show(void);
+static void dims_from_window(void)
+{
+    UBYTE *w = win;
+    int ww = *(WORD *)(w + 8), wh = *(WORD *)(w + 10), bl = w[54], bt = w[55], br = w[56], bb = w[57];
+    x0 = bl + 4; y0 = bt + 4;
+    W = ww - bl - br - 12; H = wh - bt - bb - 8;
+    if (W < 560) W = 560;
+    if (H < 224) H = 224;
+}
+/* every gadget's contents again, after a rebuild */
+static void refill_all(void)
+{
+    textset(G_STATUS, status); textset(G_CARD, cardline); textset(G_EXFAT, exline);
+    textset(G_PATH, pathline); textset(G_FINFO, finfo);
+    for (int k = 0; k < 3; k++) textset(G_HELP0 + k, helpl[k]);
+    if (lv_parts.l.head) setattr(G_PARTS, GTLV_Labels, (ULONG)&lv_parts.l);
+    if (lv_used.l.head) setattr(G_USED, GTLV_Labels, (ULONG)&lv_used.l);
+    if (lv_files.l.head) setattr(G_FILES, GTLV_Labels, (ULONG)&lv_files.l);
+    text_page_show();
+    if (nb) bt_show();
+}
+/* the window has a new size: the gadgets made again to fit it */
+static void relayout(void)
+{
+    UBYTE *w = win;
+    APTR rp = *(APTR *)(w + 50);
+    RemoveGList(win, glist_top, -1);                /* ours from there on: the top row and the page */
+    FreeGadgets(glist_top); glist_top = 0;
+    for (int i = 0; i < 5; i++) { if (glist_page[i]) FreeGadgets(glist_page[i]); glist_page[i] = 0; }
+    for (int i = 0; i < G_N; i++) gad[i] = 0;
+    dims_from_window();
+    int ok = make_gadgets();
+    SetAPen(rp, 0);
+    RectFill(rp, w[54], w[55], *(WORD *)(w + 8) - w[56] - 1, *(WORD *)(w + 10) - w[57] - 1);
+    if (!ok) { put(VERSTR ": the gadgets could not be made again\n"); return; }
+    AddGList(win, glist_top, -1, -1);
+    if (glist_page[page]) AddGList(win, glist_page[page], -1, -1);
+    RefreshWindowFrame(win);
+    GT_RefreshWindow(win);
+    page_frame();
+    refill_all();
 }
 
 static const struct TextAttr_ topaz = { "topaz.font", 8, 0, 0 };
@@ -751,93 +855,113 @@ static APTR mk(APTR prev, int pg, ULONG kind, int id, int x, int y, int w, int h
     if (id < G_N) { gad[id] = g; gpage[id] = pg; }
     return g;
 }
+/* everything placed from the window's size (W x H inside the borders): resizing rebuilds it */
+
+static int bw_(const char *t) { return (int)slen(t) * 8 + 20; }
 static int make_gadgets(void)
 {
     struct TagItem txt[] = { { GTTX_Border, 1 }, { TAG_DONE, 0 } };
     struct TagItem ro[] = { { GTLV_ReadOnly, 1 }, { TAG_DONE, 0 } };
     struct TagItem sel[] = { { GTLV_ShowSelected, 0 }, { TAG_DONE, 0 } };
     static const char *const tabs[] = { "Card", "Files", "Settings", "Text files", "Bluetooth" };
+    const int PY = 18, PB = H - 16;                 /* the page: from under the tabs to over the status line */
     APTR g = CreateContext(&glist_top);
-    for (int i = 0; i < 5; i++) g = mk(g, -1, BUTTON_KIND, i < 4 ? G_TAB0 + i : G_TAB4, i * 82, 0, 80, 14, tabs[i], PLACETEXT_IN, 0);
-    g = mk(g, -1, BUTTON_KIND, G_SAVE, 420, 0, 92, 14, "Save", PLACETEXT_IN, 0);
-    g = mk(g, -1, BUTTON_KIND, G_RESTART, 520, 0, 96, 14, "Restart Pi", PLACETEXT_IN, 0);
-    g = mk(g, -1, TEXT_KIND, G_STATUS, 0, 220, 616, 12, 0, 0, txt);
+    int x = 0;
+    for (int i = 0; i < 5; i++) { int w = bw_(tabs[i]); g = mk(g, -1, BUTTON_KIND, i < 4 ? G_TAB0 + i : G_TAB4, x, 0, w, 14, tabs[i], PLACETEXT_IN, 0); x += w + 2; }
+    int rw = bw_("Restart Pi"), sw = bw_("Save") + 16;
+    g = mk(g, -1, BUTTON_KIND, G_RESTART, W - rw, 0, rw, 14, "Restart Pi", PLACETEXT_IN, 0);
+    g = mk(g, -1, BUTTON_KIND, G_SAVE, W - rw - 4 - sw, 0, sw, 14, "Save", PLACETEXT_IN, 0);
+    g = mk(g, -1, TEXT_KIND, G_STATUS, 0, H - 12, W, 12, 0, 0, txt);
     if (!g) return 0;
 
-    /* Card */
+    /* Card: the partitions and what is mounted, each list half of what is left */
     g = CreateContext(&glist_page[0]);
-    g = mk(g, 0, TEXT_KIND, G_CARD, 8, 24, 600, 12, 0, 0, txt);
-    g = mk(g, 0, LISTVIEW_KIND, G_PARTS, 8, 40, 600, 60, 0, 0, ro);
-    g = mk(g, 0, TEXT_KIND, G_EXFAT, 8, 104, 600, 12, 0, 0, txt);
-    g = mk(g, 0, LISTVIEW_KIND, G_USED, 8, 120, 600, 68, 0, 0, ro);
-    g = mk(g, 0, BUTTON_KIND, G_FREE, 8, 196, 200, 14, "Count free space", PLACETEXT_IN, 0);
+    int lh = (PB - PY - 72) / 2;
+    if (lh < 32) lh = 32;
+    g = mk(g, 0, TEXT_KIND, G_CARD, 8, PY + 6, W - 16, 12, 0, 0, txt);
+    g = mk(g, 0, LISTVIEW_KIND, G_PARTS, 8, PY + 22, W - 16, lh, 0, 0, ro);
+    g = mk(g, 0, TEXT_KIND, G_EXFAT, 8, PY + 26 + lh, W - 16, 12, 0, 0, txt);
+    g = mk(g, 0, LISTVIEW_KIND, G_USED, 8, PY + 42 + lh, W - 16, PB - 22 - (PY + 42 + lh), 0, 0, ro);
+    g = mk(g, 0, BUTTON_KIND, G_FREE, 8, PB - 18, bw_("Count free space"), 14, "Count free space", PLACETEXT_IN, 0);
     if (!g) return 0;
 
-    /* Files */
+    /* Files: the list on the left, the buttons in a column on the right */
     g = CreateContext(&glist_page[1]);
-    struct TagItem cy1[] = { { GTCY_Labels, (ULONG)vol_names }, { TAG_DONE, 0 } };
-    struct TagItem cy2[] = { { GTCY_Labels, (ULONG)filter_names }, { TAG_DONE, 0 } };
-    g = mk(g, 1, CYCLE_KIND, G_VOL, 8, 22, 160, 14, 0, 0, cy1);
-    g = mk(g, 1, CYCLE_KIND, G_FILTER, 176, 22, 160, 14, 0, 0, cy2);
-    g = mk(g, 1, BUTTON_KIND, G_PARENT, 344, 22, 96, 14, "Parent", PLACETEXT_IN, 0);
-    g = mk(g, 1, TEXT_KIND, G_PATH, 8, 40, 432, 12, 0, 0, txt);
-    g = mk(g, 1, LISTVIEW_KIND, G_FILES, 8, 56, 432, 124, 0, 0, sel);
-    g = mk(g, 1, BUTTON_KIND, G_OPEN, 448, 22, 160, 14, "Open folder", PLACETEXT_IN, 0);
-    g = mk(g, 1, BUTTON_KIND, G_BOOT, 448, 56, 160, 14, "Boot from it", PLACETEXT_IN, 0);
-    g = mk(g, 1, BUTTON_KIND, G_KICK, 448, 72, 160, 14, "Use as Kickstart", PLACETEXT_IN, 0);
-    g = mk(g, 1, BUTTON_KIND, G_RENAME, 448, 104, 160, 14, "Rename to name", PLACETEXT_IN, 0);
-    g = mk(g, 1, BUTTON_KIND, G_MKDIR, 448, 120, 160, 14, "New folder", PLACETEXT_IN, 0);
-    g = mk(g, 1, BUTTON_KIND, G_DELETE, 448, 152, 160, 14, "Delete...", PLACETEXT_IN, 0);
+    int bw = bw_("Use as Kickstart"), rx = W - 8 - bw, lw = rx - 16;
+    struct TagItem cy1[] = { { GTCY_Labels, (ULONG)vol_names }, { GTCY_Active, fvol }, { TAG_DONE, 0 } };
+    struct TagItem cy2[] = { { GTCY_Labels, (ULONG)filter_names }, { GTCY_Active, (ULONG)filter }, { TAG_DONE, 0 } };
+    int pw = bw_("Parent"), cw = (lw - pw - 16) / 2;
+    if (cw > 170) cw = 170;
+    g = mk(g, 1, CYCLE_KIND, G_VOL, 8, PY + 4, cw, 14, 0, 0, cy1);
+    g = mk(g, 1, CYCLE_KIND, G_FILTER, 16 + cw, PY + 4, cw, 14, 0, 0, cy2);
+    g = mk(g, 1, BUTTON_KIND, G_PARENT, 8 + lw - pw, PY + 4, pw, 14, "Parent", PLACETEXT_IN, 0);
+    g = mk(g, 1, TEXT_KIND, G_PATH, 8, PY + 22, lw, 12, 0, 0, txt);
+    int ly = PY + 38, lhf = PB - ly - 36;
+    g = mk(g, 1, LISTVIEW_KIND, G_FILES, 8, ly, lw, lhf, 0, 0, sel);
+    g = mk(g, 1, BUTTON_KIND, G_OPEN, rx, PY + 4, bw, 14, "Open folder", PLACETEXT_IN, 0);
+    g = mk(g, 1, BUTTON_KIND, G_BOOT, rx, ly, bw, 14, "Boot from it", PLACETEXT_IN, 0);
+    g = mk(g, 1, BUTTON_KIND, G_KICK, rx, ly + 16, bw, 14, "Use as Kickstart", PLACETEXT_IN, 0);
+    g = mk(g, 1, BUTTON_KIND, G_RENAME, rx, ly + 40, bw, 14, "Rename to name", PLACETEXT_IN, 0);
+    g = mk(g, 1, BUTTON_KIND, G_MKDIR, rx, ly + 56, bw, 14, "New folder", PLACETEXT_IN, 0);
+    g = mk(g, 1, BUTTON_KIND, G_DELETE, rx, ly + 80, bw, 14, "Delete...", PLACETEXT_IN, 0);
     struct TagItem st[] = { { GTST_MaxChars, 107 }, { TAG_DONE, 0 } };
-    g = mk(g, 1, STRING_KIND, G_NAME, 56, 182, 384, 14, "Name", PLACETEXT_LEFT, st);
-    g = mk(g, 1, TEXT_KIND, G_FINFO, 8, 198, 600, 12, 0, 0, 0);
+    g = mk(g, 1, STRING_KIND, G_NAME, 56, PB - 32, lw - 48, 14, "Name", PLACETEXT_LEFT, st);
+    g = mk(g, 1, TEXT_KIND, G_FINFO, 8, PB - 15, W - 16, 12, 0, 0, 0);
     if (!g) return 0;
 
     /* Settings: Display and Storage on the left, Network and USB on the right, Kickstart under them */
     g = CreateContext(&glist_page[2]);
+    const int L = 16 * 8 + 4;                       /* room for the longest label */
+    int gw = (W - 2 * L - 24) / 2;
+    if (gw > 230) gw = 230;
     int row[2] = { 0, 0 };
     for (int i = 0; i < opt_count && i < OPT_MAX; i++) {
         const struct opt_item *it = &opt_items[i];
-        int col = it->sec >= 2, y = 22 + row[col]++ * 14, x = col ? 452 : 140;
+        int col = it->sec >= 2, y = PY + 4 + row[col]++ * 14, gx = col ? W / 2 + L : 8 + L;
         int id = G_OPT0 + i;
         opt_gadget_item[id] = i;
         if (it->kind == OPT_CHOICE) {
             struct TagItem ct[] = { { GTCY_Labels, (ULONG)it->names }, { GTCY_Active, ov.cur[i] }, { TAG_DONE, 0 } };
-            g = mk(g, 2, CYCLE_KIND, id, x, y, 156, 13, it->label, PLACETEXT_LEFT, ct);
+            g = mk(g, 2, CYCLE_KIND, id, gx, y, gw, 13, it->label, PLACETEXT_LEFT, ct);
         } else {
-            struct TagItem tt[] = { { GTST_String, (ULONG)ov.text[i] }, { GTST_MaxChars, it->maxlen }, { TAG_DONE, 0 } };
-            g = mk(g, 2, STRING_KIND, id, x, y, 156, 13, it->label, PLACETEXT_LEFT, tt);
+            struct TagItem tt[] = { { GTST_String, (ULONG)(it->secret && ov.text[i][0] ? PMASK : ov.text[i]) }, { GTST_MaxChars, it->maxlen }, { TAG_DONE, 0 } };
+            g = mk(g, 2, STRING_KIND, id, gx, y, gw, 13, it->label, PLACETEXT_LEFT, tt);
         }
     }
     struct TagItem kt[] = { { GTCY_Labels, (ULONG)rom_labels }, { GTCY_Active, (ULONG)(rom_cur < 0 ? 0 : rom_cur) }, { TAG_DONE, 0 } };
-    g = mk(g, 2, CYCLE_KIND, G_KS, 140, 22 + row[0] * 14, 156, 13, "Kickstart ROM", PLACETEXT_LEFT, kt);
-    for (int k = 0; k < 3; k++) g = mk(g, 2, TEXT_KIND, G_HELP0 + k, 8, 152 + k * 12, 600, 12, 0, 0, 0);
-    g = mk(g, 2, BUTTON_KIND, G_REVERT, 8, 196, 200, 14, "Back to the card's", PLACETEXT_IN, 0);
+    g = mk(g, 2, CYCLE_KIND, G_KS, 8 + L, PY + 4 + row[0] * 14, gw, 13, "Kickstart ROM", PLACETEXT_LEFT, kt);
+    int rows = (row[0] + 1 > row[1] ? row[0] + 1 : row[1]), hy = PY + 8 + rows * 14;
+    for (int k = 0; k < 3; k++) g = mk(g, 2, TEXT_KIND, G_HELP0 + k, 8, hy + k * 12, W - 16, 12, 0, 0, 0);
+    g = mk(g, 2, BUTTON_KIND, G_REVERT, 8, PB - 18, bw_("Back to the card's"), 14, "Back to the card's", PLACETEXT_IN, 0);
     if (!g) return 0;
 
-    /* Text files */
+    /* Text files: config.txt's lines take what is left */
     g = CreateContext(&glist_page[3]);
-    g = mk(g, 3, LISTVIEW_KIND, G_LINES, 8, 22, 600, 116, 0, 0, sel);
+    int aw = bw_("Delete"), cl = 12 * 8 + 8;
+    g = mk(g, 3, LISTVIEW_KIND, G_LINES, 8, PY + 4, W - 16, PB - PY - 4 - 58, 0, 0, sel);
     struct TagItem ls[] = { { GTST_MaxChars, 199 }, { TAG_DONE, 0 } };
-    g = mk(g, 3, STRING_KIND, G_LINE, 8, 142, 432, 14, 0, 0, ls);
-    g = mk(g, 3, BUTTON_KIND, G_ADDL, 448, 142, 76, 14, "Add", PLACETEXT_IN, 0);
-    g = mk(g, 3, BUTTON_KIND, G_DELL, 532, 142, 76, 14, "Delete", PLACETEXT_IN, 0);
+    g = mk(g, 3, STRING_KIND, G_LINE, 8, PB - 50, W - 24 - 2 * aw - 4, 14, 0, 0, ls);
+    g = mk(g, 3, BUTTON_KIND, G_ADDL, W - 8 - 2 * aw - 4, PB - 50, aw, 14, "Add", PLACETEXT_IN, 0);
+    g = mk(g, 3, BUTTON_KIND, G_DELL, W - 8 - aw, PB - 50, aw, 14, "Delete", PLACETEXT_IN, 0);
     struct TagItem cs_[] = { { GTST_MaxChars, 1000 }, { TAG_DONE, 0 } };
-    g = mk(g, 3, STRING_KIND, G_CMD, 104, 164, 504, 14, "cmdline.txt", PLACETEXT_LEFT, cs_);
-    g = mk(g, 3, TEXT_KIND, G_TNOTE, 8, 182, 600, 12, 0, 0, 0);
+    g = mk(g, 3, STRING_KIND, G_CMD, 8 + cl, PB - 32, W - 16 - cl, 14, "cmdline.txt", PLACETEXT_LEFT, cs_);
+    g = mk(g, 3, TEXT_KIND, G_TNOTE, 8, PB - 15, W - 16, 12, 0, 0, 0);
     if (!g) return 0;
 
-    /* Bluetooth */
+    /* Bluetooth: paired above, found below, the buttons beside them */
     g = CreateContext(&glist_page[4]);
-    g = mk(g, 4, TEXT_KIND, G_BSTAT, 8, 22, 600, 12, 0, 0, txt);
-    g = mk(g, 4, LISTVIEW_KIND, G_BPAIRED, 8, 40, 432, 52, 0, 0, sel);
-    g = mk(g, 4, BUTTON_KIND, G_BCONN, 448, 40, 160, 14, "Connect now", PLACETEXT_IN, 0);
-    g = mk(g, 4, BUTTON_KIND, G_BFORGET, 448, 58, 160, 14, "Forget...", PLACETEXT_IN, 0);
-    g = mk(g, 4, LISTVIEW_KIND, G_BFOUND, 8, 100, 432, 68, 0, 0, sel);
-    g = mk(g, 4, BUTTON_KIND, G_BSCAN, 448, 100, 160, 14, "Scan", PLACETEXT_IN, 0);
-    g = mk(g, 4, BUTTON_KIND, G_BPAIR, 448, 118, 160, 14, "Pair", PLACETEXT_IN, 0);
-    g = mk(g, 4, TEXT_KIND, G_BKEY, 8, 176, 600, 12, 0, 0, txt);
-    g = mk(g, 4, TEXT_KIND, G_BNOTE, 8, 196, 600, 12, 0, 0, 0);
+    int bb = bw_("Connect now") + 24, bx = W - 8 - bb, bl = bx - 16, bh = (PB - PY - 74) / 2;
+    if (bh < 30) bh = 30;
+    g = mk(g, 4, TEXT_KIND, G_BSTAT, 8, PY + 4, W - 16, 12, 0, 0, txt);
+    g = mk(g, 4, LISTVIEW_KIND, G_BPAIRED, 8, PY + 20, bl, bh, 0, 0, sel);
+    g = mk(g, 4, BUTTON_KIND, G_BCONN, bx, PY + 20, bb, 14, "Connect now", PLACETEXT_IN, 0);
+    g = mk(g, 4, BUTTON_KIND, G_BFORGET, bx, PY + 36, bb, 14, "Forget...", PLACETEXT_IN, 0);
+    int fy = PY + 26 + bh;
+    g = mk(g, 4, LISTVIEW_KIND, G_BFOUND, 8, fy, bl, bh, 0, 0, sel);
+    g = mk(g, 4, BUTTON_KIND, G_BSCAN, bx, fy, bb, 14, "Scan", PLACETEXT_IN, 0);
+    g = mk(g, 4, BUTTON_KIND, G_BPAIR, bx, fy + 16, bb, 14, "Pair", PLACETEXT_IN, 0);
+    g = mk(g, 4, TEXT_KIND, G_BKEY, 8, PB - 32, W - 16, 12, 0, 0, txt);
+    g = mk(g, 4, TEXT_KIND, G_BNOTE, 8, PB - 15, W - 16, 12, 0, 0, 0);
     if (!g) return 0;
     return 1;
 }
@@ -974,16 +1098,21 @@ LONG card_main(const char *args, ULONG arglen)
     if (!scr) { rc = 20; goto end; }
     vi = GetVisualInfoA(scr, 0);
     UBYTE *s = scr;
+    scr_w = *(UWORD *)(s + 12); scr_h = *(UWORD *)(s + 14);
     x0 = s[36] + 4; y0 = s[35] + (*(UWORD *)(*(UBYTE **)(s + 40) + 4)) + 1 + 4;
     if (!make_gadgets()) { put(VERSTR ": the gadgets could not be made\n"); rc = 20; goto end; }
     struct TagItem wt[] = {
-        { WA_(19), 632 }, { WA_(20), 248 }, { WA_(9), (ULONG)glist_top }, { WA_(11), (ULONG)VERSTR " - the SD card" },
+        { WA_(19), 628 }, { WA_(20), 248 }, { WA_(30), 1 }, { WA_(44), 1 }, { WA_(9), (ULONG)glist_top }, { WA_(11), (ULONG)VERSTR " - the SD card" },
         { WA_(31), 1 }, { WA_(32), 1 }, { WA_(33), 1 }, { WA_(38), 1 }, { WA_(42), 1 }, { WA_(22), (ULONG)scr },
-        { WA_(7), IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | IDCMP_GADGETUP | IDCMP_GADGETDOWN | IDCMP_MOUSEMOVE | IDCMP_MOUSEBUTTONS | IDCMP_INTUITICKS },
+        { WA_(7), IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | IDCMP_GADGETUP | IDCMP_GADGETDOWN | IDCMP_MOUSEMOVE | IDCMP_MOUSEBUTTONS | IDCMP_INTUITICKS | IDCMP_NEWSIZE },
         { TAG_DONE, 0 } };
     win = OpenWindowTagList(wt);
     UnlockPubScreen(scr); scr = 0;
     if (!win) { put(VERSTR ": the window would not open\n"); rc = 20; goto end; }
+    {
+        UBYTE *w = win;
+        WindowLimits(win, 560 + 12 + w[54] + w[56], 224 + 8 + w[55] + w[57], scr_w, scr_h);
+    }
     GT_RefreshWindow(win);
     show_page(0);
     card_show(0);
@@ -1006,6 +1135,7 @@ LONG card_main(const char *args, ULONG arglen)
             if (cls == IDCMP_CLOSEWINDOW) {
                 if (!changed() || ask(VERSTR, "cmdline.txt or config.txt has changes that are not saved.\nLeave without saving them?", "Leave|Stay")) quit = 1;
             } else if (cls == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(win); page_frame(); GT_EndRefresh(win, 1); }
+            else if (cls == IDCMP_NEWSIZE) relayout();
             else if (cls == IDCMP_GADGETUP || cls == IDCMP_GADGETDOWN) {
                 UWORD id = *(UWORD *)(ia + 38);
                 if (id >= G_TAB0 && id <= G_TAB3) {
@@ -1048,6 +1178,7 @@ LONG card_main(const char *args, ULONG arglen)
                     const struct opt_item *it = &opt_items[i];
                     help_show(it->help);
                     if (it->kind == OPT_CHOICE) { if (code < opt_nchoices(it)) ov.cur[i] = (UBYTE)code; }
+                    else if (it->secret && seq(strget(id), PMASK)) ;       /* the password left as it was */
                     else {
                         const char *v = strget(id);
                         unsigned k = 0;
@@ -1058,9 +1189,15 @@ LONG card_main(const char *args, ULONG arglen)
                             ov.text[i][k] = c;
                         }
                         ov.text[i][k] = 0;
-                        if (!seq(v, ov.text[i])) strset(id, ov.text[i]);
+                        if (it->secret) strset(id, ov.text[i][0] ? PMASK : "");
+                        else if (!seq(v, ov.text[i])) strset(id, ov.text[i]);
                     }
-                    if (opt_item_changed(&ov, i)) { char w[96]; opt_written(&ov, i, w, sizeof w); say("cmdline.txt will have: ", w[0] ? w : "(the default: no option)"); }
+                    if (opt_item_changed(&ov, i)) {
+                        char w[96];
+                        opt_written(&ov, i, w, sizeof w);
+                        if (it->secret) say("cmdline.txt will have: ", w[0] ? "wifi.psk=" PMASK " (the new password, hidden)" : "no WiFi password");
+                        else say("cmdline.txt will have: ", w[0] ? w : "(the default: no option)");
+                    }
                 } else if (id == G_LINES) {
                     if (code < nlines) { lsel = code; strset(G_LINE, lines[code]); }
                 } else if (id == G_LINE) {
@@ -1083,7 +1220,7 @@ LONG card_main(const char *args, ULONG arglen)
                         say("Line deleted from config.txt (Save to write it)", 0);
                     }
                 } else if (id == G_CMD) {
-                    scpy(cmd_base, strget(G_CMD), sizeof cmd_base);
+                    psk_unmask(strget(G_CMD), cmd_base, sizeof cmd_base);
                     opt_init(&ov, cmd_base);
                     opts_show();
                     say("cmdline.txt taken as typed; the Settings page follows it (Save to write it)", 0);

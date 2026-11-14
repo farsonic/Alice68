@@ -55,7 +55,7 @@ lvo(SYS, -450, lambda o, p: opened.remove(d(R.A1)) if d(R.A1) in opened else fai
 lvo(SYS, -372, lambda o, p: setd0(0))
 # ---- the card, as alice68hdf.device's card service sees it -------------------------------------
 card = {
-    'cmdline.txt': b'coherent_pool=1M aga.look=0 aga.scale=1 eth=off hdf.boot=Prism wifi.ssid="Home Net" net.trace=1\n',
+    'cmdline.txt': b'coherent_pool=1M aga.look=0 aga.scale=1 eth=off hdf.boot=Prism wifi.ssid="Home Net" wifi.psk="old secret" net.trace=1\n',
     'config.txt': b'# the Pi\n[pi4]\narm_64bit=1\n[all]\ninitramfs kick31.rom followkernel\nalice68.folder=Games\n',
     'kick31.rom': bytes(524288), 'kick32.rom': bytes(524288), 'kernel8.img': bytes(5000), 'old.txt': b'old\n',
     'HDF/': None, 'HDF/Prism.hdf': bytes(4096), 'HDF/Spare.hdf': bytes(2048), 'ISO/': None,
@@ -147,12 +147,16 @@ WIN = alloc(128); UPORT = alloc(34); mem.w8(UPORT + 15, 21); mem.w32(WIN + 86, U
 def openwin(o, p):
     t = d(R.A1); tags = {}
     while mem.r32(t): tags[mem.r32(t)] = mem.r32(t + 4); t += 8
-    st['wintags'] = tags; setd0(WIN)
+    st['wintags'] = tags
+    mem.w16(WIN + 8, tags.get(0x80000076, 600) + 8); mem.w16(WIN + 10, tags.get(0x80000077, 200) + 15)
+    mem.w8(WIN + 54, 4); mem.w8(WIN + 55, 11); mem.w8(WIN + 56, 4); mem.w8(WIN + 57, 4)
+    setd0(WIN)
 lvo(INT, -606, openwin); lvo(INT, -72, lambda o, p: st.__setitem__('closed', True))
 attached = []
 lvo(INT, -438, lambda o, p: (attached.append(d(R.A1)), setd0(0)))
 def remglist(o, p):
-    if d(R.A1) not in attached: fails.append('RemoveGList of a list not in the window')
+    if d(R.A1) == contexts[0]: attached.clear(); st['removed_all'] = st.get('removed_all', 0) + 1   # the top row and all after it
+    elif d(R.A1) not in attached: fails.append('RemoveGList of a list not in the window')
     else: attached.remove(d(R.A1))
     setd0(0)
 lvo(INT, -444, remglist)
@@ -162,7 +166,10 @@ def easy(o, p):
     es = d(R.A1); asks.append(mem.r_cstr(mem.r32(es + 12))); setd0(1)
 lvo(INT, -588, easy)
 lvo(INT, -102, lambda o, p: setd0(1))
+lvo(INT, -318, lambda o, p: st.__setitem__('limits', (d(R.D0), d(R.D1), d(R.D2), d(R.D3))))
+lvo(INT, -456, lambda o, p: None)
 contexts = []
+freed = []
 def createctx(o, p):
     c = alloc(64); mem.w32(d(R.A0), c); contexts.append(c); setd0(c)
 lvo(GT, -114, createctx)
@@ -182,7 +189,7 @@ def creategad(o, p):
         while a and mem.r32(a): labs.append(mem.r_cstr(mem.r32(a))); a += 4
         glab[gid] = labs; gcur[gid] = t.get(0x8008000f, 0)
     st['gadgets'].append((kind, gid, g, mem.r_cstr(mem.r32(ng + 8)) if mem.r32(ng + 8) else '')); setd0(g)
-lvo(GT, -30, creategad); lvo(GT, -36, lambda o, p: None)
+lvo(GT, -30, creategad); lvo(GT, -36, lambda o, p: freed.append(d(R.A0)))
 lists = {}
 def setattrs(o, p):
     g, t = d(R.A0), tagsof(d(R.A3))
@@ -204,7 +211,7 @@ def gtget(o, p):
     if d(R.A0) != UPORT or not script: setd0(0); return
     cls, code, gid = script.pop(0)
     m = alloc(48); mem.w32(m + 20, cls); mem.w16(m + 24, code)
-    if gid: mem.w32(m + 28, [x[2] for x in st['gadgets'] if x[1] == gid][0])
+    if gid: mem.w32(m + 28, [x[2] for x in st['gadgets'] if x[1] == gid][-1])   # the newest: gadgets are made again on a resize
     setd0(m)
 lvo(GT, -72, gtget)
 for off in (-78, -84, -90, -96, -120, -132): lvo(GT, off, lambda o, p: None)
@@ -225,11 +232,13 @@ checks = {}
 def note(k): return lambda: checks.__setitem__(k, (dict(card), list(st['cs']), dict(gtext), {k_: list(v) for k_, v in lists.items()}))
 steps = [
     note('start'),
+    lambda: (mem.w16(WIN + 8, 820), mem.w16(WIN + 10, 400), script.append((0x2, 0, 0))), note('resized'),
     ev(G['FREE']), note('free'),
     ev(G['TAB2']),
     ev(G['OPT0'] + 1, 4),                                  # Scaling: 16:9
     lambda: (typ(G['OPT0'] + 10, 'gb'), script.append((UP, 0, G['OPT0'] + 10))),   # Country, typed in lower case
     ev(G['KS'], 1),                                        # Kickstart: kick32.rom
+    note('masked'),
     ev(G['SAVE']), note('saved'),
     ev(G['TAB1']),
     pick(G['FILES'], 'old.txt'), ev(G['DELETE']), note('deleted'),
@@ -238,7 +247,9 @@ steps = [
     pick(G['FILES'], 'HDF/'), ev(G['OPEN']), note('hdf'),
     pick(G['FILES'], 'Prism.hdf'), ev(G['DELETE']), note('inuse'),
     pick(G['FILES'], 'Spare.hdf'), ev(G['BOOT']), ev(G['PARENT']),
-    ev(G['TAB3']),
+    ev(G['TAB2']), lambda: (typ(G['OPT0'] + 9, 'new pass 2'), script.append((UP, 0, G['OPT0'] + 9))), note('newpass'),
+    ev(G['TAB3']), note('textmasked'),
+    lambda: (typ(G['CMD'], mem.r_cstr(gstr[G['CMD']]) + ' iso=off'), script.append((UP, 0, G['CMD']))),   # typed into the line shown with ********
     pick(G['LINES'], 'alice68.folder=Games'), lambda: (typ(G['LINE'], 'alice68.folder=Games:Spiele'), script.append((UP, 0, G['LINE']))),
     lambda: (typ(G['LINE'], 'hdmi_force_hotplug=1'), script.append((UP, 0, G['ADDL']))),
     pick(G['LINES'], 'arm_64bit=1'), ev(G['DELL']), note('lines'),
@@ -286,9 +297,23 @@ def chk(c, m):
 # what the window was made of
 kinds = sorted(set(k for k, *_ in st['gadgets']))
 chk(kinds == [1, 4, 7, 12, 13], 'gadget kinds %s' % kinds)
-labels = [t for k, i, g, t in st['gadgets'] if i >= G['OPT0']]
+labels = [t for k, i, g, t in st['gadgets'] if i >= G['OPT0']][:16]   # (made again on the resize)
 chk(labels[:4] == ['Picture', 'Scaling', 'Boot log panels', 'Hardfiles'] and 'Country' in labels and 'Bluetooth' in labels and len(labels) == 16, 'settings gadgets %s' % labels)
-chk(st.get('wintags', {}).get(0x80000076) == 632, 'window width %s' % st.get('wintags'))
+chk(st.get('wintags', {}).get(0x80000076) == 628 and st['wintags'].get(0x80000081) == 1, 'window width / size gadget %s' % st.get('wintags'))
+chk(st.get('limits') and st['limits'][0] >= 560 and st['limits'][1] >= 224, 'window limits %s' % (st.get('limits'),))
+if 'resized' in checks:
+    chk(st.get('removed_all') == 1 and len(freed) >= 6, 'resize: gadgets taken out %s, lists freed %d' % (st.get('removed_all'), len(freed)))
+    chk(any('ALICE68' in x for x in checks['resized'][3].get(G['PARTS'], [])), 'the partitions list came back after the resize')
+    big = [g for k, i, g, t in st['gadgets'] if i == G['STATUS']]
+    chk(len(big) == 2, 'the status line made again (%d)' % len(big))
+if 'masked' in checks:
+    pw = mem.r_cstr(gstr[G['OPT0'] + 9])
+    chk(pw == '********', 'the password gadget shows %r' % pw)
+if 'textmasked' in checks:
+    cmd = mem.r_cstr(gstr[G['CMD']])
+    chk('wifi.psk=********' in cmd and 'secret' not in cmd and 'new pass' not in cmd, 'cmdline.txt line shown as %r' % cmd)
+    chk(mem.r_cstr(gstr[G['OPT0'] + 9]) == '********', 'the new password hidden at once')
+    chk('hidden' in checks['newpass'][2].get(G['STATUS'], '') and 'new pass 2' not in checks['newpass'][2].get(G['STATUS'], ''), 'status %r' % checks['newpass'][2].get(G['STATUS']))
 if 'start' in checks:
     c, calls, texts, lst = checks['start']
     chk(('READ', 'cmdline.txt') in calls and ('READ', 'config.txt') in calls and ('INFO', 0) in calls, 'start: %s' % calls)
@@ -301,7 +326,7 @@ if 'free' in checks:
     chk(('INFO', 1) in checks['free'][1] and any('free' in x for x in checks['free'][3].get(G['PARTS'], [])), 'free space not counted')
 if 'saved' in checks:
     c = checks['saved'][0]
-    chk(c.get('cmdline.txt') == b'coherent_pool=1M aga.look=0 eth=off hdf.boot=Prism wifi.ssid="Home Net" net.trace=1 aga.scale=4 wifi.country=GB\n',
+    chk(c.get('cmdline.txt') == b'coherent_pool=1M aga.look=0 eth=off hdf.boot=Prism wifi.ssid="Home Net" wifi.psk="old secret" net.trace=1 aga.scale=4 wifi.country=GB\n',
         'cmdline.txt saved as %r' % c.get('cmdline.txt'))
     chk(c.get('cmdline.txt.bak', b'').startswith(b'coherent_pool=1M aga.look=0 aga.scale=1'), 'cmdline.txt.bak %r' % c.get('cmdline.txt.bak'))
     chk(b'initramfs kick32.rom followkernel\n' in c.get('config.txt', b'') and b'kick31' not in c['config.txt'], 'config.txt Kickstart: %r' % c.get('config.txt'))
@@ -320,7 +345,9 @@ if 'saved2' in checks:
     c = checks['saved2'][0]
     chk(c.get('config.txt') == b'# the Pi\n[pi4]\n[all]\ninitramfs kick32.rom followkernel\nalice68.folder=Games:Spiele\nhdmi_force_hotplug=1\n', 'config.txt %r' % c.get('config.txt'))
     chk(b'hdf.boot=Spare' in c.get('cmdline.txt', b'') and b'hdf.boot=Prism' not in c['cmdline.txt'], 'boot from Spare.hdf: %r' % c.get('cmdline.txt'))
-missing = [k for k in ('start', 'free', 'saved', 'deleted', 'mkdir', 'renamed', 'hdf', 'inuse', 'lines', 'saved2', 'bt', 'btscan', 'btpair', 'btkept', 'btforget', 'restart') if k not in checks]
+    chk(b'wifi.psk="new pass 2"' in c['cmdline.txt'] and b'old secret' not in c['cmdline.txt'] and b'********' not in c['cmdline.txt'], 'the new password saved: %r' % c['cmdline.txt'])
+    chk(b' iso=off' in c['cmdline.txt'], 'the line typed in kept (with the real password): %r' % c['cmdline.txt'])
+missing = [k for k in ('start', 'resized', 'masked', 'newpass', 'textmasked', 'free', 'saved', 'deleted', 'mkdir', 'renamed', 'hdf', 'inuse', 'lines', 'saved2', 'bt', 'btscan', 'btpair', 'btkept', 'btforget', 'restart') if k not in checks]
 chk(not missing, 'steps never reached: %s' % missing)
 if 'bt' in checks:
     chk(any('Slim Keys' in x and 'keyboard' in x and '16:15:14:13:12:11' in x for x in checks['bt'][3].get(G['BFOUND'], [])), 'found list %s' % checks['bt'][3].get(G['BFOUND']))
@@ -334,7 +361,7 @@ chk(mem.r32(BOARD + 44) == 0x52455354, 'restart not asked on the board (%x)' % m
 chk(st.get('closed'), 'window not closed')
 chk(not opened, 'the device left open')
 chk(not st['allocs'], 'memory not given back: %s' % st['allocs'])
-chk(not attached, 'a page\'s gadgets left in the window at the end')
+chk(not [a for a in attached if a not in contexts[::6]], 'a page\'s gadgets left in the window at the end')
 if fails:
     print(''.join(st['out'])); print('card service calls:', st['cs'][-12:])
     print('\n'.join('FAIL: ' + f for f in fails)); sys.exit(1)

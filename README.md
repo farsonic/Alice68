@@ -272,6 +272,11 @@ it.
 | Bluetooth | The kernel's Bluetooth: its state, the paired devices (**Connect now**, **Forget...**), **Scan** and **Pair**, and the passkey to type. Pairings are written to `cmdline.txt` at once. See [Bluetooth](#bluetooth-keyboards-and-mice-new-not-yet-tested-on-a-pi). |
 | Text files | `config.txt` line by line: pick a line to change it, **Add**, **Delete**. `cmdline.txt` as it will be saved; type into it to change it directly, and the Settings page follows. |
 
+The window can be resized: lists grow with it, and the buttons stay sized to their labels.
+The WiFi password is never shown. The Settings page and the `cmdline.txt` line show
+`********` in its place. Type a new one over it to change it, or empty the field to remove
+it. Editing the line around `********` keeps the password as it is.
+
 Nothing is written until you press **Save**, apart from what the Files page does at once.
 Save writes `cmdline.txt` and `config.txt`, and keeps the previous versions as
 `cmdline.txt.bak` and `config.txt.bak`. **Restart Pi** starts the Pi again so the new

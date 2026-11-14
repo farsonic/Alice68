@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Alice68-Card 1.1:** the window can be resized; lists grow with it, and buttons and tabs
+  are sized to their labels, so none is cut off. The WiFi password is never shown: the
+  Settings page and the cmdline.txt line show `********`, a password typed in turns into
+  `********` at once, and the status line doesn't repeat it.
 - **Fixed: the network driver's firmware (mailbox) calls never worked on a Pi with more than
   1 GB.** Its request buffer came from the kernel's heap, which lives at the top of RAM, out
   of the VideoCore's reach: every call failed (`mailbox tag ... error -4`), so the WiFi and
