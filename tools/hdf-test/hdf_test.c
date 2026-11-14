@@ -4,6 +4,7 @@
  * checks the RDBs, the single-partition hardfile, cmdline.txt and its
  * options, then writes through the mapping into a copy of the card and
  * checks that exactly the written blocks changed.  hdf_test CARD.img DIR */
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -44,6 +45,14 @@ static uint8_t *slurp(const char *path, long *n)
     return b;
 }
 
+static void fmt(char *o, unsigned n, const char *f, ...)
+{
+    va_list ap;
+    va_start(ap, f);
+    hdf_fmt(o, n, f, ap);
+    va_end(ap);
+}
+
 int main(int argc, char **argv)
 {
     if (argc != 3) return 2;
@@ -70,6 +79,13 @@ int main(int argc, char **argv)
     hdf_parse_opts("aga.look=0  hdf.boot=Workbench_3.1.hdf\thdf.readonly\n", &o);
     CHECK(o.readonly && !strcmp(o.boot, "Workbench_3.1.hdf"), "options parse");
     CHECK(hdf_name_match("Workbench 3.1.hdf", o.boot) && !hdf_name_match("Workbench 3.1.hdf", "workbench"), "name match");
+    {   /* a line longer than the buffer is cut, and the formatter still ends (it once looped for ever on a long %s) */
+        char b[16];
+        fmt(b, sizeof b, "%s and %lu", "PrismDesktop-0.2.22-Alice68-Workbench.hdf", 42UL);
+        CHECK(!strcmp(b, "PrismDesktop-0."), "a long line cut: %s", b);
+        fmt(b, sizeof b, "%s%c%u", "123456789012345", 'x', 7u);
+        CHECK(!strcmp(b, "123456789012345"), "a full line: %s", b);
+    }
     hdf_parse_opts("hdf=off", &o);
     CHECK(o.off, "hdf=off");
 

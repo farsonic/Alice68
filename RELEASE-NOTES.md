@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Fixed: boot hung with long hardfile names.** `alice68hdf.device` stopped for good, before
+  its summary line, when one of its log lines came out longer than 159 characters: the
+  formatter cut the line but went on looping. The "volume ... is mounted already ... boot
+  this one with hdf.boot=NAME" line reaches that with a duplicate volume in a hardfile with
+  a long name (`PrismDesktop-0.2.22-Alice68-Workbench.hdf`), so AmigaOS never started and
+  the splash stayed up. In every release with hardfiles until now. Lines may now be 239
+  characters, and longer ones are cut. Reproduced and tested on the 68k emulator with a
+  card like the one it was reported on; the formatter has a PC test.
 - **exFAT partitions: hardfiles and CD images with no 4 GB limit.** A card can now have a
   small FAT32 partition for the Pi and an exFAT partition after it, the format Windows and
   macOS give any size of card. `alice68hdf.device` finds the first exFAT partition and

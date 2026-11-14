@@ -8,7 +8,8 @@
 void hdf_fmt(char *out, unsigned size, const char *fmt, va_list ap)
 {
     unsigned n = 0;
-#define PUT(c) do { if (n + 1 < size) out[n++] = (char)(c); } while (0)
+/* c is always evaluated: "PUT(*s++)" must step on even when the line is full, or it never ends */
+#define PUT(c) do { char c_ = (char)(c); if (n + 1 < size) out[n++] = c_; } while (0)
     for (; *fmt; fmt++) {
         if (*fmt != '%') { PUT(*fmt); continue; }
         fmt++;
@@ -50,7 +51,7 @@ void hdf_fmt(char *out, unsigned size, const char *fmt, va_list ap)
 
 void hdf_log(struct hdf_io *io, const char *fmt, ...)
 {
-    char line[160];
+    char line[240];
     va_list ap;
     va_start(ap, fmt);
     hdf_fmt(line, sizeof line, fmt, ap);
