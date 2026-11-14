@@ -97,7 +97,13 @@ hdmi_force_hotplug=1      # output even if the screen is detected late
 hdmi_drive=2              # HDMI with sound (Paula is played over HDMI)
 hdmi_group=1              # TV modes (CEA)
 hdmi_mode=31              # 1080p50
+disable_overscan=1        # the whole 1920x1080: without it the firmware leaves a 48-pixel border (1824x984)
 ```
+
+The HDMI mode is set by the Pi's firmware at power-on and stays for the whole session:
+AmigaOS screen modes (PAL, NTSC, hires, interlace, RTG) are scaled into it (`aga.scale=`),
+so the monitor itself doesn't change mode. To change what the screen gets, change
+`hdmi_mode` here (or on Alice68-Card's Text files page) and restart.
 
 | `hdmi_mode` | Picture |
 |---|---|
