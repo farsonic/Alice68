@@ -22,6 +22,7 @@ FILES = [                      # (built file in OUT_DIR, place in the system)
     ('Alice68-WiFi', 'C'),
     ('Alice68-Network', 'C'),
     ('Alice68-NetworkGT', 'C'),
+    ('Alice68-Card', 'C'),
     ('Alice68-Monitor', 'C'),
     ('Alice68-Wheel', 'C'),
     ('Alice68-Wheel', 'WBStartup'),            # the mouse wheel, started with Workbench

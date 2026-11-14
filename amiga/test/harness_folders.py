@@ -42,6 +42,7 @@ exfatboot = 'exfatboot' in sys.argv[4:]
 hdfboot = 'hdfboot' in sys.argv[4:]
 exfatrw = 'exfatrw' in sys.argv[4:] or exfatboot
 exfat = 'exfat' in sys.argv[4:] or exfatrw
+cardsvc = 'card' in sys.argv[4:]                     # the card service (cardsvc.c), as Alice68-Card uses it
 setup = 'setup' in sys.argv[4:]                      # the setup screen's changes on the network board
 env = dict(os.environ, MTOOLS_SKIP_CHECK='1', LC_ALL='C.UTF-8')
 
@@ -287,6 +288,117 @@ mem.w32(PTB + 60, 1)
 call(syms['stub_vbl'], {R.A1: DEVBASE}, name='vbl (Ctrl-Amiga-Amiga)')
 if coldreboot != [2] or mem.r32(PTB + 60) != 2: die('Ctrl-Amiga-Amiga: ColdReboot %s, reset_req %d' % (coldreboot, mem.r32(PTB + 60)))
 print('Ctrl-Amiga-Amiga: vertical blank server installed; idle does nothing; a request is taken (2) and ColdReboot called')
+
+if cardsvc:                                          # the card service: what Alice68-Card asks alice68hdf.device
+    CSIO = alloc(48)
+    if call(syms['dev_open'], args=(DEVBASE, CSIO, 0x41363843, 0), name='dev_open(CS_UNIT)') != 0: die('the card service unit would not open')
+    CSBUF = alloc(0x10000)
+    def cs(cmd, data, length, off=0):
+        mem.w16(CSIO + 28, cmd); mem.w32(CSIO + 40, data); mem.w32(CSIO + 36, length); mem.w32(CSIO + 44, off)
+        mem.w8(CSIO + 30, 1); mem.w8(CSIO + 31, 0)
+        call(syms['card_service'], args=(DEVBASE, CSIO), name='card_service %d' % cmd)
+        e = mem.r8(CSIO + 31); return e - 256 if e > 127 else e
+    def fil(vol, path, path2='', data=b'', mx=0):
+        mem.w_block(CSBUF, bytes(528)); mem.w32(CSBUF, vol)
+        mem.w_block(CSBUF + 4, path.encode('latin1') + b'\0'); mem.w_block(CSBUF + 260, path2.encode('latin1') + b'\0')
+        mem.w32(CSBUF + 516, len(data)); mem.w32(CSBUF + 520, mx); mem.w_block(CSBUF + 524, data)
+        return CSBUF
+    def lst(vol, path, mx=40):
+        mem.w_block(CSBUF, bytes(276)); mem.w32(CSBUF, vol); mem.w_block(CSBUF + 4, path.encode('latin1') + b'\0'); mem.w32(CSBUF + 260, mx)
+        err = cs(10, CSBUF, 0x10000)
+        n = mem.r32(CSBUF + 264); out = {}
+        for i in range(n):
+            e = CSBUF + 272 + 124 * i
+            out[mem.r_cstr(e)] = (mem.r32(e + 108), mem.r32(e + 120))
+        return err, out
+    V = 1 if exfatrw else 0
+    checks = [0]
+    def chk(c, m):
+        if not c: die('card service: ' + m)
+        checks[0] += 1
+    # CS_INFO
+    err = cs(9, CSBUF, 4 + 4 * 4 + 48 * 8 + 4 + 80 + 32 + 4 + 72 * 24 + 8, 1)
+    chk(err == 0, 'CS_INFO answered %d' % err)
+    chk(mem.r32(CSBUF) == 1 and mem.r32(CSBUF + 4) == (1 if card_ro else 0), 'version / card_ro')
+    np_ = mem.r32(CSBUF + 12); parts = []
+    for i in range(np_):
+        pb = CSBUF + 16 + 48 * i
+        parts.append(dict(type=mem.r32(pb), kind=mem.r32(pb + 4), start=mem.r32(pb + 12), count=mem.r32(pb + 16), vol=mem.r32(pb + 20),
+                          total=mem.r32(pb + 24), free=mem.r32(pb + 28), label=mem.r_cstr(pb + 32)))
+    if exfatrw: chk([(p['kind'], p['vol']) for p in parts] == [(2, 0), (3, 1)], 'partitions %s' % parts)
+    else: chk(len(parts) == 1 and parts[0]['kind'] == 2 and parts[0]['vol'] == 0 and parts[0]['start'] == 0, 'partitions %s' % parts)
+    chk(all(p['free'] not in (0, 0xffffffff) and p['free'] < p['total'] for p in parts if p['vol'] != 0xffffffff), 'free space %s' % parts)
+    ib = CSBUF + 16 + 48 * 8
+    exrw = mem.r32(ib); nused = mem.r32(ib + 4 + 80 + 32)
+    used = [mem.r_cstr(ib + 4 + 80 + 32 + 4 + 72 * i + 8) for i in range(nused)]
+    chk(used == ['raw.hdf'], 'mounted files %s' % used)
+    chk(exrw == (1 if exfatrw and not card_ro else 0), 'exfat_rw %d' % exrw)
+    print('CS_INFO: %s; mounted %s' % (', '.join('%s %d KB (%d free) vol %d' % ({2: 'FAT32', 3: 'exFAT'}.get(p['kind'], p['kind']), p['total'], p['free'], p['vol'] if p['vol'] < 9 else -1) for p in parts), used))
+    # CS_LIST: the root, a folder volume's root in use, the mounted hardfile in use
+    err, root = lst(0, '')
+    chk(err == 0 and {'ALICE68', 'config.txt'} <= set(root) and root['ALICE68'][1] & 1 and not root['config.txt'][1] & 1, 'FAT root %s' % root)
+    chk(root['ALICE68'][1] & 2, 'the ALICE68 folder volume\'s root not in use: %s' % root)
+    err, root = lst(V, '')
+    chk(err == 0 and root['Games'][1] & 3 == 3, 'Games (a folder volume) %s' % root)
+    err, hd = lst(V, 'HDF')
+    chk(err == 0 and hd.get('raw.hdf', (0, 0))[1] & 2 and hd['raw.hdf'][0] == 2048 * 512, 'HDF/raw.hdf in use: %s' % hd)
+    err, _ = lst(V, 'NoSuch'); chk(err == 1, 'a missing folder: %d' % err)
+    err, few = lst(V, '', mx=2); chk(err == 0 and len(few) == 2 and mem.r32(CSBUF + 268) == 1, 'max 2: %s more %d' % (few, mem.r32(CSBUF + 268)))
+    # CS_READ
+    err = cs(11, fil(0, 'config.txt', mx=8192), 0x10000)
+    chk(err == 0 and bytes(mem.r_block(CSBUF + 524, mem.r32(CSIO + 32))).decode() == config, 'config.txt read: %d' % err)
+    err = cs(11, fil(0, 'config.txt', mx=16), 0x10000)
+    chk(err == 10 and mem.r32(CSBUF + 516) == len(config), 'a buffer too small: %d, len %d' % (err, mem.r32(CSBUF + 516)))
+    err = cs(11, fil(V, 'Games'), 0x10000); chk(err == 11, 'reading a folder: %d' % err)
+    if card_ro:
+        err = cs(12, fil(0, 'cmdline.txt', data=b'x\n'), 0x10000)
+        chk(err == 5, 'a write on a read-only card: %d' % err)
+        chk(bytes(card) == open(img, 'rb').read(), 'the read-only card changed')
+        print('card service, read-only card: %d checks; writes refused (CSE_RO)' % checks[0]); print('ALL OK'); sys.exit(0)
+    # CS_WRITE, CS_MKDIR, CS_RENAME, CS_DELETE
+    new = b'aga.look=0 aga.scale=4 hdf.boot=raw\n'
+    chk(cs(12, fil(0, 'cmdline.txt', data=new), 0x10000) == 0, 'cmdline.txt written')
+    chk(cs(11, fil(0, 'cmdline.txt', mx=4096), 0x10000) == 0 and bytes(mem.r_block(CSBUF + 524, mem.r32(CSIO + 32))) == new, 'cmdline.txt read back')
+    chk(cs(12, fil(0, 'cmdline.txt', data=b'short\n'), 0x10000) == 0, 'cmdline.txt shortened')
+    chk(cs(15, fil(V, 'NewDir'), 0x10000) == 0, 'mkdir')
+    chk(cs(15, fil(V, 'NewDir'), 0x10000) == 2, 'mkdir twice: exists')
+    big = bytes((i * 7) & 255 for i in range(20000))
+    chk(cs(12, fil(V, 'NewDir/a.bin', data=big), 0x10000) == 0, 'a 20000-byte file')
+    chk(cs(14, fil(V, 'NewDir/a.bin', 'Work/b.bin'), 0x10000) == 0, 'moved to Work/b.bin')
+    chk(cs(13, fil(V, 'NewDir'), 0x10000) == 0, 'the empty folder deleted')
+    chk(cs(13, fil(V, 'Games'), 0x10000) == 4, 'a folder volume\'s root refused')
+    chk(cs(14, fil(V, 'HDF/raw.hdf', 'HDF/other.hdf'), 0x10000) == 4, 'renaming a mounted hardfile refused')
+    chk(cs(12, fil(V, 'HDF/raw.hdf', data=b'x'), 0x10000) == 4, 'writing a mounted hardfile refused')
+    chk(cs(13, fil(V, 'HDF/raw.hdf'), 0x10000) == 4, 'deleting a mounted hardfile refused')
+    chk(cs(13, fil(V, 'Work'), 0x10000) == 8, 'a folder with files: not empty')
+    chk(cs(13, fil(V, 'nothing'), 0x10000) == 1, 'deleting what is not there')
+    chk(cs(12, fil(V, 'bad:name', data=b'x'), 0x10000) == 7, 'a bad name')
+    chk(cs(12, fil(5, 'x', data=b'x'), 0x10000) == 9, 'no such volume')
+    chk(cs(12, fil(V, 'Work/b.bin', data=big), 0x10000) == 0, 'b.bin again')
+    open(img, 'wb').write(card)
+    if exfatrw:
+        L = subprocess.run(['losetup', '-f', '--show', '-o', str(71680 * 512), '--sizelimit', str(65536 * 512), img], check=True, capture_output=True).stdout.decode().strip()
+        try:
+            fsck = subprocess.run(['fsck.exfat', '-n', L], capture_output=True, text=True)
+            chk(fsck.returncode == 0, 'fsck.exfat:\n' + fsck.stdout + fsck.stderr)
+            mnt = os.path.join(work, 'folders-mnt'); os.makedirs(mnt, exist_ok=True)
+            subprocess.run(['mount.exfat-fuse', '-o', 'ro', L, mnt], check=True, capture_output=True)
+            try:
+                chk(open(os.path.join(mnt, 'Work/b.bin'), 'rb').read() == big and not os.path.exists(os.path.join(mnt, 'NewDir')), 'exfat-fuse reads it back')
+            finally: subprocess.run(['umount', mnt], check=True)
+        finally: subprocess.run(['losetup', '-d', L], check=True)
+        L1 = subprocess.run(['losetup', '-f', '--show', '-o', str(2048 * 512), '--sizelimit', str(69632 * 512), img], check=True, capture_output=True).stdout.decode().strip()
+        try:
+            fs = subprocess.run(['fsck.fat', '-n', L1], capture_output=True, text=True); chk(fs.returncode == 0, 'fsck.fat:\n' + fs.stdout + fs.stderr)
+            got = subprocess.run(['mtype', '-i', L1, '::/cmdline.txt'], capture_output=True, env=env, check=True).stdout
+        finally: subprocess.run(['losetup', '-d', L1], check=True)
+    else:
+        fs = subprocess.run(['fsck.fat', '-n', img], capture_output=True, text=True); chk(fs.returncode == 0, 'fsck.fat:\n' + fs.stdout + fs.stderr)
+        got = subprocess.run(['mtype', '-i', img, '::/cmdline.txt'], capture_output=True, env=env, check=True).stdout
+        chk(subprocess.run(['mtype', '-i', img, '::/Work/b.bin'], capture_output=True, env=env, check=True).stdout == big, 'mtools reads Work/b.bin')
+    chk(got == b'short\n', 'cmdline.txt on the card: %r' % got)
+    print('card service%s: %d checks; info, list, read, write, mkdir, move, delete; in-use and read-only refused; %s clean' %
+          (' (exFAT)' if exfatrw else '', checks[0], 'fsck.exfat and fsck.fat' if exfatrw else 'fsck.fat')); print('ALL OK'); sys.exit(0)
 
 if setup:                                            # cmdline.txt rewritten with the setup screen's changes
     st_ = mem.r32(NETB + 0x100); why = mem.r_cstr(NETB + 0x108)

@@ -13,6 +13,7 @@ card from a PC.
   C/Alice68-WiFi         WiFi from the Shell
   C/Alice68-Network      the network settings window (MUI)
   C/Alice68-NetworkGT    the same without MUI (GadTools)
+  C/Alice68-Card         the SD card: partitions, files, cmdline.txt, config.txt
   C/Alice68-Monitor      a debugging window
   C/Alice68-Wheel        a USB mouse's scroll wheel (also in WBStartup)
   DEVS/USBHardware/alice68-usb.device   for Neptune or Poseidon

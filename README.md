@@ -256,6 +256,31 @@ firmware's own) stay as they are. The card must be writable (`dtoverlay=emmc,uni
 otherwise the boot log says why nothing was written. The WiFi password is kept in
 `cmdline.txt` as typed, as `wifi.psk=` always has been.
 
+## Managing the SD card from AmigaOS: Alice68-Card
+
+`Alice68-Card` (in `ALICE68:C`, and in `C:` after Install) looks after the SD card
+Alice68 started from, in a GadTools window on Workbench. You don't need a PC for any of
+it.
+
+| Page | What it does |
+|---|---|
+| Card | The card's partitions: type, file system, label, size, free space (**Count free space**). Which of them is Alice68's FAT partition, the exFAT volume, Emu68's own Amiga disk. Whether AmigaOS may write the exFAT partition. The hardfiles and CD images mounted from the card. |
+| Files | Browse the FAT partition and the exFAT partition: folders first, sizes, `in use` for anything that can't be changed now. Filter to hardfiles, CD images, Kickstart ROMs or WiFi firmware. **Open folder** (or double-click), **Parent**, **New folder**, **Rename to name**, **Delete...** (it asks first). **Boot from it** makes a hardfile the boot drive (`hdf.boot=`), **Use as Kickstart** makes a ROM the Kickstart (`initramfs` in `config.txt`). |
+| Settings | The options of `cmdline.txt`, the same ones the [setup screen](#setup) offers (both use one table, `src/raspi/alice_opts.c`), and the Kickstart ROM. Each shows what it does underneath when you pick it. **Back to the card's** drops your changes. |
+| Text files | `config.txt` line by line: pick a line to change it, **Add**, **Delete**. `cmdline.txt` as it will be saved; type into it to change it directly, and the Settings page follows. |
+
+Nothing is written until you press **Save**, apart from what the Files page does at once.
+Save writes `cmdline.txt` and `config.txt`, and keeps the previous versions as
+`cmdline.txt.bak` and `config.txt.bak`. **Restart Pi** starts the Pi again so the new
+settings take effect. It asks first if there are changes you haven't saved.
+
+All of it goes through `alice68hdf.device`'s card service, with the same FAT and exFAT
+code its folder volumes use, one request at a time. So the card stays consistent while
+volumes are mounted. Mounted hardfiles and CD images, files open on a folder volume, and
+folder volumes' own folders can't be deleted, renamed or overwritten. The exFAT partition
+is only written with `alice68.exfat=rw` (or `boot`), and nothing at all on a read-only
+card (`dtoverlay=emmc,unit0=ro`).
+
 ## Alice68's expansion cards
 
 A real Amiga gets USB or networking from a card in a Zorro slot. Alice68 has no slots,

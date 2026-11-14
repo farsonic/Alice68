@@ -1955,6 +1955,13 @@ void alice_net_poll(void)
 {
     if (!anb) return;
     setup_poll();                                   /* the setup screen's changes written yet? */
+    if (H()->restart == AN_RESTART) {               /* AmigaOS asks for a fresh start (Alice68-Card) */
+        H()->restart = 0;
+        kprintf("[BOOT] restart asked for by AmigaOS (Alice68-Card) - restarting the Pi\n");
+        uint64_t end = ticks() + tick_hz() / 2;
+        while ((int64_t)(end - ticks()) > 0) ;
+        aga_reboot(0);
+    }
     H()->boot_us = wifi_usecs();
     loop_stats();
     if (an_reset_req) an_reset_session();

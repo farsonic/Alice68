@@ -22,7 +22,7 @@ build alice68-usb.device device_start.S alice68-usb.c lvo.S
 build Alice68-USBLog usblog_start.S usblog.c lvo.S
 build Alice68-Wheel wheel_start.S wheel.c lvo.S
 python3 -I folder/mkdiskicons.py out            # the volumes' Disk.info, for alice68hdf.device
-build alice68hdf.device hdf/hdf_start.S hdf/alice68hdf.c hdf/folders.c hdf/isos.c hdf/hdf_core.c hdf/fatfs.c hdf/iso9660.c hdf/exfat.c hdf/uaem.c hdf/cmdedit.c out/disk_icons.c lvo.S
+build alice68hdf.device hdf/hdf_start.S hdf/alice68hdf.c hdf/folders.c hdf/isos.c hdf/hdf_core.c hdf/fatfs.c hdf/iso9660.c hdf/exfat.c hdf/uaem.c hdf/cmdedit.c hdf/cardsvc.c out/disk_icons.c lvo.S
 build Alice68-HDF hdf/hdfinfo_start.S hdf/hdfinfo.c lvo.S
 build Alice68-NetCheck netcheck_start.S netcheck.c lvo.S
 build Alice68-ShowConfig showconfig_start.S showconfig.c lvo.S
@@ -30,13 +30,14 @@ build alice68net.device device_start.S net/alice68net.c wifi/lvox.S lvo.S
 build Alice68-WiFi wifi/wifitool_start.S wifi/wifitool.c wifi/lvox.S lvo.S
 build Alice68-Monitor monitor_start.S monitor.c wifi/lvox.S lvo.S
 build Alice68-NetworkGT netprefs_start.S netprefs.c lvoy.S wifi/lvox.S lvo.S
+build Alice68-Card card_start.S card.c hdf/cmdedit.c ../third_party/Emu68/src/raspi/alice_opts.c lvoy.S wifi/lvox.S lvo.S
 # Alice68-Network: the MUI window, built as Riptide's RiptidePrefs is (amiga/netgui/Makefile)
 make -s -C netgui OUT="$(pwd)/out"
 # the ALICE68 folder for the SD card: the files above, a ReadMe, Install and Uninstall
 python3 -I folder/mkfolder.py out
 # alice68hdf.device runs from Emu68's ROM board, which is mapped read-only:
 # it must not have writable static data
-python3 -I - out/alice68hdf.c.o out/folders.c.o out/isos.c.o out/hdf_core.c.o out/fatfs.c.o out/iso9660.c.o out/exfat.c.o out/uaem.c.o out/cmdedit.c.o out/disk_icons.c.o out/hdf_start.S.o <<'PY'
+python3 -I - out/alice68hdf.c.o out/folders.c.o out/isos.c.o out/hdf_core.c.o out/fatfs.c.o out/iso9660.c.o out/exfat.c.o out/uaem.c.o out/cmdedit.c.o out/cardsvc.c.o out/disk_icons.c.o out/hdf_start.S.o <<'PY'
 import subprocess, sys
 bad = 0
 for o in sys.argv[1:]:

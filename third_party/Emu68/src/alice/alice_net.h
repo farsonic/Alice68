@@ -49,8 +49,12 @@ struct an_hdr {
     unsigned int fw_count;          /* entries in the AN_OFF_FW table */
     unsigned int boot_us;           /* kernel: microseconds since the Pi started, at the last update */
     unsigned int trace;             /* kernel: 1 with net.trace=1 - the drivers log ICMP frames too */
-    unsigned int pad[5];
+    unsigned int restart;           /* Amiga: AN_RESTART asks the kernel to restart the Pi (Alice68-Card, after
+                                       changing cmdline.txt or config.txt) */
+    unsigned int pad[4];
 };                                  /* 64 bytes */
+
+#define AN_RESTART      0x52455354u /* 'REST' */
 
 #define AN_FW_NONE      0u
 #define AN_FW_OFFERED   1u          /* the Amiga filled the table: the kernel may copy */

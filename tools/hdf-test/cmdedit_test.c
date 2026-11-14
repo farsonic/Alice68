@@ -108,9 +108,9 @@ int main(void)
           "new cmdline.txt: %s", out);
     static struct as_state again;
     as_init(&again, out, info, 1);
-    CHECK(!memcmp(again.cur, st.cur, sizeof st.cur), "choices read back");
-    CHECK(!strcmp(again.text[4], "Work bench") && !again.text[8][0] && !strcmp(again.text[9], "pass word1"), "texts read back: '%s' '%s' '%s'",
-          again.text[4], again.text[8], again.text[9]);
+    CHECK(!memcmp(again.v.cur, st.v.cur, sizeof st.v.cur), "choices read back");
+    CHECK(!strcmp(again.v.text[4], "Work bench") && !again.v.text[8][0] && !strcmp(again.v.text[9], "pass word1"), "texts read back: '%s' '%s' '%s'",
+          again.v.text[4], again.v.text[8], again.v.text[9]);
 
     /* Esc with changes asks first */
     as_init(&st, boot, info, 1);
@@ -123,7 +123,7 @@ int main(void)
     keys(k7, sizeof k7, 0);
     type("gbx");
     as_key(&st, ENTER, 0);
-    CHECK(!strcmp(st.text[10], "GB"), "country: %s", st.text[10]);
+    CHECK(!strcmp(st.v.text[10], "GB"), "country: %s", st.v.text[10]);
     as_init(&st, "", info, 1);
     uint8_t k8[] = { TAB, TAB, DOWN, ENTER };
     keys(k8, sizeof k8, 0);

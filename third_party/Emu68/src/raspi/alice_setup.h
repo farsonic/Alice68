@@ -16,9 +16,9 @@
 #define ALICE_SETUP_H
 #include <stdint.h>
 #include "alice_splash.h"
+#include "alice_opts.h"
 
-#define AS_ITEMS    24
-#define AS_TEXT     64
+#define AS_TEXT     OPT_TEXT
 #define AS_INFO     8
 
 enum { AS_NONE = 0, AS_REDRAW, AS_SAVE, AS_EXIT };
@@ -27,8 +27,7 @@ struct as_state {
     int sec, row;                       /* the section shown, the row selected in it */
     int editing;                        /* a text option being typed */
     int dialog;                         /* 0 none, 1 save and restart?, 2 leave without saving? */
-    uint8_t cur[AS_ITEMS], orig[AS_ITEMS];          /* choices */
-    char text[AS_ITEMS][AS_TEXT], otext[AS_ITEMS][AS_TEXT];
+    struct opt_vals v;                  /* the options (alice_opts.c) */
     char edit[AS_TEXT];                 /* what is being typed */
     struct al_info info[AS_INFO];       /* the System section's lines */
     unsigned ninfo;

@@ -139,6 +139,8 @@ struct HdfBase {
     APTR iseg;                              /* their handlers' seglist */
     APTR ptb;                               /* Alice68's USB card (struct pt_hdr): Ctrl-Amiga-Amiga */
     struct Interrupt vbl;                   /* its vertical blank server */
+    ULONG card_ro;                          /* the card's unit 0 is read-only */
+    struct Unit csunit;                     /* the card service's unit (cardsvc.c, CS_UNIT) */
 };
 ACHECK(AOFF(struct HdfBase, magic) == 36);
 ACHECK(AOFF(struct HdfBase, unit) == 44);
@@ -165,6 +167,9 @@ void add_vol(struct HdfBase *db, const char *vol, const char *drive);
 struct BootNode *find_drive(APTR eb, const char *name);
 
 /* folders.c */
+int  fold_busy(struct HdfBase *db, struct ffs *v, const struct ffs_ent *e);
+/* cardsvc.c: a request on the card service's unit, done before it returns */
+void card_service(struct HdfBase *db, struct IOStdReq *io);
 void folders_mount(struct HdfBase *db, struct hdf_io *io, APTR eb, APTR cd, const char *config);
 LONG highest_boot_pri(APTR eb);                 /* the mount list's highest boot priority (-128 if none) */
 /* isos.c: takes over the files' extents */

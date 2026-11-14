@@ -25,12 +25,12 @@ printf '%-12s core   %-14s ' uaem ''; "$T/uaem_test" | tail -1
 # the setup screen's round trip: alice_setup.c's edit list, cmdedit.c's new cmdline.txt, read back
 E="$P/third_party/Emu68"
 cc -O1 -Wall -Wextra -Werror -std=gnu11 -I"$P/amiga/hdf" -I"$E/src/raspi" -I"$E/include" -o "$T/cmdedit_test" \
-    "$P/tools/hdf-test/cmdedit_test.c" "$P/amiga/hdf/cmdedit.c" "$E/src/raspi/alice_setup.c" "$E/src/raspi/alice_splash.c" "$E/src/raspi/topaz.c"
+    "$P/tools/hdf-test/cmdedit_test.c" "$P/amiga/hdf/cmdedit.c" "$E/src/raspi/alice_setup.c" "$E/src/raspi/alice_opts.c" "$E/src/raspi/alice_splash.c" "$E/src/raspi/topaz.c"
 printf '%-12s core   %-14s ' setup ''; "$T/cmdedit_test" | tail -1
 # the folders' FAT engine, checked with fsck.fat and mtools
 sh "$P/tools/hdf-test/fatfs.sh"
 # the folders as volumes: alice68hdf.device's DOS handler on the 68k emulator
-for o in '' cardro setup 'setup cardro'; do
+for o in '' cardro setup 'setup cardro' card 'card cardro'; do
     printf '%-12s driver %-14s ' folders "${o:-default}"
     python3 "$P/amiga/test/harness_folders.py" "$P/amiga/out/alice68hdf.device" "$P/amiga/out/alice68hdf.device.elf" "$T" $o | tail -1
 done
@@ -46,7 +46,7 @@ sh "$P/tools/hdf-test/exfat.sh"
 if [ "$(id -u)" = 0 ] && command -v mount.exfat-fuse >/dev/null && command -v mkfs.exfat >/dev/null; then
     printf '%-12s driver %-14s ' isos exfat
     python3 "$P/amiga/test/harness_isos.py" "$P/amiga/out/alice68hdf.device" "$P/amiga/out/alice68hdf.device.elf" "$T" exfat | tail -1
-    for o in exfat exfatrw exfatboot 'exfatboot hdfboot'; do
+    for o in exfat exfatrw exfatboot 'exfatboot hdfboot' 'card exfatrw'; do
         printf '%-12s driver %-14s ' folders "$o"
         python3 "$P/amiga/test/harness_folders.py" "$P/amiga/out/alice68hdf.device" "$P/amiga/out/alice68hdf.device.elf" "$T" $o | tail -1
     done

@@ -19,114 +19,15 @@
 
 #define MARGIN 24u
 
-/* ---- the options ------------------------------------------------------------- */
-enum { K_CHOICE, K_TEXT };
-enum { T_PLAIN = 0, T_QUOTE = 1, T_UNDERSCORE = 2, T_UPPER = 4 };
-
-struct item {
-    uint8_t sec, kind, def, flags, maxlen, secret;
-    const char *label, *help;
-    const char *keys;                   /* choices: the options it owns (space-separated names) */
-    const char *const *names;           /* choices: as shown */
-    const char *const *opts;            /* choices: the option each writes ("" none) */
-    const char *key;                    /* text: the option's name */
-};
-
+/* ---- the options: alice_opts.c, and the System page ---------------------------- */
 static const char *const sec_names[] = { "Display", "Storage", "Network", "USB", "System" };
 #define NSEC 5
 #define SEC_SYSTEM 4
+#define items opt_items
+#define NITEMS opt_count
 
-static const char *const n_look[] = { "Sharp", "Smooth", "TV", 0 };
-static const char *const o_look[] = { "aga.look=0", "aga.look=1", "aga.look=2" };
-static const char *const n_scale[] = { "4:3", "Integer", "Fill the screen", "5:4", "16:9", "16:10", "21:9", "32:9", 0 };
-static const char *const o_scale[] = { "aga.scale=0", "aga.scale=1", "aga.scale=2", "aga.scale=3", "aga.scale=4",
-                                       "aga.scale=5", "aga.scale=6", "aga.scale=7" };
-static const char *const n_shown[] = { "Shown", "Hidden", 0 };
-static const char *const o_bootlog[] = { "", "aga.nobootlog" };
-static const char *const n_hdf[] = { "Mounted", "Mounted read-only", "Off", 0 };
-static const char *const o_hdf[] = { "", "hdf.readonly", "hdf=off" };
-static const char *const n_onoff[] = { "On", "Off", 0 };
-static const char *const n_mounted[] = { "Mounted", "Off", 0 };
-static const char *const o_iso[] = { "", "iso=off" };
-static const char *const n_exfat[] = { "As config.txt says", "Off", "Read-only", "Read-write", "Read-write, boot from it", 0 };
-static const char *const o_exfat[] = { "", "alice68.exfat=off", "alice68.exfat=ro", "alice68.exfat=rw", "alice68.exfat=boot" };
-static const char *const o_wifi[] = { "", "wifi=off" };
-static const char *const n_eth[] = { "When a program opens it", "On at boot", "Off", 0 };
-static const char *const o_eth[] = { "", "eth=on", "eth=off" };
-static const char *const n_mac[] = { "Commodore (00:80:10)", "The Pi's own", 0 };
-static const char *const o_mac[] = { "", "net.oui=off" };
-static const char *const n_usb[] = { "Alice68", "AmigaOS (xhci.device)", 0 };
-static const char *const o_usb[] = { "", "frf_usb=neptune" };
-static const char *const o_modesw[] = { "", "frf_usb.nomodeswitch" };
-
-static const struct item items[] = {
-    { 0, K_CHOICE, 0, 0, 0, 0, "Picture",
-      "How AmigaOS's picture is drawn: Sharp keeps every pixel crisp, Smooth filters it, TV adds scanlines and a little blur.",
-      "aga.look", n_look, o_look, 0 },
-    { 0, K_CHOICE, 1, 0, 0, 0, "Scaling",
-      "How the picture fills the screen. Integer scales by whole numbers, so pixels stay square and even; the others stretch to an aspect ratio.",
-      "aga.scale", n_scale, o_scale, 0 },
-    { 0, K_CHOICE, 0, 0, 0, 0, "Boot log panels",
-      "The SYSTEM and USB panels on this screen while Alice68 starts. Hidden leaves the header and the status bar.",
-      "aga.nobootlog", n_shown, o_bootlog, 0 },
-    { 1, K_CHOICE, 0, 0, 0, 0, "Hardfiles",
-      "The .hdf files in the root and the HDF folder of the SD card's FAT or exFAT partition. Every one is mounted; read-only keeps AmigaOS from writing to them.",
-      "hdf hdf.readonly hdf.ro", n_hdf, o_hdf, 0 },
-    { 1, K_TEXT, 0, T_UNDERSCORE, 60, 0, "Boot hardfile",
-      "The hardfile AmigaOS boots from, by file name (.hdf may be left out). Empty: no hardfile boots, and the SD card's own Amiga partition does.",
-      0, 0, 0, "hdf.boot" },
-    { 1, K_CHOICE, 0, 0, 0, 0, "CD images",
-      "The .iso files in the root and the ISO folder, as read-only CD drives CD0:, CD1:, ...",
-      "iso", n_mounted, o_iso, 0 },
-    { 1, K_CHOICE, 0, 0, 0, 0, "exFAT partition",
-      "The card's exFAT partition as an Amiga volume. Read-write lets AmigaOS change it; a volume left half-written is checked and repaired at the next boot. Boot from it makes it the boot drive.",
-      "alice68.exfat", n_exfat, o_exfat, 0 },
-    { 2, K_CHOICE, 0, 0, 0, 0, "WiFi",
-      "The Pi's WiFi chip, for alice68net.device unit 0. Off leaves it powered down.",
-      "wifi", n_onoff, o_wifi, 0 },
-    { 2, K_TEXT, 0, T_QUOTE, 32, 0, "Network name",
-      "The WiFi network joined at boot (its SSID). Empty: join from AmigaOS with Alice68-WiFi or Alice68-Network instead.",
-      0, 0, 0, "wifi.ssid" },
-    { 2, K_TEXT, 0, T_QUOTE, 63, 1, "Password",
-      "The WiFi network's password (WPA2 or WPA3). Stored in cmdline.txt as it is typed.",
-      0, 0, 0, "wifi.psk" },
-    { 2, K_TEXT, 0, T_UPPER, 2, 0, "Country",
-      "Two letters, such as GB, DE or US: the WiFi channels allowed where you are.",
-      0, 0, 0, "wifi.country" },
-    { 2, K_CHOICE, 0, 0, 0, 0, "Ethernet",
-      "The Pi's Ethernet port, for alice68net.device unit 1. Off leaves it to rondoval's genet.device.",
-      "eth", n_eth, o_eth, 0 },
-    { 2, K_CHOICE, 0, 0, 0, 0, "MAC addresses",
-      "Both network units normally use Commodore's OUI, 00:80:10, with the rest of the Pi's own address. The Pi's own keeps its addresses as they are.",
-      "net.oui", n_mac, o_mac, 0 },
-    { 3, K_CHOICE, 0, 0, 0, 0, "USB-A ports",
-      "Alice68 drives the four USB-A ports itself: keyboard, mouse and Neptune's devices. AmigaOS leaves them to rondoval's xhci.device; keyboard and mouse then come from the USB-C port.",
-      "frf_usb", n_usb, o_usb, 0 },
-    { 3, K_CHOICE, 0, 0, 0, 0, "Dongle mode switch",
-      "Realtek USB network adapters start as a driver CD. Alice68 switches them to network mode; Off leaves them as they come.",
-      "frf_usb.nomodeswitch", n_onoff, o_modesw, 0 },
-};
-#define NITEMS ((int)(sizeof items / sizeof *items))
-
-/* ---- small helpers (no C library in the kernel) ------------------------------- */
 static unsigned slen(const char *s) { unsigned n = 0; while (s && s[n]) n++; return n; }
 static void scpy(char *d, const char *s, unsigned max) { unsigned i = 0; for (; s && s[i] && i + 1 < max; i++) d[i] = s[i]; d[i] = 0; }
-static int seq(const char *a, const char *b) { while (*a && *a == *b) { a++; b++; } return *a == *b; }
-static int is_sp(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
-
-/* the next option of a command line: its start and length (quotes keep spaces in) */
-static const char *next_tok(const char *c, unsigned *len)
-{
-    while (*c && is_sp(*c)) c++;
-    const char *t = c;
-    int q = 0;
-    while (*c && (q || !is_sp(*c))) { if (*c == '"') q = !q; c++; }
-    *len = (unsigned)(c - t);
-    return *len ? t : 0;
-}
-static int tok_is(const char *t, unsigned n, const char *w) { unsigned k = slen(w); if (k != n) return 0; for (unsigned i = 0; i < n; i++) if (t[i] != w[i]) return 0; return 1; }
-/* "key=..." with this key */
-static int tok_key(const char *t, unsigned n, const char *key) { unsigned k = slen(key); if (n <= k || t[k] != '=') return 0; for (unsigned i = 0; i < k; i++) if (t[i] != key[i]) return 0; return 1; }
 
 static int item_index(int sec, int row)
 {
@@ -140,78 +41,17 @@ static int rows_in(const struct as_state *s, int sec)
     for (int i = 0; i < NITEMS; i++) if (items[i].sec == sec) r++;
     return r;
 }
-static int nchoices(const struct item *it) { int n = 0; while (it->names[n]) n++; return n; }
 
 void as_init(struct as_state *s, const char *b, const struct al_info *info, unsigned ninfo)
 {
     uint8_t *z = (uint8_t *)s;
     for (unsigned i = 0; i < sizeof *s; i++) z[i] = 0;
-    for (int i = 0; i < NITEMS; i++) {
-        const struct item *it = &items[i];
-        s->cur[i] = it->def;
-        unsigned n;
-        for (const char *c = b ? b : "", *t; (t = next_tok(c, &n)); c = t + n) {
-            if (it->kind == K_CHOICE) {
-                for (int k = 0; k < nchoices(it); k++) if (it->opts[k][0] && tok_is(t, n, it->opts[k])) s->cur[i] = (uint8_t)k;
-            } else if (tok_key(t, n, it->key)) {
-                const char *v = t + slen(it->key) + 1;
-                unsigned vn = n - slen(it->key) - 1, k = 0;
-                if (vn >= 2 && v[0] == '"' && v[vn - 1] == '"') { v++; vn -= 2; }
-                for (; k < vn && k + 1 < AS_TEXT; k++) s->text[i][k] = (it->flags & T_UNDERSCORE) && v[k] == '_' ? ' ' : v[k];
-                s->text[i][k] = 0;
-            }
-        }
-        s->orig[i] = s->cur[i];
-        scpy(s->otext[i], s->text[i], AS_TEXT);
-    }
+    opt_init(&s->v, b);
     for (unsigned i = 0; i < ninfo && i < AS_INFO; i++) s->info[i] = info[i];
     s->ninfo = ninfo < AS_INFO ? ninfo : AS_INFO;
 }
-
-int as_changed(const struct as_state *s)
-{
-    for (int i = 0; i < NITEMS; i++)
-        if (items[i].kind == K_CHOICE ? s->cur[i] != s->orig[i] : !seq(s->text[i], s->otext[i])) return 1;
-    return 0;
-}
-
-int as_edits(const struct as_state *s, char *out, unsigned max)
-{
-    unsigned n = 0;
-#define EPUT(ch) do { if (n + 1 >= max) return -1; out[n++] = (char)(ch); } while (0)
-#define ESTR(str) do { for (const char *p_ = (str); *p_; p_++) EPUT(*p_); } while (0)
-    for (int i = 0; i < NITEMS; i++) {
-        const struct item *it = &items[i];
-        if (it->kind == K_CHOICE) {
-            if (s->cur[i] == s->orig[i]) continue;
-            for (const char *k = it->keys; *k; ) {                 /* -name for each option it owns */
-                EPUT('-');
-                while (*k && *k != ' ') { EPUT(*k); k++; }
-                EPUT('\n');
-                while (*k == ' ') k++;
-            }
-            if (it->opts[s->cur[i]][0]) { EPUT('+'); ESTR(it->opts[s->cur[i]]); EPUT('\n'); }
-        } else {
-            if (seq(s->text[i], s->otext[i])) continue;
-            EPUT('-'); ESTR(it->key); EPUT('\n');
-            if (s->text[i][0]) {
-                const char *v = s->text[i];
-                int sp = 0;
-                for (const char *p = v; *p; p++) if (*p == ' ') sp = 1;
-                EPUT('+'); ESTR(it->key); EPUT('=');
-                int q = (it->flags & T_QUOTE) && sp;
-                if (q) EPUT('"');
-                for (const char *p = v; *p; p++) EPUT((it->flags & T_UNDERSCORE) && *p == ' ' ? '_' : *p);
-                if (q) EPUT('"');
-                EPUT('\n');
-            }
-        }
-    }
-    out[n] = 0;
-    return (int)n;
-#undef EPUT
-#undef ESTR
-}
+int as_changed(const struct as_state *s) { return opt_changed(&s->v); }
+int as_edits(const struct as_state *s, char *out, unsigned max) { return opt_edits(&s->v, out, max); }
 
 /* ---- keys ------------------------------------------------------------------- */
 #define U_ENTER 0x28
@@ -259,17 +99,17 @@ int as_key(struct as_state *s, uint8_t u, uint8_t mods)
         return AS_NONE;
     }
     int idx = item_index(s->sec, s->row);
-    const struct item *it = idx >= 0 ? &items[idx] : 0;
+    const struct opt_item *it = idx >= 0 ? &items[idx] : 0;
     if (s->editing && it) {
         unsigned n = slen(s->edit);
-        if (u == U_ENTER || u == U_KPENT) { scpy(s->text[idx], s->edit, AS_TEXT); s->editing = 0; return AS_REDRAW; }
+        if (u == U_ENTER || u == U_KPENT) { scpy(s->v.text[idx], s->edit, AS_TEXT); s->editing = 0; return AS_REDRAW; }
         if (u == U_ESC) { s->editing = 0; return AS_REDRAW; }
         if (u == U_BKSP) { if (n) s->edit[n - 1] = 0; return AS_REDRAW; }
         char c = ascii(u, mods);
         if (c && n < it->maxlen && n + 1 < AS_TEXT) {
-            if (it->flags & T_UPPER && c >= 'a' && c <= 'z') c = (char)(c - 32);
-            if ((it->flags & T_QUOTE) && c == '"') return AS_NONE;     /* it would end the option */
-            if ((it->flags & T_UNDERSCORE) && c == '_') c = ' ';
+            if (it->flags & OT_UPPER && c >= 'a' && c <= 'z') c = (char)(c - 32);
+            if ((it->flags & OT_QUOTE) && c == '"') return AS_NONE;     /* it would end the option */
+            if ((it->flags & OT_UNDERSCORE) && c == '_') c = ' ';
             s->edit[n] = c; s->edit[n + 1] = 0;
             return AS_REDRAW;
         }
@@ -293,15 +133,15 @@ int as_key(struct as_state *s, uint8_t u, uint8_t mods)
             if (u == U_RIGHT) { s->sec = (s->sec + 1) % NSEC; s->row = 0; return AS_REDRAW; }
             return AS_NONE;
         }
-        if (it->kind == K_CHOICE) {
-            int n = nchoices(it);
-            if (u == U_LEFT) s->cur[idx] = (uint8_t)((s->cur[idx] + n - 1) % n);
-            else if (u == U_DEL || u == U_BKSP) s->cur[idx] = it->def;
-            else s->cur[idx] = (uint8_t)((s->cur[idx] + 1) % n);
+        if (it->kind == OPT_CHOICE) {
+            int n = opt_nchoices(it);
+            if (u == U_LEFT) s->v.cur[idx] = (uint8_t)((s->v.cur[idx] + n - 1) % n);
+            else if (u == U_DEL || u == U_BKSP) s->v.cur[idx] = it->def;
+            else s->v.cur[idx] = (uint8_t)((s->v.cur[idx] + 1) % n);
             return AS_REDRAW;
         }
-        if (u == U_DEL || u == U_BKSP) { s->text[idx][0] = 0; return AS_REDRAW; }
-        if (u == U_ENTER || u == U_KPENT || u == U_SPACE) { scpy(s->edit, s->text[idx], AS_TEXT); s->editing = 1; return AS_REDRAW; }
+        if (u == U_DEL || u == U_BKSP) { s->v.text[idx][0] = 0; return AS_REDRAW; }
+        if (u == U_ENTER || u == U_KPENT || u == U_SPACE) { scpy(s->edit, s->v.text[idx], AS_TEXT); s->editing = 1; return AS_REDRAW; }
         return AS_NONE;
     default:
         return AS_NONE;
@@ -343,9 +183,9 @@ static uint32_t wrap(uint32_t x, uint32_t y, const char *t, uint16_t c, uint32_t
 
 static void value_of(const struct as_state *s, int i, char *out, unsigned max)
 {
-    const struct item *it = &items[i];
-    if (it->kind == K_CHOICE) { scpy(out, it->names[s->cur[i]], max); return; }
-    const char *v = s->text[i];
+    const struct opt_item *it = &items[i];
+    if (it->kind == OPT_CHOICE) { scpy(out, it->names[s->v.cur[i]], max); return; }
+    const char *v = s->v.text[i];
     if (!v[0]) { scpy(out, it->key[0] == 'h' ? "None" : "Not set", max); return; }
     if (it->secret) { unsigned n = slen(v), k = 0; for (; k < n && k < 12 && k + 1 < max; k++) out[k] = '*'; out[k] = 0; return; }
     scpy(out, v, max);
@@ -449,11 +289,11 @@ void as_draw(const struct as_state *s)
         for (int r = 0; ; r++) {
             int i = item_index(s->sec, r);
             if (i < 0) break;
-            const struct item *it = &items[i];
+            const struct opt_item *it = &items[i];
             uint32_t y = ly + 16 + (uint32_t)r * 28;
             if (y + 22 > ly + body_h) break;
             int sel = r == s->row;
-            int changed = it->kind == K_CHOICE ? s->cur[i] != s->orig[i] : !seq(s->text[i], s->otext[i]);
+            int changed = it->kind == OPT_CHOICE ? s->v.cur[i] != s->v.orig[i] : !!opt_item_changed(&s->v, i);
             if (sel) { al_fill(lx + 1, y - 6, list_w - 2, 28, AL_SEL); al_fill(lx + 1, y - 6, 3, 28, AL_ACCENT); }
             al_text(lx + 20, y, it->label, sel ? AL_BRIGHT : AL_TEXT, 21);
             char v[AS_TEXT + 4];
@@ -469,8 +309,8 @@ void as_draw(const struct as_state *s)
                 al_fill(cx + 1, y + 1, 7, 14, AL_ACCENT);              /* the cursor */
             } else {
                 value_of(s, i, v, sizeof v);
-                uint16_t vc = changed ? AL_ACCENT : (it->kind == K_TEXT && !s->text[i][0]) ? AL_DIM : AL_TEXT;
-                if (sel && it->kind == K_CHOICE) {
+                uint16_t vc = changed ? AL_ACCENT : (it->kind == OPT_TEXTV && !s->v.text[i][0]) ? AL_DIM : AL_TEXT;
+                if (sel && it->kind == OPT_CHOICE) {
                     al_text(vx - 16, y, "<", AL_DIM, 1);
                     uint32_t ex = al_text(vx, y, v, vc, vcols);
                     al_text(ex + 8, y, ">", AL_DIM, 1);
@@ -478,13 +318,13 @@ void as_draw(const struct as_state *s)
             }
             if (sel) {
                 help = it->help;
-                if (it->kind == K_CHOICE) opt = it->opts[s->cur[i]][0] ? it->opts[s->cur[i]] : "(nothing: the default)";
-                else if (s->text[i][0]) {
+                if (it->kind == OPT_CHOICE) opt = it->opts[s->v.cur[i]][0] ? it->opts[s->v.cur[i]] : "(nothing: the default)";
+                else if (s->v.text[i][0]) {
                     unsigned k = 0;
                     for (const char *p = it->key; *p && k < sizeof optbuf - 2; ) optbuf[k++] = *p++;
                     optbuf[k++] = '=';
-                    for (const char *p = it->secret ? "..." : s->text[i]; *p && k < sizeof optbuf - 1; p++)
-                        optbuf[k++] = (it->flags & T_UNDERSCORE) && *p == ' ' ? '_' : *p;
+                    for (const char *p = it->secret ? "..." : s->v.text[i]; *p && k < sizeof optbuf - 1; p++)
+                        optbuf[k++] = (it->flags & OT_UNDERSCORE) && *p == ' ' ? '_' : *p;
                     optbuf[k] = 0;
                     opt = optbuf;
                 } else opt = "(nothing: not set)";

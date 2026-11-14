@@ -61,6 +61,12 @@ User-facing docs: README.md. History of where code came from: docs/PROVENANCE.md
 - Ctrl-Amiga-Amiga: `frf_native_keyboard.c` spots Ctrl + both GUI keys; `frf_xhci_pt.c` sets
   `pt_hdr.reset_req` = 1; `alice68hdf.device`'s vertical blank server (`hdf_vbl`) sets 2 and calls
   `ColdReboot()`; not taken in 2 s: the Pi reboots (`aga_reboot`). Ctrl+LShift+F11: the Pi reboots.
+- `amiga/card.c` — `Alice68-Card` (GadTools): the SD card's partitions, files, cmdline.txt (options from
+  `src/raspi/alice_opts.c`, shared with the setup screen; `cmd_apply` from `hdf/cmdedit.c`), config.txt,
+  Kickstart, Restart (network board `an_hdr.restart` = `AN_RESTART`, CPU1 reboots). It works only through
+  `alice68hdf.device`'s card service (`hdf/cardsvc.[ch]`, unit `CS_UNIT`): runs in the caller's process
+  under `db->fsem`, refuses what `fold_busy()` says is in use. Tests: `harness_folders.py ... card [cardro|exfatrw]`,
+  `amiga/test/harness_card.py` (fake libraries and card service).
 - `amiga/monitor.c` — `Alice68-Monitor`: debugging window (tasks, backtraces, the board's log rings,
   the WiFi driver's `pt_wstat` "where"). The board layout is in `alice68_usbpt.h`; it survives a 68k reset.
 - `tools/hdf-test/`, `amiga/test/` — tests. `tools/splash-preview/` — render the splash on a PC.
@@ -97,6 +103,7 @@ python3 amiga/test/harness_monitor.py amiga/out/Alice68-Monitor  # Alice68-Monit
 python3 amiga/test/harness_netprefs.py amiga/out/Alice68-NetworkGT # the GadTools network window against fake libraries
 python3 amiga/test/harness_showconfig.py amiga/out/Alice68-ShowConfig # boards, memory and Alice68's cards, faked
 python3 amiga/test/harness_alice68net.py amiga/out/alice68net.device # opens of units the kernel does not serve, and close
+python3 amiga/test/harness_card.py amiga/out/Alice68-Card   # the SD card manager against fake libraries and card service
 tools/splash-preview/build.sh > out.ppm  # the splash, drawn by the kernel's own code (W H setup-storage: the setup screen)
 ```
 

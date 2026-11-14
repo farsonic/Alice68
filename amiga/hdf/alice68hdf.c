@@ -43,6 +43,7 @@ const char hdf_idstring[] = "alice68hdf.device 0.7 (09.11.2026) Alice68 hardfile
 #include "hdf_dev.h"
 #include "exfat.h"
 #include "cmdedit.h"
+#include "cardsvc.h"
 #include "../../third_party/Emu68/src/frf_usb/xhci/alice68_usbpt.h"
 
 void *memcpy(void *d, const void *s, unsigned long n) { UBYTE *a = d; const UBYTE *b = s; while (n--) *a++ = *b++; return d; }
@@ -779,6 +780,7 @@ APTR dev_init(struct HdfBase *db, APTR seglist)
     db->lib.lib_Revision = REVISION;
     db->lib.lib_IdString = (APTR)hdf_idstring;
     db->magic = HDF_MAGIC;
+    lvo(SYSBASE, -558, 0, 0, (ULONG)&db->fsem, 0);     /* InitSemaphore: the folders and the card service share the engines */
 
     struct card c;
     struct MsgPort *rp;
@@ -793,6 +795,7 @@ APTR dev_init(struct HdfBase *db, APTR seglist)
     db->cmd64 = buf ? probe64(&c, buf) : 0;
     if (buf) FreeMem(buf, HDF_BLOCK);
     int card_ro = probe_ro(&c);
+    db->card_ro = (ULONG)card_ro;
     hdf_log(&io, "card: %s unit 0, %s%s", db->card_dev,
             db->cmd64 == NSCMD_TD_READ64 ? "NSD 64-bit" : db->cmd64 == TD_READ64 ? "TD64" : "32-bit only (first 4 GB)",
             card_ro ? ", read-only (unit0=ro)" : "");
@@ -941,6 +944,15 @@ static void reply(struct IORequest *io)
 LONG dev_open(struct HdfBase *db, struct IORequest *io, ULONG unit, ULONG flags)
 {
     (void)flags;
+    if (unit == CS_UNIT) {                              /* the card service (cardsvc.c), for Alice68-Card */
+        io->io_Unit = &db->csunit;
+        db->csunit.unit_OpenCnt++;
+        db->lib.lib_OpenCnt++;
+        db->lib.lib_Flags &= (UBYTE)~LIBF_DELEXP;
+        io->io_Error = 0;
+        io->io_Message.mn_Node.ln_Type = NT_REPLYMSG;
+        return 0;
+    }
     if (unit >= db->nunits || !db->unit[unit]) { io->io_Error = IOERR_OPENFAIL; io->io_Unit = 0; return IOERR_OPENFAIL; }
     io->io_Unit = &db->unit[unit]->u;
     io->io_Unit->unit_OpenCnt++;
@@ -972,6 +984,11 @@ void dev_beginio(struct HdfBase *db, struct IORequest *ior)
     struct HUnit *hu = (struct HUnit *)ior->io_Unit;
     ior->io_Message.mn_Node.ln_Type = NT_MESSAGE;
     ior->io_Error = 0;
+    if (ior->io_Unit == &db->csunit) {                  /* done here, in the caller's process */
+        card_service(db, io);
+        reply(ior);
+        return;
+    }
     switch (ior->io_Command) {
     case CMD_WRITE: case TD_FORMAT: case TD_WRITE64: case TD_FORMAT64: case NSCMD_TD_WRITE64: case NSCMD_TD_FORMAT64:
         if (db->readonly) { io->io_Actual = 0; ior->io_Error = TDERR_WriteProt; break; }

@@ -177,6 +177,31 @@ static int hdf_mounted(struct FCtx *x, const struct ffs_ent *e)
     return 0;
 }
 
+/* for the card service (cardsvc.c): an entry on v that must not change - a mounted
+   hardfile or CD image, something a folder volume has open, a folder volume's root */
+int fold_busy(struct HdfBase *db, struct ffs *v, const struct ffs_ent *e)
+{
+    int dir = (e->attr & FFS_A_DIR) != 0;
+    if (!dir && e->first) {
+        uint32_t sec = ffs_clus_sec(v, e->first);
+        for (ULONG i = 0; i < db->nunits; i++) {
+            struct HUnit *u = db->unit[i];
+            if (u && u->f.next && u->f.ext[0].card_sec == sec) return 1;
+        }
+        for (ULONG i = 0; i < db->nivols; i++) {
+            struct IVolHead *iv = (struct IVolHead *)db->ivol[i];
+            if (iv && iv->f.next && iv->f.ext[0].card_sec == sec) return 1;
+        }
+    }
+    for (ULONG i = 0; i < db->nfvols; i++)
+        if (db->fvol[i] && db->fvol[i]->fs == v && dir && db->fvol[i]->root == e->first) return 1;
+    for (struct FObj *o = db->objs; o; o = o->next) {
+        if (o->fv->fs != v) continue;
+        if (dir ? is_dir(o) && dir_key(o) == e->first : (!is_dir(o) && o->h.e.sec == e->sec && o->h.e.slot == e->slot)) return 1;
+    }
+    return 0;
+}
+
 static struct FObj *new_obj(struct FCtx *x, const struct where *w, LONG access, int isfile)
 {
     struct FObj *o = AllocMem(sizeof *o, MEMF_PUBLIC | MEMF_CLEAR);
@@ -1011,7 +1036,6 @@ void folders_mount(struct HdfBase *db, struct hdf_io *io, APTR eb, APTR cd, cons
     scpy(paths[0], "ALICE68", 128);                   /* Alice68's own files: always, if the folder is there */
     scpy(vols[0], "ALICE68", 32);
     if (off) { hdf_log(io, "folders turned off (alice68.folders=off)"); goto out; }
-    InitSemaphore(&db->fsem);
     struct hdf_io quiet = *io;                        /* dev_init has said what the partition is */
     quiet.log = 0;
     if (fat_open(&db->ffat, &quiet) || (db->ffat.io = io, ffs_init(&db->ffs, &db->ffat))) { hdf_log(io, "folders: the FAT partition cannot be opened"); goto out; }

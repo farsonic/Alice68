@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- **Alice68-Card: the SD card from AmigaOS.** A GadTools window (`ALICE68:C/Alice68-Card`)
+  with four pages:
+  - **Card:** the partitions, with sizes and free space, and what is mounted from the card.
+  - **Files:** browse the FAT and exFAT partitions; delete, rename, new folder; boot from a
+    hardfile; pick a Kickstart ROM.
+  - **Settings:** cmdline.txt's options, the same as the setup screen's.
+  - **Text files:** config.txt line by line, and cmdline.txt as it will be saved.
+
+  Save keeps the old files as `.bak`, and **Restart Pi** asks the kernel to restart.
+  Everything goes through a new card service unit in `alice68hdf.device`. It writes with
+  the device's own FAT/exFAT code, one request at a time alongside the folder volumes, and
+  refuses to touch mounted hardfiles, CD images, open files and folder volumes.
+
+  Tested on the 68k emulator: the service against FAT and exFAT cards (fsck.fat and
+  fsck.exfat clean, a read-only card refused), and the window against fake libraries
+  (every page, the files it writes, memory given back). The window on a real Workbench,
+  and the restart, only on a Pi.
+- **Shorter choice names** in the setup screen and Alice68-Card, so they fit a GadTools
+  gadget: "Read-only", "As config.txt", "Read-write, boot", "When opened", "Commodore
+  OUI", "AmigaOS". The help text still explains each.
 - **A setup screen.** For two seconds before AmigaOS starts, the footer shows `DEL Setup`:
   Del or F2 opens Alice68's settings, the options of `cmdline.txt` in five sections
   (display, storage, network, USB, and a read-only system page). F10 saves: the kernel hands

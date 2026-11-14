@@ -85,6 +85,8 @@ NEW_WHY = {   # new files, by the start of their path: (what, whose)
     'src/frf_usb/': ('FRF\'s USB board and joystick mapping', 'frf'),
     'src/alice/': ('Alice68\'s network card: WiFi (SDIO host, chip bring-up, FullMAC protocol) and Gigabit Ethernet (GENET)', 'alice'),
     'src/raspi/alice_splash': ('Alice68\'s boot splash', 'alice'),
+    'src/raspi/alice_setup': ('Alice68\'s setup screen (Del or F2 before AmigaOS starts)', 'alice'),
+    'src/raspi/alice_opts': ('Alice68\'s cmdline.txt options, shared by the setup screen and Alice68-Card', 'alice'),
     'src/boards/alice68hdf.device.h': ('`alice68hdf.device`, built from `amiga/hdf/` and embedded in the ROM board (generated)', 'alice'),
     'src/boards/frf_z3ram.c': ('FRF\'s Zorro III RAM board', 'frf'),
     'tests/': ('FRF\'s tests', 'frf'),

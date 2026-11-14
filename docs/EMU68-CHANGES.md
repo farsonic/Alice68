@@ -2,7 +2,7 @@
 
 Alice68's kernel is [Emu68](https://github.com/michalsc/Emu68) by Michal Schulz (MPL-2.0), at upstream commit `0ba3a89` (1.1.0-beta.1), changed in four layers. This page lists every Emu68 file that is not as it is upstream, who changed it and why. Emu68's files keep their MPL-2.0 headers and the changes to them are MPL-2.0; new files say their own licence.
 
-Made by `tools/emu68-changes.py` from git, at Alice68 `6be46ab`. To see any change itself:
+Made by `tools/emu68-changes.py` from git, at Alice68 `42fe3a1`. To see any change itself:
 
 - AGA-PiStorm's layer: `arm/emu68-aga.patch` (its patch against Emu68 `0ba3a89`, as released);
 - the other layers: `git diff 2b56a31 HEAD -- third_party/Emu68/<file>`, or `git log 2b56a31..HEAD -- third_party/Emu68/<file>` for each commit.
@@ -14,7 +14,7 @@ Made by `tools/emu68-changes.py` from git, at Alice68 `6be46ab`. To see any chan
 | 3. **Emu68 `1_1_wip`** | an Emu68 change not yet in a release: data-cache range opcodes (`582253e`) | commit `a3b1681` |
 | 4. **Alice68** | the Pi 4 port, the USB card, the network card, the splash, `alice68hdf.device` on the ROM board | the commits since |
 
-**In numbers:** Emu68 at `0ba3a89` has 346 files; **319 of them are exactly as upstream**. AGA-PiStorm's patch changes 15 of them and adds 3; since then 18 files have been changed (10 of them also by AGA-PiStorm) and 5 removed, and 282 added - most of them TinyUSB and the new drivers, in files of their own.
+**In numbers:** Emu68 at `0ba3a89` has 346 files; **319 of them are exactly as upstream**. AGA-PiStorm's patch changes 15 of them and adds 3; since then 18 files have been changed (10 of them also by AGA-PiStorm) and 5 removed, and 284 added - most of them TinyUSB and the new drivers, in files of their own.
 
 **Alice68 has not changed the 68k translator** (`src/M68k_*.c`, `src/ExecutionLoop.c`): what differs there is AGA-PiStorm's, FRF's and Emu68's own development branch's (this sentence is checked by the script).
 
@@ -48,7 +48,7 @@ Lines per layer (added / removed), from each commit; a file changed by AGA-PiSto
 | File | FRF | Emu68 `1_1_wip` | Alice68 | What and why |
 |---|---|---|---|---|
 | `AGA-PISTORM-SOURCE.txt` (removed) | +0 -7 |  |  | **FRF:** AGA-PiStorm's note about where its Emu68 came from; removed in the merge (it describes AGA-PiStorm's package, not this tree; `docs/PROVENANCE.md` says the same) |
-| `CMakeLists.txt` * | +174 -0 |  | +21 -25 | **FRF:** the `FRF_VIRTUAL_AGA` build: the standalone machine, TinyUSB, the virtual CIAs, the Zorro III RAM board<br>**Alice68:** builds Alice68's xHCI driver, Neptune pass-through, splash and network card (`src/alice/`) |
+| `CMakeLists.txt` * | +174 -0 |  | +22 -26 | **FRF:** the `FRF_VIRTUAL_AGA` build: the standalone machine, TinyUSB, the virtual CIAs, the Zorro III RAM board<br>**Alice68:** builds Alice68's xHCI driver, Neptune pass-through, splash and network card (`src/alice/`) |
 | `build-scripts/README.md` (removed) | +0 -27 |  |  | **FRF:** Emu68's Docker build scripts, removed in the merge (Alice68 builds with `tools/build-alice68-pi4.sh`) |
 | `build-scripts/build-aarch64` (removed) | +0 -6 |  |  | **FRF:** as above |
 | `build-scripts/build-m68k-amigaos` (removed) | +0 -6 |  |  | **FRF:** as above |
@@ -61,30 +61,31 @@ Lines per layer (added / removed), from each commit; a file changed by AGA-PiSto
 | `src/M68k_LINEF.c` |  | +76 -0 |  | **Emu68:** private LINE-F opcodes for data-cache maintenance over an address range (Emu68 `582253e`, Lukasz Winczura, from Emu68's `1_1_wip`), which rondoval's `-rangeops` drivers use |
 | `src/M68k_SR.c` |  | +5 -0 |  | **Emu68:** as above: the supervisor check for those opcodes |
 | `src/aarch64/mmu.c` * | +25 -0 |  | +32 -0 | **FRF:** mapping for the standalone machine<br>**Alice68:** the Pi 4: a 2 MB DMA pool below 1 GB for the xHCI driver (hidden from AmigaOS), and the Zorro III RAM board dropped where the Pi already has RAM at $40000000 |
-| `src/aarch64/start.c` * | +188 -12 | +6 -0 | +89 -7 | **FRF:** starts the standalone machine: virtual CIAs, USB on CPU1, the ROM and ADF boot<br>**Emu68:** the `/emu68` `dcache-range-ops` property for the range opcodes (placed by hand)<br>**Alice68:** starts Alice68's work on CPU1 (USB, the network card) and the splash, and stops the splash when AmigaOS draws |
+| `src/aarch64/start.c` * | +188 -12 | +6 -0 | +96 -7 | **FRF:** starts the standalone machine: virtual CIAs, USB on CPU1, the ROM and ADF boot<br>**Emu68:** the `/emu68` `dcache-range-ops` property for the range opcodes (placed by hand)<br>**Alice68:** starts Alice68's work on CPU1 (USB, the network card) and the splash, and stops the splash when AmigaOS draws |
 | `src/aarch64/vectors.c` * | +702 -1 |  | +33 -81 | **FRF:** the virtual CIA-A and CIA-B, the standalone machine's view of the custom chips' control registers<br>**Alice68:** which chipset control words a running machine may send (the PiStorm-only ones refused); each CIA's interrupt line kept for the chipset, so a cleared PORTS request is set again while the line is held |
 | `src/boards/68040.library.h` |  | +79 -79 |  | **Emu68:** 68040.library 2.0, which uses the range opcodes (generated binary, from Emu68) |
 | `src/boards/emu68rom.c` |  |  | +2 -0 | **Alice68:** puts `alice68hdf.device` (hardfiles, SD-card folders) on Emu68's ROM board, beside Emu68's own drivers |
 | `src/overlays/diagnostic.dts` | +2 -0 |  |  | **FRF:** a `hud` option for FRF's on-screen display |
 | `src/overlays/emu68.dts` | +13 -0 |  |  | **FRF:** joystick button mapping options |
 | `src/pistorm/ps_classic_protocol.c` * |  |  | +24 -0 | **Alice68:** no PiStorm on the header: the serial log goes out on GPIO 14 (header pin 8) |
-| `src/raspi/start_rpi64.c` * | +684 -4 |  | +383 -41 | **FRF:** the standalone start: no PiStorm probe, the virtual machine set up<br>**Alice68:** the Pi 4 boot: the splash (status strip, log panels, animation; "based on Emu68" from the version string), the boot log, starting the xHCI driver and the network card |
+| `src/raspi/start_rpi64.c` * | +684 -4 |  | +542 -84 | **FRF:** the standalone start: no PiStorm probe, the virtual machine set up<br>**Alice68:** the Pi 4 boot: the splash (status strip, log panels, animation; "based on Emu68" from the version string), the boot log, starting the xHCI driver and the network card |
 | `src/raspi/support_rpi.c` * | +22 -0 |  | +9 -0 | **FRF:** the boot log on screen<br>**Alice68:** every kernel log line also into the USB card's log ring (for `Alice68-USBLog` and `Alice68-Monitor`) |
 
 ## 3. New files
 
 | Files | How many | Lines | Whose | What |
 |---|---|---|---|---|
-| `include/logo/logo_alice.h` | 1 | 1234 | Alice68 | Alice68's emblem (generated by `tools/mklogo_alice.py`) |
-| `src/alice/` | 7 | 3854 | Alice68 | Alice68's network card: WiFi (SDIO host, chip bring-up, FullMAC protocol) and Gigabit Ethernet (GENET) |
-| `src/boards/alice68hdf.device.h` | 1 | 83935 | Alice68 | `alice68hdf.device`, built from `amiga/hdf/` and embedded in the ROM board (generated) |
+| `include/logo/logo_alice.h` | 1 | 2454 | Alice68 | Alice68's emblem (generated by `tools/mklogo_alice.py`) |
+| `src/alice/` | 7 | 3918 | Alice68 | Alice68's network card: WiFi (SDIO host, chip bring-up, FullMAC protocol) and Gigabit Ethernet (GENET) |
+| `src/boards/alice68hdf.device.h` | 1 | 91136 | Alice68 | `alice68hdf.device`, built from `amiga/hdf/` and embedded in the ROM board (generated) |
 | `src/frf_usb/xhci/` | 5 | 2137 | Alice68 | Alice68's xHCI (VL805) driver for the Pi 4's USB-A ports, the Neptune pass-through (the USB card) and the virtual eject |
-| `src/raspi/alice_splash*` | 2 | 515 | Alice68 | Alice68's boot splash |
+| `src/raspi/alice_setup*` | 2 | 564 | Alice68 | Alice68's setup screen (Del or F2 before AmigaOS starts) |
+| `src/raspi/alice_splash*` | 2 | 765 | Alice68 | Alice68's boot splash |
 | `scripts/` | 8 | 163 | FRF (EMU68AGA Bare Metal) | FRF's build and test scripts, and its joystick map |
 | `src/boards/frf_z3ram.c` | 1 | 87 | FRF (EMU68AGA Bare Metal) | FRF's Zorro III RAM board |
 | `src/frf_net/` | 6 | 472 | FRF (EMU68AGA Bare Metal) | FRF's network bridge board and SDIO probe (built only with `FRF_NET_Z2_BRIDGE` / `FRF_WIFI_SD1_ENUM`, both off in Alice68) |
 | `src/frf_usb/` | 7 | 276 | FRF (EMU68AGA Bare Metal) | FRF's USB board and joystick mapping |
-| `src/frf_usb/native/` | 9 | 1215 | FRF (EMU68AGA Bare Metal) | FRF's USB keyboard handling and native DWC2 code |
+| `src/frf_usb/native/` | 9 | 1271 | FRF (EMU68AGA Bare Metal) | FRF's USB keyboard handling and native DWC2 code |
 | `src/frf_usb/tinyusb/` | 12 | 2565 | FRF (EMU68AGA Bare Metal) | FRF's TinyUSB glue: keyboards, mice, pads, USB mass storage |
 | `src/frf_wifi/` | 2 | 162 | FRF (EMU68AGA Bare Metal) | FRF's WiFi probes (not built in Alice68) |
 | `tests/` | 25 | 1992 | FRF (EMU68AGA Bare Metal) | FRF's tests |
