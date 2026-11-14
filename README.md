@@ -596,6 +596,7 @@ first exFAT partition and mounts its hardfiles (root and `HDF`) and CD images (r
   alice68.exfat=ro      # the default: read-only
   alice68.exfat=rw      # read-write: Alice68 writes the exFAT partition
   alice68.exfat=off     # the partition is not a volume (hardfiles, CD images, folders still work)
+  alice68.exfat=boot    # read-write, and AmigaOS boots from it
   ```
 
   Writing keeps the order that leaves a cut-off write repairable: file data first, then
@@ -613,7 +614,18 @@ first exFAT partition and mounts its hardfiles (root and `HDF`) and CD images (r
   log says why, and a PC's disk check (Windows offers one, First Aid on a Mac) is needed. Amiga attributes
   are kept in `.uaem` sidecars as in FAT folders. A hardfile or CD image that is mounted
   can't be changed through the volume, and a hardfile written on the Amiga keeps its size
-  and clusters, as on FAT. The volume is not bootable yet.
+  and clusters, as on FAT.
+- **Booting AmigaOS from the exFAT partition** (`alice68.exfat=boot`): the partition's
+  volume becomes the boot drive, ahead of every other drive, and its files can be edited
+  from a PC or Mac like any others. Put a Workbench installation in the partition's
+  root (`C`, `Devs`, `L`, `Libs`, `Prefs`, `S`, `System`, `Utilities`, ...). The easiest
+  way is to copy one from FS-UAE or Amiberry, whose folder drives keep Amiga attributes in
+  the same `.uaem` files, or to install AmigaOS onto the volume from another boot drive.
+  Copied plainly from a PC, files lose their Amiga attributes; the one AmigaOS needs to
+  start is the script bit, so files in a folder named `S` count as scripts unless their
+  `.uaem` says otherwise. Links (hard or soft) aren't supported. `hdf.boot=` in
+  `cmdline.txt` wins over it if both are set. Only the partition itself boots, not folders
+  on it.
 - The card needs an MBR partition table, not GPT: both recipes above make one.
 
 ## Folders of the SD card as Amiga volumes

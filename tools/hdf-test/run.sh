@@ -41,8 +41,8 @@ sh "$P/tools/hdf-test/exfat.sh"
 if [ "$(id -u)" = 0 ] && command -v mount.exfat-fuse >/dev/null && command -v mkfs.exfat >/dev/null; then
     printf '%-12s driver %-14s ' isos exfat
     python3 "$P/amiga/test/harness_isos.py" "$P/amiga/out/alice68hdf.device" "$P/amiga/out/alice68hdf.device.elf" "$T" exfat | tail -1
-    for o in exfat exfatrw; do
-        printf '%-12s driver %-14s ' folders $o
+    for o in exfat exfatrw exfatboot 'exfatboot hdfboot'; do
+        printf '%-12s driver %-14s ' folders "$o"
         python3 "$P/amiga/test/harness_folders.py" "$P/amiga/out/alice68hdf.device" "$P/amiga/out/alice68hdf.device.elf" "$T" $o | tail -1
     done
 else

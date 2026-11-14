@@ -4,7 +4,7 @@
 config.txt, the ALICE68 folder, other folders and a mounted hardfile; a fake
 exec, expansion.library, dos.library and brcm-emmc.device.
 
-    harness_folders.py DEVICE.hunk DEVICE.elf WORKDIR [cardro] [exfat | exfatrw]
+    harness_folders.py DEVICE.hunk DEVICE.elf WORKDIR [cardro] [exfat | exfatrw | exfatboot [hdfboot]]
 
 exfat: the folders (all but ALICE68) on an exFAT partition after the FAT32 one
 (mkfs.exfat, filled through exfat-fuse; needs root and losetup): mounted
@@ -12,6 +12,9 @@ read-only, read through the same packets, every write refused; the partition
 itself is a volume too. exfatrw: the same with alice68.exfat=rw: files made,
 written, renamed, deleted, a comment kept in a .uaem sidecar, on a folder and on
 the partition's own volume; then fsck.exfat and exfat-fuse read the card back.
+exfatboot: alice68.exfat=boot: the partition's volume is the boot volume (a boot
+node ahead of every other drive), files in S are scripts unless a sidecar says
+otherwise; with hdfboot, hdf.boot= in cmdline.txt wins instead.
 
 Checks the boot nodes the device makes for the folders, then starts a
 handler (fold_start) and sends it DOS packets (fold_do): directory listing,
@@ -35,7 +38,9 @@ HEAP, HEAP_END = 0x400000, 0xC00000
 STACK = 0x200000
 hunk, elf, work = sys.argv[1:4]
 card_ro = 'cardro' in sys.argv[4:]
-exfatrw = 'exfatrw' in sys.argv[4:]
+exfatboot = 'exfatboot' in sys.argv[4:]
+hdfboot = 'hdfboot' in sys.argv[4:]
+exfatrw = 'exfatrw' in sys.argv[4:] or exfatboot
 exfat = 'exfat' in sys.argv[4:] or exfatrw
 env = dict(os.environ, MTOOLS_SKIP_CHECK='1', LC_ALL='C.UTF-8')
 
@@ -62,6 +67,9 @@ files = {
     'Games/Sub/What%3f.txt': b'question\n',
     'Games/Sub/._deep.bin': bytes(32),
     'Games/Sub/.DS_Store': b'x',
+    # a Workbench's S folder copied from a PC: no sidecars
+    'Work/S/Startup-Sequence': b'echo "booted from exFAT"\n',
+    'Work/S/User-Startup': b'; nothing\n',
 }
 raw = bytearray(2048 * 512)                          # a single-partition hardfile (DOS\1, WinUAE geometry)
 raw[0:4] = b'DOS\x01'
@@ -77,7 +85,7 @@ config = ('# the Pi\'s settings\n[pi4]\narm_64bit=1\n[all]\n'
           'alice68.folder=HDF:Hardfiles\n'
           'alice68.folder=NoSuchFolder\n'
           'alice68.folder=Games/readme.txt\n'
-          '  alice68.folder=ALICE68  \n' + ('alice68.exfat=rw\n' if exfatrw else ''))
+          '  alice68.folder=ALICE68  \n' + ('alice68.exfat=boot\n' if exfatboot else 'alice68.exfat=rw\n' if exfatrw else ''))
 open(os.path.join(src, 'config.txt'), 'w').write(config)
 if not exfat:
     subprocess.run(['mkfs.fat', '-F', '32', '-s', '1', '-C', img, '40000'], check=True, stdout=subprocess.DEVNULL)
@@ -93,8 +101,9 @@ else:
                               check=True, capture_output=True).stdout.decode().strip()
     l1 = loopdev(P1, N1)
     subprocess.run(['mkfs.fat', '-F', '32', '-s', '1', l1], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    for top in ('ALICE68', 'config.txt'):
-        subprocess.run(['mcopy', '-s', '-i', l1, os.path.join(src, top), '::/'], check=True, env=env)
+    if hdfboot: open(os.path.join(src, 'cmdline.txt'), 'w').write('hdf.boot=raw\n')
+    for top in ('ALICE68', 'config.txt') + (('cmdline.txt',) if hdfboot else ()):
+        subprocess.run(['mcopy', '-s', '-i', l1, os.path.join(src, top), '::/'], check=True, env=env, stderr=subprocess.DEVNULL)
     subprocess.run(['losetup', '-d', l1], check=True)
     l2 = loopdev(P2, N2)
     subprocess.run(['mkfs.exfat', l2], check=True, stdout=subprocess.DEVNULL)
@@ -256,12 +265,12 @@ print('--- driver log ---\n' + logtxt.rstrip())
 # ---- the boot nodes -----------------------------------------------------------------------------
 fold = [b for b in boots if b['dev'] == 'alice68hdf.device' and b['unit'] >= 0x4000]
 got = [(b['name'], b['unit'] - 0x4000, b['pri']) for b in fold]
-want = [('SDF0', 0, -128), ('SDF1', 1, -128), ('SDF2', 2, -128), ('SDF3', 3, -128)] + ([('SDF4', 4, -128)] if exfat else [])
+want = [('SDF0', 0, -128), ('SDF1', 1, -128), ('SDF2', 2, -128), ('SDF3', 3, -128)] + ([('SDF4', 4, 0 if exfatboot and not hdfboot else -128)] if exfat else [])
 if got != want: die('folder boot nodes %s, want %s' % (got, want))
 for b in fold:
     dn = b['dn']
     seg, gv, stack = mem.r32(dn + 32), mem.r32(dn + 36), mem.r32(dn + 20)
-    if b['flags'] != 1 or gv != 0xffffffff or stack < 8192 or b['env'][16] != 0x46415401 or b['env'][15] != 0xffffff80:
+    if b['flags'] != 1 or gv != 0xffffffff or stack < 8192 or b['env'][16] != 0x46415401 or b['env'][15] != (b['pri'] & 0xffffffff):
         die('%s: flags %d globvec %x stack %d env %s' % (b['name'], b['flags'], gv, stack, b['env']))
     c = (seg << 2) + 4
     if (mem.r16(c), mem.r32(c + 2), mem.r16(c + 6), mem.r32(c + 8), mem.r16(c + 12), mem.r16(c + 14)) != \
@@ -354,10 +363,23 @@ def write(ctx, h, data):
     mem.w_block(BUF, data); return pkt(ctx, ord('W'), h, BUF, len(data))
 
 if exfat:
-    want_line = 'exFAT partition: volume exFAT (SDF4:), not bootable' + ('' if exfatrw else ', read-only: alice68.exfat=rw in config.txt writes it')
+    want_line = 'exFAT partition: volume exFAT (SDF4:), ' + ('bootable' if exfatboot and not hdfboot else 'not bootable') + ('' if exfatrw else ', read-only: alice68.exfat=rw in config.txt writes it')
+    if exfatboot: chk(('hdf.boot=raw boots instead' in logtxt) == hdfboot and ('boots as exFAT (priority 0)' in logtxt) != hdfboot, 'the boot choice in the log')
     chk(want_line in logtxt, 'log: %s' % want_line)
     X4 = start(4)
     chk(sorted(e['name'] for e in listdir(X4, ok(pkt(X4, LOCATE, 0, name(''), -2), 'Lock'))) == ['Disk.info', 'Games', 'HDF', 'Work'], 'the partition volume lists its root')
+    if hdfboot: print('hdf.boot= wins over alice68.exfat=boot'); print('ALL OK'); sys.exit(0)
+if exfatboot:                                        # a Workbench's S folder from a PC: scripts
+    def prot(ctx, path):
+        l = ok(pkt(ctx, LOCATE, 0, name(path), -2), 'Lock ' + path); ok(pkt(ctx, EXAMINE, l, FIB >> 2), 'Examine'); p_ = fib()['prot']; ok(pkt(ctx, FREE, l), 'UnLock'); return p_
+    chk(prot(X4, 'Work/S/Startup-Sequence') & 0x4f == 0x40 and prot(X4, 'Work/S/User-Startup') & 0x40, 'files in S are scripts')
+    chk(not prot(X4, 'Work/Docs/letter.txt') & 0x40 and not prot(X4, 'Work/S') & 0x40, 'other files and the folder itself are not')
+    sl = ok(pkt(X4, LOCATE, 0, name('Work/S'), -2), 'Lock S')
+    chk(all(e['prot'] & 0x40 for e in listdir(X4, sl)), 'a listing of S shows the script bit too')
+    ok(pkt(X4, PROTECT, 0, 0, name('Work/S/User-Startup'), 0), 'SetProtection ----rwed on a file in S')
+    chk(not prot(X4, 'Work/S/User-Startup') & 0x40, 'the script bit cleared on purpose stays cleared (a sidecar)')
+    ok(pkt(X4, PROTECT, 0, 0, name('Work/S/User-Startup'), 0x40), 'SetProtection s back')
+    chk(prot(X4, 'Work/S/User-Startup') & 0x40, 'and set again')
 if exfatrw:                                          # writing exFAT through the packets
     chk('exFAT: not cleanly removed: checked' in logtxt and 'not written' not in logtxt, 'the boot validator ran and allowed writing')
     ok(pkt(G, MKDIR, 0, name('Made here')), 'CreateDir on exFAT')
@@ -394,7 +416,7 @@ if exfatrw:                                          # writing exFAT through the
             subprocess.run(['umount', mnt])
     finally:
         subprocess.run(['losetup', '-d', L])
-    print('exFAT read-write: %d checks; fsck.exfat clean; exfat-fuse reads it all back' % checks[0]); print('ALL OK'); sys.exit(0)
+    print('exFAT read-write%s: %d checks; fsck.exfat clean; exfat-fuse reads it all back' % (', the boot volume, S scripts' if exfatboot else '', checks[0])); print('ALL OK'); sys.exit(0)
 if exfat:                                            # read-only: everything reads, nothing writes
     root = ok(pkt(G, LOCATE, 0, name(''), -2), 'Lock root')
     ok(pkt(G, EXAMINE, root, FIB >> 2), 'Examine root')

@@ -86,6 +86,7 @@ struct FCtx {
     /* the sidecars of one directory, found in one pass (a listing asks for each entry's) */
     struct MRef *mref;
     ULONG nmref, capmref, mdir, mgen, mvalid;
+    ULONG sdir, sdir_valid, sdir_is, sdir_gen;   /* the last directory asked about: is it named S? */
     struct DateStamp now;                   /* when the packet being done came */
 };
 
@@ -296,10 +297,23 @@ static int meta_put(struct FCtx *x, uint32_t dir, const char *host, const struct
     if (ffs_write(v, &f, 0, line, n, &err) != (int32_t)n) return err ? err : FFS_FULL;
     return ffs_flush_file(v, &f);
 }
+/* a directory named S (not a volume's root): its files are scripts unless a sidecar says
+   otherwise, as AmigaOS needs for S:Startup-Sequence and the like copied from a PC */
+static int in_s(struct FCtx *x, uint32_t dir)
+{
+    if (dir == x->fv->root) return 0;
+    if (x->sdir_valid && x->sdir == dir && x->sdir_gen == x->db->mgen) return (int)x->sdir_is;
+    struct ffs_ent de;
+    char an[FFS_NAME];
+    x->sdir = dir; x->sdir_valid = 1; x->sdir_is = 0; x->sdir_gen = x->db->mgen;
+    if (ffs_dir_ent(x->fv->fs, dir, &de) == 0) { uaem_decode(de.name, an, sizeof an); x->sdir_is = (an[0] == 'S' || an[0] == 's') && !an[1]; }
+    return (int)x->sdir_is;
+}
 /* what the Amiga sees of an entry with no sidecar */
-static void meta_plain(const struct ffs_ent *e, struct uaem *m)
+static void meta_plain(struct FCtx *x, const struct ffs_ent *e, struct uaem *m)
 {
     m->prot = ((e->attr & FFS_A_RO) ? FIBF_WRITE | FIBF_DELETE : 0) | ((e->attr & FFS_A_ARCH) ? 0 : FIBF_ARCHIVE);
+    if (x && !(e->attr & FFS_A_DIR) && e->sec != VIRT_SEC && in_s(x, e->dir)) m->prot |= FIBF_SCRIPT;
     ffs_fat_to_amiga(e->date, e->time, &m->days, &m->mins, &m->ticks);
     m->comment[0] = 0;
 }
@@ -386,7 +400,7 @@ static void fill_fib(struct FCtx *x, struct FileInfoBlock *fib, int isroot, cons
     fib->fib_Size = dir ? 0 : (LONG)e->size;
     fib->fib_NumBlocks = dir ? 1 : (LONG)((e->size + 511) / 512);
     struct uaem m, fat;
-    meta_plain(e, &fat);
+    meta_plain(x, e, &fat);
     if (isroot || e->sec == VIRT_SEC || !meta_get(x, e->dir, e->name, &m)) m = fat;
     else {
         /* the archive bit is FAT's (every write sets it); the date is the sidecar's (as in
@@ -651,6 +665,7 @@ static LONG do_packet(struct FCtx *x, struct DosPacket *p, LONG *res2)
         uint32_t key = w_key(x, &w);
         struct ffs_ent old = w.e, ne;
         if ((r = ffs_rename(v, &w.e, w2.dir, w2.leaf, w2.leaflen, &ne))) FAIL(dos_err(r));
+        db->mgen++;                                   /* names changed: what was learnt about them starts again */
         {                                             /* its sidecar goes with it */
             char sc[FFS_NAME], nsc[FFS_NAME];
             struct ffs_ent se, dummy;
@@ -685,7 +700,7 @@ static LONG do_packet(struct FCtx *x, struct DosPacket *p, LONG *res2)
         {
             struct uaem md;
             int have = meta_get(x, w.e.dir, w.e.name, &md);
-            if (!have) meta_plain(&w.e, &md);
+            if (!have) meta_plain(x, &w.e, &md);
             if (p->dp_Type == ACTION_SET_PROTECT) {
                 ULONG m = (ULONG)p->dp_Arg4;
                 uint8_t a = (uint8_t)((w.e.attr & (FFS_A_HIDDEN | FFS_A_SYSTEM)) | ((m & FIBF_WRITE) ? FFS_A_RO : 0) | ((m & FIBF_ARCHIVE) ? 0 : FFS_A_ARCH));
@@ -700,7 +715,8 @@ static LONG do_packet(struct FCtx *x, struct DosPacket *p, LONG *res2)
             }
             if (r) FAIL(dos_err(r));
             /* a sidecar for what FAT cannot hold; none when it can hold it all */
-            if (!uaem_plain(md.prot) || md.comment[0]) r = meta_put(x, w.e.dir, w.e.name, &md, 0);
+            int s_default = !(w.e.attr & FFS_A_DIR) && in_s(x, w.e.dir);
+            if (!uaem_plain(md.prot) || md.comment[0] || (s_default && !(md.prot & FIBF_SCRIPT))) r = meta_put(x, w.e.dir, w.e.name, &md, 0);
             else if (have) r = meta_put(x, w.e.dir, w.e.name, 0, 1);
             if (r) FAIL(dos_err(r));
         }
@@ -715,13 +731,14 @@ static LONG do_packet(struct FCtx *x, struct DosPacket *p, LONG *res2)
         if (w.isroot || w.virt) return DOSTRUE;
         struct uaem md;
         int have = meta_get(x, w.e.dir, w.e.name, &md);
-        if (!have) meta_plain(&w.e, &md);
+        if (!have) meta_plain(x, &w.e, &md);
         const UBYTE *c = BADDR(p->dp_Arg4);
         uint32_t cl = c ? c[0] : 0;
         if (cl > UAEM_COMMENT - 1) FAIL(ERROR_COMMENT_TOO_BIG);
         memcpy(md.comment, c + 1, cl); md.comment[cl] = 0;
         for (uint32_t i = 0; i < cl; i++) if ((UBYTE)md.comment[i] < 32) md.comment[i] = ' ';   /* one line */
-        if (cl || !uaem_plain(md.prot)) r = meta_put(x, w.e.dir, w.e.name, &md, 0);
+        int s_default = !(w.e.attr & FFS_A_DIR) && in_s(x, w.e.dir);
+        if (cl || !uaem_plain(md.prot) || (s_default && !(md.prot & FIBF_SCRIPT))) r = meta_put(x, w.e.dir, w.e.name, &md, 0);
         else r = have ? meta_put(x, w.e.dir, w.e.name, 0, 1) : 0;
         if (r) FAIL(dos_err(r));
         return DOSTRUE;
@@ -869,7 +886,8 @@ APTR handler_seglist(struct HdfBase *db, void (*entry)(struct HdfBase *))
 static int is_sp(char c) { return c == ' ' || c == '\t' || c == '\r'; }
 
 /* config.txt lines alice68.folder=PATH[:VOLUME] (and alice68.folders=off): calls take() for each */
-/* alice68.exfat=off|ro|rw: the exFAT partition as a volume (0 off, 1 read-only: the default, 2 read-write) */
+/* alice68.exfat=off|ro|rw|boot: the exFAT partition as a volume (0 off, 1 read-only: the default,
+   2 read-write, 3 read-write and bootable) */
 static int exfat_mode(const char *c)
 {
     static const char key[] = "alice68.exfat=";
@@ -888,6 +906,7 @@ static int exfat_mode(const char *c)
         if (end - l == 2 && l[0] == 'r' && l[1] == 'w') mode = 2;
         else if (end - l == 2 && l[0] == 'r' && l[1] == 'o') mode = 1;
         else if (end - l == 3 && l[0] == 'o' && l[1] == 'f' && l[2] == 'f') mode = 0;
+        else if (end - l == 4 && l[0] == 'b' && l[1] == 'o' && l[2] == 'o' && l[3] == 't') mode = 3;
     }
     return mode;
 }
@@ -932,7 +951,7 @@ static int parse_config(const char *c, char paths[][128], char vols[][32], int m
 /* a volume for a folder (path) of a partition, or (path "") the exFAT partition itself: 1 made,
    0 not (logged), -1 out of memory */
 static int add_volume(struct HdfBase *db, struct hdf_io *io, APTR eb, APTR cd, const char *path, const char *volname,
-                      struct ffs *fs, uint32_t root, const struct ffs_ent *re)
+                      struct ffs *fs, uint32_t root, const struct ffs_ent *re, int boot)
 {
     const char *pth = path;
     struct FVol *fv = AllocMem(sizeof *fv, MEMF_PUBLIC | MEMF_CLEAR);
@@ -957,8 +976,10 @@ static int add_volume(struct HdfBase *db, struct hdf_io *io, APTR eb, APTR cd, c
     fv->dev[3] = (char)('0' + fv->index);
     /* the seglist dos.library starts: in RAM, a call of folder_main(db) in the ROM */
     if (!db->fseg && !(db->fseg = handler_seglist(db, folder_main))) { FreeMem(fv, sizeof *fv); return -1; }
+    LONG pri = -128;                                /* not bootable; the boot volume ahead of every other drive */
+    if (boot) { LONG top = eb ? highest_boot_pri(eb) : -128; pri = top < 0 ? 0 : top + 1; if (pri > 127) pri = 127; }
     ULONG pkt[4 + 17] = { (ULONG)fv->dev, (ULONG)hdf_devname, FOLDER_UNIT0 + fv->index, 0,
-                          16, 128, 0, 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0x1fe00, 0x7ffffffe, (ULONG)-128, 0x46415401 /* 'FAT\1' */ };
+                          16, 128, 0, 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0x1fe00, 0x7ffffffe, (ULONG)pri, 0x46415401 /* 'FAT\1' */ };
     struct DeviceNode *dn = eb ? MakeDosNode(eb, pkt) : 0;
     if (!dn) { hdf_log(io, "%s: MakeDosNode failed", fv->vol); FreeMem(fv, sizeof *fv); return 0; }
     dn->dn_SegList = MKBADDR(db->fseg);
@@ -968,14 +989,15 @@ static int add_volume(struct HdfBase *db, struct hdf_io *io, APTR eb, APTR cd, c
     dn->dn_Handler = 0;
     if (find_drive(eb, fv->dev)) hdf_log(io, "%s: a drive of that name is mounted already", fv->dev);
     db->fvol[db->nfvols++] = fv;
-    if (!AddBootNode(eb, -128, 1 /* ADNF_STARTPROC */, dn, cd)) { hdf_log(io, "%s: AddBootNode failed", fv->vol); db->nfvols--; FreeMem(fv, sizeof *fv); return 0; }
+    if (!AddBootNode(eb, pri, 1 /* ADNF_STARTPROC */, dn, cd)) { hdf_log(io, "%s: AddBootNode failed", fv->vol); db->nfvols--; FreeMem(fv, sizeof *fv); return 0; }
     add_vol(db, fv->vol, fv->dev);
     if (fv->path[0])
         hdf_log(io, "folder %s%s: volume %s (%s:), not bootable%s", fv->path, fv->fs == &db->xffs ? " (exFAT)" : "", fv->vol, fv->dev,
                 db->readonly || fv->ro ? ", read-only" : "");
     else
-        hdf_log(io, "exFAT partition: volume %s (%s:), not bootable%s%s", fv->vol, fv->dev,
+        hdf_log(io, "exFAT partition: volume %s (%s:), %s%s%s", fv->vol, fv->dev, boot ? "bootable" : "not bootable",
                 db->readonly || fv->ro ? ", read-only: " : "", db->readonly ? "the card is" : fv->ro ? db->xfat.ro : "");
+    if (boot) hdf_log(io, "exFAT partition: boots as %s (priority %ld)", fv->vol, pri);
     return 1;
 }
 
@@ -1000,7 +1022,7 @@ void folders_mount(struct HdfBase *db, struct hdf_io *io, APTR eb, APTR cd, cons
         if (ffs_init_exfat(&db->xffs, &db->xfat) == 0) {
             db->xffs_up = 1;
             ffs_set_io(&db->xffs, io);                 /* the validator's lines go to the log */
-            if (xm == 2) { const char *why = xfat_writable(&db->xfat); if (why) hdf_log(io, "exFAT partition: not written: %s", why); }
+            if (xm >= 2) { const char *why = xfat_writable(&db->xfat); if (why) hdf_log(io, "exFAT partition: not written: %s", why); }
             else if (!db->xfat.ro) {
                 if (db->xfat.flags & 2) hdf_log(io, "exFAT partition: not cleanly removed; with alice68.exfat=rw it is checked and repaired at boot");
                 db->xfat.ro = "alice68.exfat=rw in config.txt writes it";
@@ -1028,7 +1050,7 @@ void folders_mount(struct HdfBase *db, struct hdf_io *io, APTR eb, APTR cd, cons
             if (i) hdf_log(io, "config.txt: alice68.folder=%s: %s", pth, r == FFS_NOTDIR ? "not a folder" : r == FFS_BADNAME ? "not the root" : "no such folder");
             continue;
         }
-        if (add_volume(db, io, eb, cd, pth, vols[i], fs, root, &re) < 0) break;
+        if (add_volume(db, io, eb, cd, pth, vols[i], fs, root, &re, 0) < 0) break;
     }
     if (db->xffs_up && xm && db->nfvols < FOLDER_MAX) {   /* the exFAT partition itself */
         struct ffs_ent re;
@@ -1037,7 +1059,9 @@ void folders_mount(struct HdfBase *db, struct hdf_io *io, APTR eb, APTR cd, cons
         re.first = re.dir = db->xfat.root;
         re.date = (uint16_t)((46 << 9) | (1 << 5) | 1);
         ffs_set_io(&db->xffs, io);
-        add_volume(db, io, eb, cd, "", db->xfat.label[0] ? db->xfat.label : "exFAT", &db->xffs, db->xfat.root, &re);
+        int boot = xm == 3;
+        if (boot && db->opts.boot[0]) { hdf_log(io, "alice68.exfat=boot: hdf.boot=%s boots instead", db->opts.boot); boot = 0; }
+        add_volume(db, io, eb, cd, "", db->xfat.label[0] ? db->xfat.label : "exFAT", &db->xffs, db->xfat.root, &re, boot);
     }
 out:
     FreeMem(paths, FOLDER_MAX * (128 + 32));

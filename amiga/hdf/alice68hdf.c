@@ -220,7 +220,7 @@ struct BootNode *find_drive(APTR eb, const char *name)
     return 0;
 }
 
-static LONG highest_boot_pri(APTR eb)
+LONG highest_boot_pri(APTR eb)
 {
     struct List *ml = mountlist(eb);
     LONG best = -128;

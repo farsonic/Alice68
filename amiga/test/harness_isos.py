@@ -81,7 +81,7 @@ else:
     subprocess.run(['mkfs.fat', '-F', '32', '-s', '1', l1], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for top in ('cmdline.txt',):
         if os.path.exists(os.path.join(src, 'card', top)):
-            subprocess.run(['mcopy', '-i', l1, os.path.join(src, 'card', top), '::/'], check=True, env=env)
+            subprocess.run(['mcopy', '-i', l1, os.path.join(src, 'card', top), '::/'], check=True, env=env, stderr=subprocess.DEVNULL)
     subprocess.run(['losetup', '-d', l1], check=True)
     l2 = loopdev(P2, N2)
     subprocess.run(['mkfs.exfat', '-L', 'Big Card', l2], check=True, stdout=subprocess.DEVNULL)

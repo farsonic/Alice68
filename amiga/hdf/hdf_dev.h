@@ -164,6 +164,7 @@ struct BootNode *find_drive(APTR eb, const char *name);
 
 /* folders.c */
 void folders_mount(struct HdfBase *db, struct hdf_io *io, APTR eb, APTR cd, const char *config);
+LONG highest_boot_pri(APTR eb);                 /* the mount list's highest boot priority (-128 if none) */
 /* isos.c: takes over the files' extents */
 void isos_mount(struct HdfBase *db, struct hdf_io *io, APTR eb, APTR cd, struct hdf_file *files, int n);
 /* the RAM seglist dos.library starts a handler from: a call of entry(db) in the ROM */

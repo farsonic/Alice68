@@ -110,6 +110,7 @@ ACHECK(AOFF(struct DosList, dol_Name) == 40);
 #define FIBF_DELETE     1
 #define FIBF_WRITE      4
 #define FIBF_ARCHIVE    16
+#define FIBF_SCRIPT     64
 
 #define MEMF_PUBLIC 1
 #define MEMF_CLEAR  0x10000

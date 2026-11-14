@@ -9,6 +9,13 @@
   and DVD images work. Written from Microsoft's published exFAT specification
   (`amiga/hdf/exfat.c`): the boot checksum, FAT chains and contiguous files, entry set
   checksums, Latin-1 names. README has Mac and Windows recipes for the card.
+- **Booting AmigaOS from the exFAT partition** (`alice68.exfat=boot` in `config.txt`):
+  the partition's volume becomes the boot drive, ahead of every other drive, and its
+  files stay editable from a PC or Mac. Files in a folder named `S` count as scripts
+  unless their `.uaem` sidecar says otherwise, so a Workbench copied from a PC still
+  runs its Startup-Sequence. `hdf.boot=` wins if both are set. Tested on the 68k emulator
+  (the boot node and its priority, the S rule, `hdf.boot=` over it); booting itself only
+  on a Pi.
 - **An exFAT validator on the Amiga.** A volume left marked dirty (a power cut while
   writing) is checked and repaired at boot by `alice68hdf.device`, as AmigaOS validates its
   disks, before it is written: no PC needed. Two passes: the first only looks; the second
