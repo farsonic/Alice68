@@ -66,7 +66,7 @@ struct bt_host {
     char why[64];                       /* BT_FAILED: why */
     uint8_t bdaddr[6];
     /* the controller */
-    const uint8_t *fw; unsigned fwlen, fwpos;
+    const uint8_t *fw; unsigned fwlen, fwpos, fwrec;
     int step;                           /* where the start-up is */
     uint32_t wait_until;
     int credits;                        /* HCI commands the controller takes now */

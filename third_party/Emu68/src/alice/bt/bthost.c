@@ -233,6 +233,7 @@ static void patch_next(struct bt_host *h)
         h->step = S_LAUNCH_WAIT;
         h->wait_until = now(h) + 250;
         h->pending_op = 0;
+        lg(h, "firmware: %u records sent, starting it", h->fwrec);
         return;
     }
     const uint8_t *r = h->fw + h->fwpos;
@@ -240,6 +241,7 @@ static void patch_next(struct bt_host *h)
     unsigned n = r[2];
     if (h->fwpos + 3 + n > h->fwlen) { fail(h, "the firmware file is cut short"); return; }
     h->fwpos += 3 + n;
+    h->fwrec++;
     sync_cmd(h, op, r + 3, n);
 }
 /* a Command Complete for the start-up's command */
@@ -811,12 +813,13 @@ void bt_poll(struct bt_host *h)
 {
     if (h->state == BT_FAILED || h->state == BT_OFF) return;
     if (h->pending_op && due(h, h->wait_until)) {
-        lg(h, "no answer to command %x", h->pending_op);
+        if (h->state == BT_FW && h->step == S_PATCH) lg(h, "no answer to firmware record %u (command %x, byte %u of %u)", h->fwrec, h->pending_op, h->fwpos, h->fwlen);
+        else lg(h, "no answer to command %x (start-up step %u)", h->pending_op, (uint32_t)h->step);
         fail(h, h->state == BT_FW && h->step == S_RESET ? "the chip does not answer" : "the chip stopped answering");
         return;
     }
     if (h->state == BT_FW && !h->pending_op) {
-        if (h->step == S_MINI_WAIT && due(h, h->wait_until)) { h->step = S_PATCH; h->fwpos = 0; say(h, "loading its firmware"); patch_next(h); }
+        if (h->step == S_MINI_WAIT && due(h, h->wait_until)) { h->step = S_PATCH; h->fwpos = 0; h->fwrec = 0; say(h, "loading its firmware"); lg(h, "firmware: %u bytes", h->fwlen); patch_next(h); }
         else if (h->step == S_LAUNCH_WAIT && due(h, h->wait_until)) { h->step = S_RESET2; h->credits = 1; sync_cmd(h, C_RESET, 0, 0); }
     }
     if (h->state != BT_READY) return;

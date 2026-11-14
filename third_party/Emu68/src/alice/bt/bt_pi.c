@@ -54,11 +54,11 @@ static uint32_t ms_now(void) { return (uint32_t)(ticks() / (tick_hz() / 1000u));
 
 static struct bt_host bh;
 static uint32_t uart_hz = 48000000u;
-static int phase;                              /* 0 not started, 1 waiting for firmware, 2 BT_ON low, 3 BT_ON high, 4 running, 8 failed, 9 off */
+static int phase;                              /* 0 not started, 1 waiting for firmware, 2 BT_ON low, 3 BT_ON high, 4 running, 7 power off for a retry, 8 failed, 9 off */
 static uint32_t phase_t, wait_since;
 static char shown[64];
 static int shown_col = -1;
-static int keys_loaded, uart_done;
+static int keys_loaded, uart_done, retried;
 
 static void blog(const char *s)
 {
@@ -177,7 +177,7 @@ static void board_sync(void)
         __asm__ volatile("dmb ish" ::: "memory");
         x->cmd_done = x->cmd_seq;
     }
-    x->state = phase == 9 ? AN_BT_OFF : phase == 8 ? AN_BT_FAILED : phase < 4 ? (phase == 1 ? AN_BT_NOFW : AN_BT_STARTING) :
+    x->state = phase == 9 ? AN_BT_OFF : phase == 8 ? AN_BT_FAILED : phase < 4 || phase == 7 ? (phase == 1 ? AN_BT_NOFW : AN_BT_STARTING) :
                bh.state == BT_READY ? AN_BT_READY : bh.state == BT_FAILED ? AN_BT_FAILED : AN_BT_STARTING;
     x->scanning = (unsigned)bh.scanning; x->pairing = (unsigned)bh.pairing;
     x->passkey = bh.passkey; x->passkey_shown = (unsigned)bh.passkey_shown;
@@ -254,7 +254,20 @@ void bt_pi_poll(void)
         phase = 4;
         bt_init(&bh, &bio, bh.fw, bh.fwlen);
         break;
+    case 7:                                             /* BT_ON low again, for a fresh start */
+        if ((int32_t)(now - phase_t) < 0) break;
+        if (alice_mbox(0x00038041u, 128u + 0u, 0u, 0)) { phase_t = now + 250; break; }
+        phase = 2; phase_t = now;
+        break;
     case 4: {
+        if (bh.state == BT_FAILED && bh.fw && !retried) {  /* the firmware file did not go in: the chip's own, once */
+            retried = 1;
+            blog("[BT] loading BCM4345C0.hcd failed: trying again with the chip's own firmware");
+            bh.fw = 0; bh.fwlen = 0;
+            phase = 7; phase_t = now;
+            post("starting again (without the firmware file)", 0);
+            break;
+        }
         uint8_t buf[64];
         for (int rounds = 0; rounds < 8; rounds++) {
             unsigned n = 0;
