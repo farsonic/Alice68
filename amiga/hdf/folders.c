@@ -1017,7 +1017,7 @@ void folders_mount(struct HdfBase *db, struct hdf_io *io, APTR eb, APTR cd, cons
     if (fat_open(&db->ffat, &quiet) || (db->ffat.io = io, ffs_init(&db->ffs, &db->ffat))) { hdf_log(io, "folders: the FAT partition cannot be opened"); goto out; }
     db->ffs_up = 1;
     /* the card's exFAT partition: folders on it, and itself as a volume (alice68.exfat=) */
-    int xm = exfat_mode(config);
+    int xm = db->opts.exfat ? db->opts.exfat - 1 : exfat_mode(config);   /* cmdline.txt wins over config.txt */
     if (xfat_open(&db->xfat, &quiet) == 0) {
         if (ffs_init_exfat(&db->xffs, &db->xfat) == 0) {
             db->xffs_up = 1;
@@ -1025,7 +1025,7 @@ void folders_mount(struct HdfBase *db, struct hdf_io *io, APTR eb, APTR cd, cons
             if (xm >= 2) { const char *why = xfat_writable(&db->xfat); if (why) hdf_log(io, "exFAT partition: not written: %s", why); }
             else if (!db->xfat.ro) {
                 if (db->xfat.flags & 2) hdf_log(io, "exFAT partition: not cleanly removed; with alice68.exfat=rw it is checked and repaired at boot");
-                db->xfat.ro = "alice68.exfat=rw in config.txt writes it";
+                db->xfat.ro = "alice68.exfat=rw (config.txt, cmdline.txt or the setup screen) writes it";
             }
         } else xfat_close(&db->xfat);
     }

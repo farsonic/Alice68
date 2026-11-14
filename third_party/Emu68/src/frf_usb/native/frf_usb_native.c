@@ -5,6 +5,7 @@
  * Never link this file alongside USPi.
  */
 #include <stdint.h>
+#include <string.h>
 #include <support.h>
 #include "mmu.h"
 #include "frf_usb.h"
@@ -67,8 +68,63 @@ static void native_key_emit(void *ctx, uint8_t raw)
     (void)ctx;
     frf_vcia_keyboard_raw(raw);
 }
+/* Alice68: the setup screen (src/raspi/alice_setup.c, run on CPU0 before the 68k starts)
+   takes the keyboard while frf_setup_capture is set: new key presses go into a ring
+   (usage | modifiers << 8) instead of to the Amiga, and the key held down is kept for
+   repeats. CPU1 writes, CPU0 reads. */
+volatile int frf_setup_capture;
+static uint16_t setup_ring[32];
+static volatile uint32_t setup_wr, setup_rd;
+static volatile uint32_t setup_held;          /* usage | modifiers << 8 of the last key still down, 0 none */
+static uint8_t setup_prev[6];
+static void setup_capture(const uint8_t r[8])
+{
+    uint32_t held = 0;
+    for (unsigned i = 0; i < 6; ++i) {
+        uint8_t k = r[2 + i];
+        if (k < 4) continue;
+        held = (uint32_t)k | (uint32_t)r[0] << 8;
+        int was = 0;
+        for (unsigned j = 0; j < 6; ++j) if (setup_prev[j] == k) was = 1;
+        if (was) continue;
+        uint32_t w = __atomic_load_n(&setup_wr, __ATOMIC_RELAXED);
+        if (w - __atomic_load_n(&setup_rd, __ATOMIC_ACQUIRE) < 32u) {
+            setup_ring[w % 32u] = (uint16_t)held;
+            __atomic_store_n(&setup_wr, w + 1u, __ATOMIC_RELEASE);
+        }
+    }
+    __atomic_store_n(&setup_held, held, __ATOMIC_RELEASE);
+    memcpy(setup_prev, r + 2, 6);
+}
+/* CPU0: the next key pressed (1), or none (0) */
+int frf_setup_key(uint8_t *usage, uint8_t *mods)
+{
+    uint32_t r = __atomic_load_n(&setup_rd, __ATOMIC_RELAXED);
+    if (r == __atomic_load_n(&setup_wr, __ATOMIC_ACQUIRE)) return 0;
+    uint16_t v = setup_ring[r % 32u];
+    __atomic_store_n(&setup_rd, r + 1u, __ATOMIC_RELEASE);
+    *usage = (uint8_t)v; *mods = (uint8_t)(v >> 8);
+    return 1;
+}
+uint32_t frf_setup_held(void) { return __atomic_load_n(&setup_held, __ATOMIC_ACQUIRE); }
+/* on: the keys from now on are the setup's; off: back to the Amiga, nothing held */
+void frf_setup_keys(int on)
+{
+    if (on) {
+        memset(setup_prev, 0, sizeof setup_prev);
+        __atomic_store_n(&setup_held, 0u, __ATOMIC_RELEASE);
+        __atomic_store_n(&setup_rd, __atomic_load_n(&setup_wr, __ATOMIC_ACQUIRE), __ATOMIC_RELEASE);
+        __atomic_store_n(&frf_setup_capture, 1, __ATOMIC_RELEASE);
+    } else {
+        __atomic_store_n(&frf_setup_capture, 0, __ATOMIC_RELEASE);
+        /* the keys still down stay the setup's: the Amiga starts with none held */
+        native_keyboard.modifiers = 0;
+        memset(native_keyboard.keys, 0, sizeof native_keyboard.keys);
+    }
+}
 void frf_native_usb_keyboard_boot_report(const uint8_t report[8])
 {
+    if (__atomic_load_n(&frf_setup_capture, __ATOMIC_ACQUIRE)) { setup_capture(report); return; }
     frf_native_keyboard_report(&native_keyboard, report, native_key_emit, 0);
 }
 /* Releases every guest key on a real keyboard HID disconnect, rather

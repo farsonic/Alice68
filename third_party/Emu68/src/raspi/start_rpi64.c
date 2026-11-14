@@ -33,6 +33,7 @@
 #if defined(AGA_PISTORM) && defined(FRF_VIRTUAL_AGA)
 #define ALICE_SPLASH 1           /* Alice68: header, status strip, log panels (alice_splash.c) */
 #include "alice_splash.h"
+#include "alice_setup.h"
 #endif
 #endif
 #ifdef PISTORM_ANY_MODEL
@@ -976,9 +977,10 @@ static int __attribute__((unused)) blog_has(const char *l, const char *w)
 
 #ifdef ALICE_SPLASH
 /* the splash may be drawn until the first AGA frame (or 30 s after the 68k started) */
+static volatile int alice_setup_on;          /* the setup screen has the framebuffer (alice_setup_run) */
 static int alice_live(void)
 {
-    if (!framebuffer || !pitch) return 0;
+    if (!framebuffer || !pitch || alice_setup_on) return 0;
     if (!blog_stop_at) return 1;
     uint64_t t; __asm__ volatile("mrs %0, CNTVCT_EL0" : "=r"(t));
     return (int64_t)(t - blog_stop_at) < 0;
@@ -1001,26 +1003,6 @@ static void alice_status_now(struct al_status *st)
     st->eth = post_eth; st->eth_col = post_eth_col;
 }
 
-/* The header's animation (alice_splash.c al_anim): a frame at most every 50 ms, from
-   CPU1's loop (alice_net_poll), while the splash may be drawn. A frame is skipped rather
-   than waited for when another core is drawing. */
-void frf_splash_tick(void)
-{
-    static uint64_t t0, next;
-    uint64_t t, f;
-    __asm__ volatile("mrs %0, CNTVCT_EL0" : "=r"(t));
-    __asm__ volatile("mrs %0, CNTFRQ_EL0" : "=r"(f));
-    if (!f || (next && (int64_t)(t - next) < 0)) return;
-    next = t + f / 20;
-    if (!alice_live()) return;
-    if (!t0) t0 = t;
-    if (__atomic_exchange_n(&alice_lock, 1u, __ATOMIC_ACQUIRE)) return;
-    struct al_status st;
-    alice_status_now(&st);
-    al_anim((uint32_t)((t - t0) * 1000u / f), &st);
-    __asm__ volatile("dsb ishst" ::: "memory");
-    __atomic_store_n(&alice_lock, 0u, __ATOMIC_RELEASE);
-}
 static void alice_status(void)
 {
     if (!alice_live()) return;
@@ -1055,8 +1037,160 @@ static void ulog_draw(void)
     al_panel(1, l + skip, ULOG_LINES - skip);
     __asm__ volatile("dsb ishst" ::: "memory");
 }
+
+/* the header's table, from VERSION_STRING:
+   "$VER: Alice68 0.5.0 (14.11.2026) git:6be46ab, based on Emu68 1.1.0-beta.1" */
+static struct al_info alice_rows[5];
+static char alice_rv[5][48];             /* alice_sputc writes up to 47 */
+static const char *vfind(const char *s, const char *w)
+{
+    for (; *s; s++) { const char *a = s, *b = w; while (*a && *b && *a == *b) { a++; b++; } if (!*b) return a; }
+    return 0;
+}
+static void vcopy(char *d, const char *s, const char *stop, unsigned max)
+{
+    unsigned k = 0;
+    while (s && *s && k + 1 < max) { const char *q = stop; int hit = 0; while (*q) if (*s == *q++) hit = 1; if (hit) break; d[k++] = *s++; }
+    d[k] = 0;
+}
+static void alice_header_rows(uint32_t w, uint32_t h)
+{
+    const char *v = VERSION_STRING, *p;
+    vcopy(alice_rv[0], (p = vfind(v, ALICE_NAME " ")) ? p : ALICE_VERSION, " ", 48);
+    char git[24], date[16];
+    vcopy(git, vfind(v, "git:"), ",", sizeof git);
+    vcopy(date, vfind(v, "("), ")", sizeof date);
+    struct { char *p; unsigned n; } sb = { alice_rv[1], 0 };
+    if (git[0]) kprintf_pc(alice_sputc, &sb, date[0] ? "%s (%s)" : "%s", git, date);
+    else kprintf_pc(alice_sputc, &sb, "%s", date);
+    alice_rv[1][sb.n < 47 ? sb.n : 47] = 0;
+    vcopy(alice_rv[2], (p = vfind(v, "based on Emu68 ")) ? p : "", " ", 48);
+    vcopy(alice_rv[3], "1.120", "", 48);
+    sb.p = alice_rv[4]; sb.n = 0;
+    kprintf_pc(alice_sputc, &sb, "%d x %d", w, h);
+    alice_rv[4][sb.n < 47 ? sb.n : 47] = 0;
+    static const char *const lab[5] = { "Version", "Build", "Emu68", "AGA core", "Display" };
+    for (int i = 0; i < 5; i++) { alice_rows[i].label = lab[i]; alice_rows[i].value = alice_rv[i]; }
+}
+/* everything on the splash, again (after the setup screen, or the first time) */
+static void alice_draw_all(const char *key)
+{
+    al_clear();
+    al_header(alice_rows, 5);
+    al_footer(key, "Setup");
+    alice_status();
+    blog_draw();
+    ulog_draw();
+}
+
+#ifdef FRF_USB_HOST
+/* ---- the setup screen (alice_setup.c), between the USB gate and the 68k's start ---- */
+extern void frf_setup_keys(int on);
+extern int frf_setup_key(uint8_t *usage, uint8_t *mods);
+extern uint32_t frf_setup_held(void);
+extern void alice_net_setup_offer(const char *edits);     /* src/alice/alice_net.c */
+static int alice_window;
+static uint64_t now_ticks(void) { uint64_t t; __asm__ volatile("mrs %0, CNTVCT_EL0" : "=r"(t)); return t; }
+static uint64_t tick_hz(void) { uint64_t f; __asm__ volatile("mrs %0, CNTFRQ_EL0" : "=r"(f)); return f; }
+
+/* start.c: the keyboard is up; the next 2 seconds the splash offers the setup screen */
+void alice_setup_window(int on)
+{
+    if (on) {
+        if (!alice_live() || post_kb == ~0u || !post_kb) return;         /* no splash or no keyboard: no setup */
+        alice_window = 1;
+        frf_setup_keys(1);
+        kprintf("[BOOT] DEL or F2: setup\n");
+        al_footer("DEL", "Setup");
+        __asm__ volatile("dsb ishst" ::: "memory");
+    } else if (alice_window) {
+        alice_window = 0;
+        frf_setup_keys(0);
+        if (alice_live()) { al_footer(0, 0); __asm__ volatile("dsb ishst" ::: "memory"); }
+    }
+}
+/* 1: DEL or F2 was pressed */
+int alice_setup_wanted(void)
+{
+    uint8_t u, m;
+    if (!alice_window) return 0;
+    while (frf_setup_key(&u, &m)) if (u == 0x4c || u == 0x3b) return 1;
+    return 0;
+}
+
+/* the setup screen, on CPU0, until the user leaves it */
+void alice_setup_run(void)
+{
+    static struct as_state st;
+    static struct al_info info[AS_INFO];
+    static char kb[48], ms[48];
+    const char *ba = "";
+    of_node_t *ch = dt_find_node("/chosen");
+    of_property_t *bp = ch ? dt_find_property(ch, "bootargs") : 0;
+    if (bp && bp->op_value) ba = bp->op_value;
+    unsigned n = 0;
+    for (int i = 0; i < 5; i++) info[n++] = alice_rows[i];
+    struct { char *p; unsigned n; } sb = { kb, 0 };
+    kprintf_pc(alice_sputc, &sb, "%d", post_kb == ~0u ? 0 : (int)post_kb); kb[sb.n < 47 ? sb.n : 47] = 0;
+    sb.p = ms; sb.n = 0;
+    kprintf_pc(alice_sputc, &sb, "%d", post_ms == ~0u ? 0 : (int)post_ms); ms[sb.n < 47 ? sb.n : 47] = 0;
+    info[n].label = "Keyboards"; info[n++].value = kb;
+    info[n].label = "Mice"; info[n++].value = ms;
+    as_init(&st, ba, info, n);
+
+    /* the framebuffer is the setup's: no other core draws from here on */
+    __atomic_store_n(&alice_setup_on, 1, __ATOMIC_RELEASE);
+    for (int spin = 0; __atomic_load_n(&alice_lock, __ATOMIC_ACQUIRE) && spin < 1000000; spin++) __asm__ volatile("yield");
+    kprintf("[BOOT] setup screen\n");
+    as_draw(&st);
+    __asm__ volatile("dsb ishst" ::: "memory");
+
+    uint64_t hz = tick_hz(), held_since = 0, next_rep = 0;
+    uint32_t held_was = 0;
+    for (;;) {
+        uint8_t u = 0, m = 0;
+        int got = frf_setup_key(&u, &m);
+        uint64_t t = now_ticks();
+        uint32_t held = frf_setup_held();
+        if (got) { held_since = t; next_rep = t + hz * 45 / 100; held_was = held; }
+        else if (held && held == held_was && held_since && (int64_t)(t - next_rep) >= 0) {
+            uint8_t hu = (uint8_t)held;                  /* a key held down repeats: arrows and backspace */
+            if (hu == 0x4f || hu == 0x50 || hu == 0x51 || hu == 0x52 || hu == 0x2a) { u = hu; m = (uint8_t)(held >> 8); got = 1; }
+            next_rep = t + hz / 16;
+        } else if (!held) held_was = 0;
+        if (!got) { __asm__ volatile("yield"); continue; }
+        int r = as_key(&st, u, m);
+        if (r == AS_REDRAW) { as_draw(&st); __asm__ volatile("dsb ishst" ::: "memory"); }
+        else if (r == AS_EXIT) { kprintf("[BOOT] setup: left without changes\n"); break; }
+        else if (r == AS_SAVE) {
+            static char edits[768];
+            int len = as_edits(&st, edits, sizeof edits);
+            if (len > 0) {
+                alice_net_setup_offer(edits);
+                kprintf("[BOOT] setup: changes for cmdline.txt handed to alice68hdf.device; the Pi restarts once they are written\n");
+                as_message("Saving", "Alice68 starts AmigaOS now; alice68hdf.device writes cmdline.txt, then the Pi restarts with the new settings.");
+                __asm__ volatile("dsb ishst" ::: "memory");
+                uint64_t until = now_ticks() + hz * 3 / 2;
+                while ((int64_t)(now_ticks() - until) < 0) __asm__ volatile("yield");
+            } else {
+                kprintf("[BOOT] setup: FAIL: the changes do not fit (%d)\n", len);
+            }
+            break;
+        }
+    }
+    __atomic_store_n(&alice_setup_on, 0, __ATOMIC_RELEASE);
+    alice_draw_all(0);
+    __asm__ volatile("dsb ishst" ::: "memory");
+}
 #else
-void frf_splash_tick(void) {}               /* no splash, no animation */
+void alice_setup_window(int on) { (void)on; }
+int alice_setup_wanted(void) { return 0; }
+void alice_setup_run(void) {}
+#endif
+#else
+void alice_setup_window(int on) { (void)on; }
+int alice_setup_wanted(void) { return 0; }
+void alice_setup_run(void) {}
 static void blog_draw(void)
 {
     if (!framebuffer || !pitch || fb_width < 400 || fb_height < 300) return;
@@ -1307,28 +1441,10 @@ void display_logo()
        costs a few microseconds once at boot and keeps this diff small. */
 #if defined(ALICE_SPLASH)
     {
-        static char l2[64], l3[48];
-        /* "$VER: Alice68 0.4.0 (date) git:hash, based on Emu68 1.1.0-beta.1": the Emu68 part */
-        const char *v = VERSION_STRING, *b = v;
-        for (const char *q = v; *q; q++) if (q[0] == 'b' && q[1] == 'a' && q[2] == 's' && q[3] == 'e' && q[4] == 'd' && q[5] == ' ') { b = q; break; }
-        if (b == v && v[0] == '$') b += 6;                    /* no "based on": "$VER: Emu68 1.1..." */
-        unsigned k = 0;
-        while (b[k] && k < 44) { l2[k] = b[k]; k++; }
-        while (k && l2[k - 1] == ' ') k--;
-        const char *core = " - AGA core 1.120";
-        for (unsigned j = 0; core[j] && k < sizeof l2 - 1; j++) l2[k++] = core[j];
-        l2[k] = 0;
-        struct { char *p; unsigned n; } sb = { l3, 0 };
-        kprintf_pc(alice_sputc, &sb, "Raspberry Pi 4 - display %dx%d", sz.width, sz.height);
-        l3[sb.n < sizeof l3 ? sb.n : sizeof l3 - 1] = 0;
-        kprintf("[BOOT] " ALICE_NAME " " ALICE_VERSION " - %s\n", l2);
+        alice_header_rows(sz.width, sz.height);
+        kprintf("[BOOT] " ALICE_NAME " %s - Emu68 %s - AGA core 1.120\n", alice_rows[0].value, alice_rows[2].value);
         al_setup(fb, pitch, sz.width, sz.height);
-        al_clear();
-        al_header(ALICE_NAME " " ALICE_VERSION, l2, l3);
-        al_footer();
-        alice_status();
-        blog_draw();
-        ulog_draw();
+        alice_draw_all(0);
         tlsf_free(tlsf, emu68logo);
 #if defined(PISTORM_ANY_MODEL)
         tlsf_free(tlsf, pistormlogo);

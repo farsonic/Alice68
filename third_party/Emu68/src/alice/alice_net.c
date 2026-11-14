@@ -124,6 +124,42 @@ static int mac_wanted(const uint8_t want[6], int oui_only, const uint8_t fact[6]
     if (oui_only) memcpy(out + 3, fact + 3, 3);
     return 1;
 }
+/* the setup screen's changes for cmdline.txt (start_rpi64.c alice_setup_run, CPU0, before
+   the 68k starts): onto the board when Kickstart maps it, then CPU1 waits for the answer */
+static char setup_text[AN_SETUP_MAX];
+static volatile int setup_state;              /* 0 none, 1 waiting for the board, 2 on the board */
+static uint64_t setup_t;
+void alice_net_setup_offer(const char *edits)
+{
+    unsigned n = 0;
+    for (; edits[n] && n < AN_SETUP_MAX - 1; n++) setup_text[n] = edits[n];
+    setup_text[n] = 0;
+    __atomic_store_n(&setup_state, 1, __ATOMIC_RELEASE);
+}
+extern void aga_reboot(int tryboot);
+static void setup_poll(void)
+{
+    if (__atomic_load_n(&setup_state, __ATOMIC_ACQUIRE) != 2) return;
+    volatile struct an_setup *su = (volatile struct an_setup *)(anb + AN_OFF_SETUP);
+    unsigned st = su->state;
+    if (st == AN_SET_SAVED) {
+        setup_state = 0;
+        kprintf("[BOOT] setup: cmdline.txt written - restarting the Pi\n");
+        uint64_t end = ticks() + tick_hz() / 2;           /* the line reaches the serial log */
+        while ((int64_t)(end - ticks()) > 0) ;
+        aga_reboot(0);
+    } else if (st == AN_SET_FAILED) {
+        setup_state = 0;
+        char why[96];
+        unsigned n = 0;
+        for (; n < sizeof why - 1 && su->text[n]; n++) why[n] = su->text[n];
+        why[n] = 0;
+        kprintf("[BOOT] setup: FAIL: cmdline.txt not written: %s\n", why);
+    } else if (ticks() - setup_t > tick_hz() * 30) {
+        setup_state = 0;
+        kprintf("[BOOT] setup: FAIL: cmdline.txt not written: alice68hdf.device did not answer in 30 s\n");
+    }
+}
 static void an_board_map(struct ExpansionBoard *board)
 {
     if (!an_mem) {
@@ -140,6 +176,17 @@ static void an_board_map(struct ExpansionBoard *board)
         h->magic = AN_MAGIC; h->version = AN_VERSION; h->nunits = AN_UNITS; h->kernel_ver = AN_KERNEL_VER;
         h->trace = (unsigned)bootarg_word("net.trace=1");
         /* unit 0's kind is set by CPU1 when it first serves the board (alice_net_poll) */
+        if (__atomic_load_n(&setup_state, __ATOMIC_ACQUIRE) == 1) {     /* the setup screen's changes */
+            volatile struct an_setup *su = (volatile struct an_setup *)((volatile uint8_t *)an_mem + AN_OFF_SETUP);
+            unsigned n = 0;
+            for (; setup_text[n] && n < AN_SETUP_MAX - 1; n++) su->text[n] = setup_text[n];
+            su->text[n] = 0;
+            su->len = n;
+            __asm__ volatile("dmb ish" ::: "memory");
+            su->state = AN_SET_OFFERED;
+            setup_t = ticks();
+            __atomic_store_n(&setup_state, 2, __ATOMIC_RELEASE);
+        }
         __asm__ volatile("dmb ish" ::: "memory");
         __atomic_store_n(&anb, (volatile uint8_t *)an_mem, __ATOMIC_RELEASE);
         kprintf("[NET] network board at $%08x (alice68net.device finds it there)\n", board->map_base);
@@ -1906,9 +1953,8 @@ static void loop_stats(void)
 
 void alice_net_poll(void)
 {
-    extern void frf_splash_tick(void);
-    frf_splash_tick();                              /* the splash's animation (start_rpi64.c), until it is gone */
     if (!anb) return;
+    setup_poll();                                   /* the setup screen's changes written yet? */
     H()->boot_us = wifi_usecs();
     loop_stats();
     if (an_reset_req) an_reset_session();

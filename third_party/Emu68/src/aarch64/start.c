@@ -2361,12 +2361,19 @@ void boot(void *dtree)
         /* Give keyboard HID a brief boot-time window for Ctrl+Shift+F12.
            Keyboard is already enumerated by the USB boot gate above. */
         uint64_t begin, now, hz;
+        /* Alice68: the same 2 s offer the setup screen (DEL or F2; src/raspi/alice_setup.c) */
+        extern void alice_setup_window(int on);
+        extern int alice_setup_wanted(void);
+        extern void alice_setup_run(void);
+        alice_setup_window(1);
         __asm__ volatile("mrs %0, CNTVCT_EL0" : "=r"(begin));
         __asm__ volatile("mrs %0, CNTFRQ_EL0" : "=r"(hz));
         do {
             __asm__ volatile("yield");
+            if (alice_setup_wanted()) { alice_setup_run(); break; }
             __asm__ volatile("mrs %0, CNTVCT_EL0" : "=r"(now));
         } while ((now - begin) < hz * 2u);
+        alice_setup_window(0);
         extern void frf_usb_guest_start(void);
         frf_usb_guest_start();
         frf_boot_stage(4);

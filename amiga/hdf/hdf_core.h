@@ -72,6 +72,8 @@ struct hdf_opts {
     int  readonly;                  /* hdf.readonly */
     int  noboot;                    /* hdf.noboot: mount every hardfile, boot from none (but hdf.boot) */
     char boot[HDF_NAME];            /* hdf.boot=NAME: this hardfile boots and wins name clashes */
+    int  exfat;                     /* alice68.exfat= here (the setup screen writes it): 0 not given,
+                                       1 off, 2 ro, 3 rw, 4 boot; wins over config.txt's */
 };
 
 struct hdf_rdb {

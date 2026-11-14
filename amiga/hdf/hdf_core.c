@@ -396,6 +396,10 @@ void hdf_parse_opts(const char *c, struct hdf_opts *o)
         else if (tok_eq(t, n, "iso=off")) o->iso_off = 1;
         else if (tok_eq(t, n, "hdf.readonly") || tok_eq(t, n, "hdf.ro")) o->readonly = 1;
         else if (tok_eq(t, n, "hdf.noboot")) o->noboot = 1;
+        else if (tok_eq(t, n, "alice68.exfat=off")) o->exfat = 1;
+        else if (tok_eq(t, n, "alice68.exfat=ro")) o->exfat = 2;
+        else if (tok_eq(t, n, "alice68.exfat=rw")) o->exfat = 3;
+        else if (tok_eq(t, n, "alice68.exfat=boot")) o->exfat = 4;
         else if (n > 9 && tok_eq(t, 9, "hdf.boot=")) {
             unsigned k = 0;
             for (; k + 9 < n && k < HDF_NAME - 1; k++) o->boot[k] = t[9 + k];

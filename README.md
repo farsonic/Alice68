@@ -179,6 +179,7 @@ aga.look=0 aga.scale=1
 | `hdf.readonly` | Hardfiles read-only |
 | `hdf=off` | No hardfiles |
 | `iso=off` | No CD images (see [CD images](#cd-images-iso-on-the-sd-card)) |
+| `alice68.exfat=off` / `ro` / `rw` / `boot` | The exFAT partition as a volume (see [exFAT](#a-second-partition-in-exfat-big-cards-big-files)); here it wins over `config.txt`'s, and the setup screen writes it here |
 | `frf_usb=neptune` | Leave the USB-A ports to AmigaOS (rondoval's `xhci.device` + Neptune) instead of the kernel; the USB-C port then takes keyboard, mouse and pads (untested on a Pi 4) |
 | `frf_usb.nomodeswitch` | Don't switch Realtek USB network dongles out of driver-CD mode |
 | `wifi.ssid="NAME"` `wifi.psk="PASSWORD"` | Join this WiFi network at boot (see [WiFi](#wifi-new-not-yet-tested-on-a-pi)) |
@@ -209,21 +210,51 @@ AGA-PiStorm's Chipset menu (`agaboot`) changes the picture at run time as well.
 
 The splash has five parts:
 
-- **Header:** the Alice68 emblem and versions.
-- **Status strip:** video, ROM, 68k, CPU1, USB, the input devices found, the
-  hardfiles (how many boot, how many are mounted without booting, and how many were left
-  out, in amber, with the reason in the SYSTEM panel) and the WiFi (connected, joining,
-  no firmware, ...).
-- **SYSTEM panel:** the kernel log.
+- **Header:** the Alice68 emblem, and the version, build, Emu68 and AGA core versions and
+  the display size.
+- **Status bar:** video, Kickstart, the 68k, USB, the input devices found, the hardfiles
+  (how many boot, how many are mounted without booting, and how many were left out, with
+  the reason in the SYSTEM panel) and the network (WiFi, and Ethernet when the kernel
+  drives it). The edge of each cell shows its state: green ready, amber waiting, red failed.
+- **SYSTEM panel:** the kernel log, with each line's source in a column of its own
+  (`BOOT`, `HDF`, `WIFI`, `USB`, `AGA`, ...).
 - **USB panel:** the USB log.
-- **Credits line.**
+- **Footer:** credits, and for two seconds before AmigaOS starts, `DEL Setup`.
 
 Failures show in red, so a photo of the screen is usually enough to diagnose a hang.
 The splash keeps updating after the 68k starts - the hardfiles and the WiFi come in
 then - and stops when AmigaOS puts its first picture up (or 30 s after the 68k started,
 for a Workbench that opens straight on RTG), so nothing is drawn over AmigaOS's screen. `aga.nobootlog` in
 `cmdline.txt` turns the log panels off. `tools/splash-preview/build.sh` renders the
-splash on a PC with the kernel's own drawing code.
+splash and the setup screen on a PC with the kernel's own drawing code.
+
+## Setup
+
+![setup](docs/setup-1080p.png)
+
+While the footer shows `DEL Setup` (two seconds once the USB keyboard is found), press
+**Del** or **F2** for Alice68's setup screen: the options of `cmdline.txt`, in five
+sections.
+
+| Section | Settings |
+|---|---|
+| Display | Picture (sharp, smooth, TV), scaling, boot log panels |
+| Storage | Hardfiles (mounted, read-only, off), the hardfile to boot from, CD images, the exFAT partition (off, read-only, read-write, boot from it) |
+| Network | WiFi on or off, network name, password and country; Ethernet (when a program opens it, at boot, off); MAC addresses (Commodore's or the Pi's own) |
+| USB | The USB-A ports (Alice68 or AmigaOS), the Realtek dongle mode switch |
+| System | Versions, display, keyboards and mice (read only) |
+
+**Up/Down** pick a setting, **Left/Right** change it, **Enter** types into a text setting
+(Enter again keeps it, Esc drops it), **Del** puts a setting back to its default, **Tab**
+changes section. A changed value shows in orange. **F10** saves and restarts, **Esc**
+leaves without saving; both ask first if anything changed.
+
+Saving works through AmigaOS: the kernel can't write the SD card itself, so it hands
+the changes to `alice68hdf.device`, which rewrites `cmdline.txt` while AmigaOS starts.
+Then the Pi restarts with the new settings. Options the screen doesn't know (and the
+firmware's own) stay as they are. The card must be writable (`dtoverlay=emmc,unit0=rw`);
+otherwise the boot log says why nothing was written. The WiFi password is kept in
+`cmdline.txt` as typed, as `wifi.psk=` always has been.
 
 ## Alice68's expansion cards
 
@@ -609,6 +640,9 @@ first exFAT partition and mounts its hardfiles (root and `HDF`) and CD images (r
   alice68.exfat=off     # the partition is not a volume (hardfiles, CD images, folders still work)
   alice68.exfat=boot    # read-write, and AmigaOS boots from it
   ```
+
+  The same line in `cmdline.txt` (which is where the setup screen puts it) wins over
+  `config.txt`'s.
 
   Writing keeps the order that leaves a cut-off write repairable: file data first, then
   the allocation bitmap and FAT, then the directory entry (with its checksum); deleting

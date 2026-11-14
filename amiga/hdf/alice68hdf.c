@@ -42,6 +42,7 @@ const char hdf_idstring[] = "alice68hdf.device 0.7 (09.11.2026) Alice68 hardfile
 
 #include "hdf_dev.h"
 #include "exfat.h"
+#include "cmdedit.h"
 #include "../../third_party/Emu68/src/frf_usb/xhci/alice68_usbpt.h"
 
 void *memcpy(void *d, const void *s, unsigned long n) { UBYTE *a = d; const UBYTE *b = s; while (n--) *a++ = *b++; return d; }
@@ -681,6 +682,80 @@ static void offer_wifi(struct fat *f, struct hdf_io *io)
     for (int i = 0; i < k; i++) FreeMem(buf[i], len[i]);
 }
 
+/* The setup screen's changes (src/raspi/alice_setup.c): the kernel leaves an edit list on
+   the network board; cmdline.txt is rewritten with it (cmdedit.c) through the folders' FAT
+   engine, and the kernel restarts the Pi when it reads AN_SET_SAVED. The line is not
+   logged: it may hold the WiFi password. */
+static void setup_fail(struct hdf_io *io, volatile struct an_setup *su, const char *why)
+{
+    unsigned i = 0;
+    for (; why[i] && i < AN_SETUP_MAX - 1; i++) su->text[i] = why[i];
+    su->text[i] = 0;
+    __asm__ volatile("nop" ::: "memory");
+    su->state = AN_SET_FAILED;
+    hdf_log(io, "setup: cmdline.txt not written: %s", why);
+}
+static void save_setup(struct HdfBase *db, struct fat *f, struct hdf_io *io, const char *cmdline, int card_ro)
+{
+    APTR eb = OpenLibrary("expansion.library", 36);
+    struct ConfigDev *cd = eb ? FindConfigDev(eb, 0, AN_MANUFACTURER, AN_PRODUCT) : 0;
+    if (eb) CloseLibrary(eb);
+    if (!cd) return;
+    volatile UBYTE *b = cd->cd_BoardAddr;
+    volatile struct an_setup *su = (volatile struct an_setup *)(b + AN_OFF_SETUP);
+    if (((volatile struct an_hdr *)b)->magic != AN_MAGIC || su->state != AN_SET_OFFERED) return;
+    hdf_log(io, "setup: changes from the setup screen for cmdline.txt");
+    if (card_ro) { setup_fail(io, su, "the SD card is read-only here (dtoverlay=emmc,unit0=ro)"); return; }
+    if (f->cmd_size >= 1023) { setup_fail(io, su, "cmdline.txt is longer than 1022 bytes"); return; }
+    ULONG need = AN_SETUP_MAX + 1024 + AN_SETUP_MAX + 8;
+    char *edits = AllocMem(need, MEMF_PUBLIC | MEMF_CLEAR);
+    if (!edits) { setup_fail(io, su, "no memory"); return; }
+    char *out = edits + AN_SETUP_MAX;
+    ULONG len = su->len < AN_SETUP_MAX ? su->len : AN_SETUP_MAX - 1;
+    for (ULONG i = 0; i < len; i++) edits[i] = su->text[i];
+    edits[len] = 0;
+    int n = cmd_apply(cmdline, edits, out, 1024 + AN_SETUP_MAX);
+    const char *why = 0;
+    if (n < 0) why = "the new cmdline.txt would be too long";
+    else {
+        struct hdf_io quiet = *io;
+        quiet.log = 0;
+        if (fat_open(&db->ffat, &quiet)) why = "the FAT partition cannot be opened";
+        else {
+            db->ffat.io = io;
+            if (ffs_init(&db->ffs, &db->ffat)) why = "the FAT partition cannot be written";
+            else {
+                struct ffs_ent e;
+                struct ffs_file h;
+                int r = ffs_find(&db->ffs, 0, "cmdline.txt", 11, &e);
+                if (r == FFS_END) r = ffs_create(&db->ffs, 0, "cmdline.txt", 11, 0, &e);
+                if (r) why = r == FFS_WP ? "the SD card is write-protected" : "cmdline.txt cannot be opened";
+                else {
+                    int err = 0;
+                    ffs_open(&h, &e);
+                    if (ffs_write(&db->ffs, &h, 0, out, (uint32_t)n, &err) != n || ffs_truncate(&db->ffs, &h, (uint32_t)n) ||
+                        ffs_flush_file(&db->ffs, &h) || ffs_sync(&db->ffs)) why = "a write to the card failed";
+                }
+                ffs_done(&db->ffs);
+            }
+            fat_close(&db->ffat);
+        }
+    }
+    FreeMem(edits, need);
+    if (why) { setup_fail(io, su, why); return; }
+    __asm__ volatile("nop" ::: "memory");
+    su->state = AN_SET_SAVED;
+    hdf_log(io, "setup: cmdline.txt written (%ld bytes); the Pi restarts with it", (LONG)n);
+    /* the kernel restarts the Pi now; if it does not (an older kernel), carry on booting */
+    ULONG t0 = pi_usecs(), last = t0, same = 0;
+    for (;;) {                                         /* 3 s (a timer that stands still: a test bench, not a Pi) */
+        ULONG t = pi_usecs();
+        if (t - t0 >= 3000000u) break;
+        if (t != last) { last = t; same = 0; } else if (++same > 1000000u) break;
+    }
+    hdf_log(io, "setup: the Pi did not restart - the new settings take effect at the next start");
+}
+
 static int matches_boot(const struct hdf_opts *o, const char *file)
 {
     if (!o->boot[0]) return 0;
@@ -735,6 +810,7 @@ APTR dev_init(struct HdfBase *db, APTR seglist)
         if (isos) ni = fat_find_isos(&f, isos, ISO_MAX);
         if (fat_read_cmdline(&f, cmdline, 1024) < 0) cmdline[0] = 0;
         if (config && fat_read_config(&f, config, CONFIG_MAX) < 0) config[0] = 0;
+        save_setup(db, &f, &io, cmdline, card_ro);      /* the setup screen's changes, if it made any */
         offer_wifi(&f, &io);
         fat_close(&f);
     }

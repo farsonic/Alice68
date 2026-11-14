@@ -24,6 +24,8 @@
 #define AN_UNITS          2                /* 0 WiFi, 1 Ethernet (kernel driver to come) */
 
 /* layout */
+#define AN_OFF_SETUP      0x0100u          /* struct an_setup: settings from the setup screen, for alice68hdf.device */
+#define AN_SETUP_MAX      0x02f0u          /* its text, at most (to 0x03f8) */
 #define AN_OFF_UNIT(u)    (0x0400u + (unsigned)(u) * 0x0800u)   /* struct an_unit, 2 KB each */
 #define AN_OFF_FW         0x1400u          /* struct an_fw[AN_FW_MAX]: firmware offered to the kernel */
 #define AN_FW_MAX         8
@@ -54,6 +56,20 @@ struct an_hdr {
 #define AN_FW_OFFERED   1u          /* the Amiga filled the table: the kernel may copy */
 #define AN_FW_TAKEN     2u          /* the kernel has its own copies: the Amiga may free its buffers */
 #define AN_FW_REFUSED   3u          /* the kernel will not take them (WiFi off, no room) */
+
+/* the setup screen (src/raspi/alice_setup.c) changed options in cmdline.txt: the kernel
+   leaves the edit list here, alice68hdf.device writes the file at boot and answers; the
+   kernel then restarts the Pi. text: lines "-NAME" (drop) and "+OPTION" (add); after
+   AN_SET_FAILED, the reason. */
+struct an_setup {
+    unsigned int state;             /* AN_SET_* */
+    unsigned int len;               /* bytes in text */
+    char         text[AN_SETUP_MAX];
+};
+#define AN_SET_NONE     0u
+#define AN_SET_OFFERED  1u          /* the kernel: here are the changes */
+#define AN_SET_SAVED    2u          /* alice68hdf.device: cmdline.txt written */
+#define AN_SET_FAILED   3u          /* alice68hdf.device: not written; text says why */
 
 struct an_fw {
     char         name[64];          /* file name, e.g. "cyfmac43455-sdio.bin" */

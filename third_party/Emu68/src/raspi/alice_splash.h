@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: GPL-2.0-only
  *
- * Alice68 boot splash: header, status strip, SYSTEM and USB log panels,
- * credits line. Self-contained (framebuffer, Topaz glyphs, the generated
- * header picture), so tools/splash-preview can build it on a PC and render
- * the exact screen the Pi shows.
+ * Alice68 boot splash: header, status bar, SYSTEM and USB log panels, footer.
+ * Self-contained (framebuffer, Topaz glyphs, the generated emblem), so
+ * tools/splash-preview can build it on a PC and render the exact screen the
+ * Pi shows. alice_setup.c draws the setup screen with the same primitives.
  */
 #ifndef ALICE_SPLASH_H
 #define ALICE_SPLASH_H
@@ -24,16 +24,44 @@ struct al_status {
     int eth_col;
 };
 
+/* a line of the header's table: "Version   0.5.0" */
+struct al_info { const char *label, *value; };
+
 void al_setup(uint16_t *fb, uint32_t pitch_bytes, uint32_t w, uint32_t h);
 void al_clear(void);
-void al_header(const char *l1, const char *l2, const char *l3);
+void al_header(const struct al_info *rows, unsigned n);
 void al_status_draw(const struct al_status *s);
-void al_footer(void);
+/* the footer: credits, and at the right a key and what it does ("DEL", "Setup"), or none */
+void al_footer(const char *key, const char *what);
 /* which: 0 SYSTEM (left), 1 USB (right). lines[0..n-1], oldest first; the
    panel shows the newest that fit. Returns 0 if the panel has no room. */
 int  al_panel(int which, const char *const *lines, unsigned n);
 unsigned al_panel_cols(int which);
-/* the header's animation, ms after it began (the kernel calls it about 20 times a second
-   while the splash is up); nothing when the header has no room for it */
-void al_anim(uint32_t ms, const struct al_status *s);
+
+/* ---- drawing, for alice_setup.c --------------------------------------------- */
+#define AL_RGB(r, g, b) ((uint16_t)((((r) >> 3) << 11) | (((g) >> 2) << 5) | ((b) >> 3)))
+#define AL_BG      AL_RGB(8, 8, 16)         /* the page */
+#define AL_PANEL   AL_RGB(16, 20, 30)
+#define AL_TITLE   AL_RGB(24, 30, 44)       /* panel title bars */
+#define AL_RULE    AL_RGB(44, 52, 70)
+#define AL_TEXT    AL_RGB(200, 204, 212)
+#define AL_BRIGHT  AL_RGB(240, 236, 228)
+#define AL_DIM     AL_RGB(116, 124, 140)
+#define AL_ACCENT  AL_RGB(214, 110, 42)     /* the emblem's rufous */
+#define AL_SEL     AL_RGB(46, 70, 112)      /* a selected row */
+#define AL_OK      AL_RGB(112, 190, 124)
+#define AL_WAIT    AL_RGB(222, 172, 72)
+#define AL_FAIL    AL_RGB(228, 84, 72)
+#define AL_FONT_W  8u
+#define AL_FONT_H  16u
+uint32_t al_width(void);
+uint32_t al_height(void);
+void     al_fill(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint16_t c);
+void     al_frame(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint16_t c);   /* a 1-pixel outline */
+/* text at x, y (top left), at most maxc characters; returns the x after it */
+uint32_t al_text(uint32_t x, uint32_t y, const char *s, uint16_t c, uint32_t maxc);
+/* a key as on a keycap: an outlined box around the name; returns the x after it */
+uint32_t al_key(uint32_t x, uint32_t y, const char *name);
+/* the emblem at x, y (LOGO_ALICE_WIDTH x LOGO_ALICE_HEIGHT) */
+void     al_emblem(uint32_t x, uint32_t y);
 #endif

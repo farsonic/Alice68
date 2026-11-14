@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **A setup screen.** For two seconds before AmigaOS starts, the footer shows `DEL Setup`:
+  Del or F2 opens Alice68's settings, the options of `cmdline.txt` in five sections
+  (display, storage, network, USB, and a read-only system page). F10 saves: the kernel hands
+  the changes to `alice68hdf.device`, which rewrites `cmdline.txt` on the card as AmigaOS
+  starts, and the Pi restarts with them. Options it doesn't know stay as they were; the
+  line itself is never logged (it may hold the WiFi password). `alice68.exfat=` is now read
+  from `cmdline.txt` too, where it wins over `config.txt`. Tested on the PC (keys to edit
+  list to the new `cmdline.txt` and back) and on the 68k emulator (the file rewritten,
+  fsck.fat clean; a read-only card refused untouched); the keyboard, the screen on HDMI and
+  the restart only on a Pi.
+- **A quieter splash.** The emblem sits on the background instead of a gradient box; the
+  versions are a small table at the right; the status bar is a row of cells with a coloured
+  edge for each part's state; the SYSTEM log shows each line's source in a column of its
+  own; the footer carries the credits and the setup key. WiFi lines that will be tried
+  again ("again") are amber, not red. The animation is gone.
 - **Fixed: boot hung with long hardfile names.** `alice68hdf.device` stopped for good, before
   its summary line, when one of its log lines came out longer than 159 characters: the
   formatter cut the line but went on looping. The "volume ... is mounted already ... boot

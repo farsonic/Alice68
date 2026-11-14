@@ -42,6 +42,7 @@ exfatboot = 'exfatboot' in sys.argv[4:]
 hdfboot = 'hdfboot' in sys.argv[4:]
 exfatrw = 'exfatrw' in sys.argv[4:] or exfatboot
 exfat = 'exfat' in sys.argv[4:] or exfatrw
+setup = 'setup' in sys.argv[4:]                      # the setup screen's changes on the network board
 env = dict(os.environ, MTOOLS_SKIP_CHECK='1', LC_ALL='C.UTF-8')
 
 def die(msg):
@@ -89,7 +90,8 @@ config = ('# the Pi\'s settings\n[pi4]\narm_64bit=1\n[all]\n'
 open(os.path.join(src, 'config.txt'), 'w').write(config)
 if not exfat:
     subprocess.run(['mkfs.fat', '-F', '32', '-s', '1', '-C', img, '40000'], check=True, stdout=subprocess.DEVNULL)
-    for top in ('ALICE68', 'Games', 'Work', 'HDF', 'config.txt'):
+    if setup: open(os.path.join(src, 'cmdline.txt'), 'w').write('aga.look=0 aga.scale=1 eth=off wifi.ssid="Old Net" net.trace=1\n')
+    for top in ('ALICE68', 'Games', 'Work', 'HDF', 'config.txt') + (('cmdline.txt',) if setup else ()):
         subprocess.run(['mcopy', '-s', '-i', img, os.path.join(src, top), '::/'], check=True, env=env)
 else:
     # MBR: FAT32 at 2048 (ALICE68, config.txt), exFAT after it with Games, Work and HDF
@@ -203,7 +205,13 @@ def rbstr(b):
 # Alice68's USB card (pt_hdr), for Ctrl-Amiga-Amiga: alice68hdf.device's vertical blank server
 PTB = alloc(256); mem.w32(PTB, 0x45415550); mem.w32(PTB + 60, 1)    # reset_req left over from before: cleared at Init
 PTCD = alloc(48); mem.w32(PTCD + 32, PTB); mem.w32(PTCD + 36, 0x10000)
-lvo(EXPBASE, -72, lambda o, p: setd0((PTCD if d(R.D1) == 0x6a else CONFIGDEV) if d(R.D0) == 0x6d73 else 0))
+# Alice68's network board: only its header and the setup screen's area (alice_net.h)
+NETB = alloc(0x400); mem.w32(NETB, 0x4136384e)
+SETUP_EDITS = '-aga.scale\n+aga.scale=4\n-wifi.ssid\n+wifi.ssid="New Net"\n-hdf\n-hdf.readonly\n-hdf.ro\n+hdf.readonly\n'
+if setup:
+    mem.w32(NETB + 0x100, 1); mem.w32(NETB + 0x104, len(SETUP_EDITS)); mem.w_block(NETB + 0x108, SETUP_EDITS.encode())
+NETCD = alloc(48); mem.w32(NETCD + 32, NETB); mem.w32(NETCD + 36, 0x20000)
+lvo(EXPBASE, -72, lambda o, p: setd0({0x6a: PTCD, 0x6b: NETCD}.get(d(R.D1), CONFIGDEV) if d(R.D0) == 0x6d73 else 0))
 intservers = []
 lvo(SYSBASE, -168, lambda o, p: intservers.append((d(R.D0), d(R.A1))))
 coldreboot = []
@@ -279,6 +287,23 @@ mem.w32(PTB + 60, 1)
 call(syms['stub_vbl'], {R.A1: DEVBASE}, name='vbl (Ctrl-Amiga-Amiga)')
 if coldreboot != [2] or mem.r32(PTB + 60) != 2: die('Ctrl-Amiga-Amiga: ColdReboot %s, reset_req %d' % (coldreboot, mem.r32(PTB + 60)))
 print('Ctrl-Amiga-Amiga: vertical blank server installed; idle does nothing; a request is taken (2) and ColdReboot called')
+
+if setup:                                            # cmdline.txt rewritten with the setup screen's changes
+    st_ = mem.r32(NETB + 0x100); why = mem.r_cstr(NETB + 0x108)
+    if card_ro:
+        if st_ != 3 or 'read-only' not in why: die('read-only card: setup state %d, "%s"' % (st_, why))
+        if bytes(card) != open(img, 'rb').read(): die('read-only card changed')
+        print('setup on a read-only card: refused (%s), card unchanged' % why); print('ALL OK'); sys.exit(0)
+    if st_ != 2: die('setup state %d (%s)' % (st_, why))
+    if 'Old Net' in logtxt or 'New Net' in logtxt: die('the cmdline.txt line was logged (it may hold a password)')
+    if 'setup: cmdline.txt written' not in logtxt: die('no "written" line in the log')
+    open(img, 'wb').write(card)
+    fs = subprocess.run(['fsck.fat', '-n', img], capture_output=True, text=True)
+    if fs.returncode != 0: die('fsck.fat after the setup write:\n' + fs.stdout + fs.stderr)
+    got_ = subprocess.run(['mtype', '-i', img, '::/cmdline.txt'], capture_output=True, env=env, check=True).stdout.decode()
+    want_ = 'aga.look=0 eth=off net.trace=1 aga.scale=4 wifi.ssid="New Net" hdf.readonly\n'
+    if got_ != want_: die('cmdline.txt is %r, want %r' % (got_, want_))
+    print('setup: cmdline.txt rewritten (%r), fsck.fat clean, nothing of it logged' % got_.strip()); print('ALL OK'); sys.exit(0)
 
 # ---- the boot nodes -----------------------------------------------------------------------------
 fold = [b for b in boots if b['dev'] == 'alice68hdf.device' and b['unit'] >= 0x4000]
@@ -381,7 +406,7 @@ def write(ctx, h, data):
     mem.w_block(BUF, data); return pkt(ctx, ord('W'), h, BUF, len(data))
 
 if exfat:
-    want_line = 'exFAT partition: volume exFAT (SDF4:), ' + ('bootable' if exfatboot and not hdfboot else 'not bootable') + ('' if exfatrw else ', read-only: alice68.exfat=rw in config.txt writes it')
+    want_line = 'exFAT partition: volume exFAT (SDF4:), ' + ('bootable' if exfatboot and not hdfboot else 'not bootable') + ('' if exfatrw else ', read-only: alice68.exfat=rw (config.txt, cmdline.txt or the setup screen) writes it')
     if exfatboot: chk(('hdf.boot=raw boots instead' in logtxt) == hdfboot and ('boots as exFAT (priority 0)' in logtxt) != hdfboot, 'the boot choice in the log')
     chk(want_line in logtxt, 'log: %s' % want_line)
     X4 = start(4)

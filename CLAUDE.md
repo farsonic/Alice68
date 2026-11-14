@@ -13,8 +13,15 @@ User-facing docs: README.md. History of where code came from: docs/PROVENANCE.md
   `FRF_VIRTUAL_AGA` hooks).
 - `third_party/Emu68/src/frf_usb/xhci/` — Alice68's Pi 4 xHCI (VL805) driver
   (`frf_xhci.c`), Neptune pass-through (`frf_xhci_pt.c`, `alice68_usbpt.h`), virtual eject.
-- `third_party/Emu68/src/raspi/alice_splash.[ch]` — the boot splash (header, status strip,
-  SYSTEM/USB log panels). Wired in from `start_rpi64.c` under `ALICE_SPLASH`.
+- `third_party/Emu68/src/raspi/alice_splash.[ch]` — the boot splash (header table, status bar,
+  SYSTEM/USB log panels, footer) and the drawing primitives. Wired in from `start_rpi64.c` under
+  `ALICE_SPLASH`. `alice_setup.[ch]` — the setup screen (host-independent: bootargs in, HID usages,
+  an edit list out). `start.c`'s 2 s keyboard window calls `alice_setup_window/wanted/run`
+  (`start_rpi64.c`); keys come from `frf_usb_native.c` while `frf_setup_capture` is set. Saving:
+  `alice_net_setup_offer()` → the network board's `AN_OFF_SETUP` (`struct an_setup`) when Kickstart
+  maps it → `alice68hdf.device` `save_setup()` rewrites `cmdline.txt` (`amiga/hdf/cmdedit.c`) and sets
+  `AN_SET_SAVED` → CPU1's `setup_poll()` restarts the Pi. Never log the line (WiFi password).
+  Tests: `tools/hdf-test/cmdedit_test.c`, `harness_folders.py ... setup [cardro]`.
 - `amiga/` — 68k side: `alice68-usb.device`, `Alice68-USBLog`, `amiga/hdf/` (`alice68hdf.device`,
   `hdf_core.[ch]`, `Alice68-HDF`), `amiga.h` (minimal NDK types with offset asserts), `lvo.S`.
   `alice68hdf.device` also mounts SD-card folders (`folders.c` + `fatfs.c`) and CD images
@@ -90,7 +97,7 @@ python3 amiga/test/harness_monitor.py amiga/out/Alice68-Monitor  # Alice68-Monit
 python3 amiga/test/harness_netprefs.py amiga/out/Alice68-NetworkGT # the GadTools network window against fake libraries
 python3 amiga/test/harness_showconfig.py amiga/out/Alice68-ShowConfig # boards, memory and Alice68's cards, faked
 python3 amiga/test/harness_alice68net.py amiga/out/alice68net.device # opens of units the kernel does not serve, and close
-tools/splash-preview/build.sh > out.ppm  # the splash, drawn by the kernel's own code
+tools/splash-preview/build.sh > out.ppm  # the splash, drawn by the kernel's own code (W H setup-storage: the setup screen)
 ```
 
 - Kernel needs the **Arm GNU 15.x big-endian** toolchain (GCC 14 miscompiles vector code).

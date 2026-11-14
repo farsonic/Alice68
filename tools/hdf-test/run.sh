@@ -22,10 +22,15 @@ run card32_boot nofsres
 # Amiga attributes in FS-UAE-style .uaem sidecars and %xx names (uaem.c)
 cc -O1 -Wall -Wextra -Werror -std=gnu11 -I"$P/amiga/hdf" -o "$T/uaem_test" "$P/tools/hdf-test/uaem_test.c" "$P/amiga/hdf/uaem.c"
 printf '%-12s core   %-14s ' uaem ''; "$T/uaem_test" | tail -1
+# the setup screen's round trip: alice_setup.c's edit list, cmdedit.c's new cmdline.txt, read back
+E="$P/third_party/Emu68"
+cc -O1 -Wall -Wextra -Werror -std=gnu11 -I"$P/amiga/hdf" -I"$E/src/raspi" -I"$E/include" -o "$T/cmdedit_test" \
+    "$P/tools/hdf-test/cmdedit_test.c" "$P/amiga/hdf/cmdedit.c" "$E/src/raspi/alice_setup.c" "$E/src/raspi/alice_splash.c" "$E/src/raspi/topaz.c"
+printf '%-12s core   %-14s ' setup ''; "$T/cmdedit_test" | tail -1
 # the folders' FAT engine, checked with fsck.fat and mtools
 sh "$P/tools/hdf-test/fatfs.sh"
 # the folders as volumes: alice68hdf.device's DOS handler on the 68k emulator
-for o in '' cardro; do
+for o in '' cardro setup 'setup cardro'; do
     printf '%-12s driver %-14s ' folders "${o:-default}"
     python3 "$P/amiga/test/harness_folders.py" "$P/amiga/out/alice68hdf.device" "$P/amiga/out/alice68hdf.device.elf" "$T" $o | tail -1
 done

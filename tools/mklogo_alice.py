@@ -33,7 +33,7 @@ RUFOUS_D = (150, 66, 24)
 SLATE = (104, 132, 168)
 SLATE_D = (58, 76, 104)
 CREAM = (240, 230, 210)
-INK = (8, 10, 18)
+INK = (8, 8, 16)        # the splash's background (RGB565-exact): the emblem sits on it, no box
 
 
 def chip(d, cx, cy, r):
@@ -68,14 +68,6 @@ def chip(d, cx, cy, r):
 def render():
     w, h = W * SS, H * SS
     im = Image.new("RGB", (w, h), INK)
-    px = np.zeros((h, w, 3), dtype=np.float32)
-    # background: deep navy on the left, fading to the screen's black
-    xs = np.linspace(0.0, 1.0, w)[None, :, None]
-    ys = np.linspace(0.0, 1.0, h)[:, None, None]
-    navy = np.array([16, 24, 44], np.float32)
-    fade = np.clip(1.15 - xs * 1.25, 0, 1) * (0.75 + 0.25 * np.cos((ys - 0.5) * math.pi))
-    px[:] = navy * fade
-    im = Image.fromarray(px.astype(np.uint8), "RGB")
     d = ImageDraw.Draw(im)
 
     # emblem: a disc with a thin ring, the bird on it
