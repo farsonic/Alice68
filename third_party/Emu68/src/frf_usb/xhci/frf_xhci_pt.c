@@ -174,34 +174,6 @@ static void pt_mouse_extra(int wheel, int pan, unsigned buttons)
     __asm__ volatile("dmb ish" ::: "memory");
     h->mouse_seq++;
 }
-/* Ctrl-Amiga-Amiga: ask the 68k (alice68hdf.device's vertical blank server takes it and calls
-   ColdReboot, so the Pi and these logs stay); if nobody takes it in 2 s - AmigaOS hung, or not
-   up - the whole Pi reboots. Called from the xHCI loop. */
-extern void aga_reboot(int);
-static uint64_t pt_reset_t;
-static int pt_reset_on;
-static void pt_amiga_reset(int pressed)
-{
-    volatile struct pt_hdr *h = __atomic_load_n(&pt, __ATOMIC_ACQUIRE);
-    uint64_t now, hz;
-    __asm__ volatile("mrs %0, CNTVCT_EL0" : "=r"(now));
-    __asm__ volatile("mrs %0, CNTFRQ_EL0" : "=r"(hz));
-    if (pressed) {
-        if (!h) { kprintf("[FRF-XHCI] Ctrl-Amiga-Amiga: no USB card for the 68k - host reboot\n"); aga_reboot(0); return; }
-        h->reset_req = 1;
-        __asm__ volatile("dmb ish" ::: "memory");
-        pt_reset_t = now; pt_reset_on = 1;
-        kprintf("[FRF-XHCI] Ctrl-Amiga-Amiga: 68k reset asked\n");
-        return;
-    }
-    if (!pt_reset_on || !h) return;
-    if (h->reset_req == 2) { h->reset_req = 0; pt_reset_on = 0; kprintf("[FRF-XHCI] Ctrl-Amiga-Amiga: the 68k reset itself\n"); return; }
-    if (now - pt_reset_t > 2 * hz) {
-        pt_reset_on = 0;
-        kprintf("[FRF-XHCI] Ctrl-Amiga-Amiga: not taken in 2 s (AmigaOS hung?) - host reboot\n");
-        aga_reboot(0);
-    }
-}
 static struct ExpansionBoard pt_board = { pt_rom, PT_BOARD_BYTES, 0, 0, 1, pt_board_map };
 static void * __attribute__((used, section(".boards.z2"))) pt_board_ref = &pt_board;
 

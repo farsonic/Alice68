@@ -200,14 +200,7 @@ def bstr(s):
     a = (alloc(len(s) + 8) + 3) & ~3; bstr_at(a, s); return a >> 2
 def rbstr(b):
     a = b << 2; return bytes(mem.r_block(a + 1, mem.r8(a))).decode('latin1')
-# Alice68's USB card (pt_hdr), for Ctrl-Amiga-Amiga: alice68hdf.device's vertical blank server
-PTB = alloc(256); mem.w32(PTB, 0x45415550); mem.w32(PTB + 60, 1)    # reset_req left over from before: cleared at Init
-PTCD = alloc(48); mem.w32(PTCD + 32, PTB); mem.w32(PTCD + 36, 0x10000)
-lvo(EXPBASE, -72, lambda o, p: setd0((PTCD if d(R.D1) == 0x6a else CONFIGDEV) if d(R.D0) == 0x6d73 else 0))
-intservers = []
-lvo(SYSBASE, -168, lambda o, p: intservers.append((d(R.D0), d(R.A1))))
-coldreboot = []
-lvo(SYSBASE, -726, lambda o, p: coldreboot.append(mem.r32(PTB + 60)))
+lvo(EXPBASE, -72, lambda o, p: setd0(CONFIGDEV if d(R.D0) == 0x6d73 else 0))
 dosnodes = {}
 def makedosnode(o, p):
     pkt = d(R.A0)
@@ -268,17 +261,6 @@ if call(initfn, {R.D0: DEVBASE, R.A0: 0, R.A6: SYSBASE}, name='Init') != DEVBASE
 wr = mem.r32(DEVBASE + 44 + 4 * 16)
 logtxt = bytes(mem.r_block(DEVBASE + 48 + 4 * 16, min(wr, 4096))).decode('latin1')
 print('--- driver log ---\n' + logtxt.rstrip())
-# Ctrl-Amiga-Amiga: the server is there, does nothing unasked, and takes the kernel's request with ColdReboot
-vb = [a for n, a in intservers if n == 5]
-if len(vb) != 1 or mem.r32(vb[0] + 14) != DEVBASE or mem.r32(vb[0] + 18) != syms['stub_vbl'] or mem.r8(vb[0] + 8) != 2:
-    die('the vertical blank server: %s' % intservers)
-if mem.r32(PTB + 60) != 0: die('a request left over from before Init was not cleared')
-call(syms['stub_vbl'], {R.A1: DEVBASE}, name='vbl (idle)')
-if coldreboot: die('ColdReboot without a request')
-mem.w32(PTB + 60, 1)
-call(syms['stub_vbl'], {R.A1: DEVBASE}, name='vbl (Ctrl-Amiga-Amiga)')
-if coldreboot != [2] or mem.r32(PTB + 60) != 2: die('Ctrl-Amiga-Amiga: ColdReboot %s, reset_req %d' % (coldreboot, mem.r32(PTB + 60)))
-print('Ctrl-Amiga-Amiga: vertical blank server installed; idle does nothing; a request is taken (2) and ColdReboot called')
 
 # ---- the boot nodes -----------------------------------------------------------------------------
 fold = [b for b in boots if b['dev'] == 'alice68hdf.device' and b['unit'] >= 0x4000]

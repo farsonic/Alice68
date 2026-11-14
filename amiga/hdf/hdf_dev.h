@@ -137,8 +137,6 @@ struct HdfBase {
     struct IVol *ivol[ISO_MAX];
     ULONG nivols;
     APTR iseg;                              /* their handlers' seglist */
-    APTR ptb;                               /* Alice68's USB card (struct pt_hdr): Ctrl-Amiga-Amiga */
-    struct Interrupt vbl;                   /* its vertical blank server */
 };
 ACHECK(AOFF(struct HdfBase, magic) == 36);
 ACHECK(AOFF(struct HdfBase, unit) == 44);

@@ -93,10 +93,6 @@ int frf_native_usb_reboot_requested(void)
 {
     return frf_native_keyboard_take_reboot(&native_keyboard);
 }
-int frf_native_usb_amiga_reset_requested(void)      /* Alice68 */
-{
-    return frf_native_keyboard_take_amiga_reset(&native_keyboard);
-}
 void frf_usb_guest_start(void) {}
 int frf_usb_early_startup_active(void) { return 0; }
 

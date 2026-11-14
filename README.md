@@ -317,17 +317,6 @@ card is still there but stays empty: the kernel leaves the USB-A ports to rondov
 
 A CM4's USB port is the USB-C controller, so on a CM4 use `frf_usb=neptune` (untested).
 
-### Resetting
-
-- **Ctrl-Amiga-Amiga** resets the Amiga side, as on a real Amiga. The Amiga keys are a USB
-  keyboard's **Windows keys** (or a Mac keyboard's **Cmd keys**): press **Ctrl + left
-  Windows/Cmd + right Windows/Cmd**. The Pi keeps running, so Alice68's logs survive (see
-  `Alice68-Monitor DUMP`). If AmigaOS has hung and can't take the request within 2 seconds,
-  the whole Pi restarts instead. Keyboards without a right Windows key (often a Menu key
-  there) can't make the chord; use the full restart below. With `frf_usb=neptune` (USB-C)
-  it always restarts the whole Pi.
-- **Ctrl + Left Shift + F11** restarts the whole Pi, like switching it off and on.
-
 ### The mouse's scroll wheel
 
 The Amiga's mouse port has no wheel, so the kernel counts a USB mouse's wheel steps on the

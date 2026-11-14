@@ -51,9 +51,6 @@ User-facing docs: README.md. History of where code came from: docs/PROVENANCE.md
   `tools/hid-test`) and, with a wheel, uses report protocol; the steps go to `pt_hdr.wheel_y/_x,
   mouse_btn` on the USB card, and `amiga/wheel.c` (`Alice68-Wheel`, in WBStartup) sends NewMouse
   raw keys through input.device. Other mice stay in boot protocol.
-- Ctrl-Amiga-Amiga: `frf_native_keyboard.c` spots Ctrl + both GUI keys; `frf_xhci_pt.c` sets
-  `pt_hdr.reset_req` = 1; `alice68hdf.device`'s vertical blank server (`hdf_vbl`) sets 2 and calls
-  `ColdReboot()`; not taken in 2 s: the Pi reboots (`aga_reboot`). Ctrl+LShift+F11: the Pi reboots.
 - `amiga/monitor.c` — `Alice68-Monitor`: debugging window (tasks, backtraces, the board's log rings,
   the WiFi driver's `pt_wstat` "where"). The board layout is in `alice68_usbpt.h`; it survives a 68k reset.
 - `tools/hdf-test/`, `amiga/test/` — tests. `tools/splash-preview/` — render the splash on a PC.

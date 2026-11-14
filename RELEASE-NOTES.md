@@ -2,15 +2,6 @@
 
 ## Unreleased
 
-- **Ctrl-Amiga-Amiga resets the Amiga.** The USB keyboard's Ctrl + both Windows (or Cmd)
-  keys were only passed to AmigaOS as keys, so nothing happened: a real Amiga's keyboard
-  pulls the reset line for it, and Alice68 has no such line. Now the kernel asks the 68k
-  on the USB card, and `alice68hdf.device`'s vertical blank server answers with Exec's
-  `ColdReboot()`: AmigaOS restarts, the Pi and Alice68's logs stay. If nothing takes the
-  request in 2 seconds (AmigaOS hung), the whole Pi restarts. Tested on the 68k emulator
-  (the server installed, idle without a request, a request taken with ColdReboot); the
-  keyboard chord itself only on a Pi.
-
 - **exFAT partitions: hardfiles and CD images with no 4 GB limit.** A card can now have a
   small FAT32 partition for the Pi and an exFAT partition after it, the format Windows and
   macOS give any size of card. `alice68hdf.device` finds the first exFAT partition and
