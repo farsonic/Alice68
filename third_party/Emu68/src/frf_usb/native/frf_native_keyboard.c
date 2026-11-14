@@ -63,6 +63,13 @@ int frf_native_keyboard_take_reboot(struct frf_native_keyboard *s)
     s->host_reboot_pending=0;
     return 1;
 }
+/* Alice68: Ctrl-Amiga-Amiga (Ctrl + left and right GUI: Windows / Cmd keys), as it was pressed */
+int frf_native_keyboard_take_amiga_reset(struct frf_native_keyboard *s)
+{
+    if (!s || !s->amiga_reset_pending) return 0;
+    s->amiga_reset_pending=0;
+    return 1;
+}
 void frf_native_keyboard_report(struct frf_native_keyboard *s,
                                 const uint8_t report[8],
                                 frf_key_emit_fn emit, void *ctx)
@@ -85,6 +92,12 @@ void frf_native_keyboard_report(struct frf_native_keyboard *s,
                            contains(keys,0x44u));
     if(chord && !s->host_reboot_held) s->host_reboot_pending=1u;
     s->host_reboot_held=chord;
+    /* Alice68: Ctrl-Amiga-Amiga. A real Amiga keyboard pulls the reset line for it; here
+       the kernel asks the 68k to reset (frf_xhci_pt.c), edge-triggered like the chord above.
+       LGUI=0x08, RGUI=0x80. */
+    const uint8_t cam=(uint8_t)(((modifiers & 0x11u)!=0u) && (modifiers & 0x08u) && (modifiers & 0x80u));
+    if(cam && !s->amiga_reset_held) s->amiga_reset_pending=1u;
+    s->amiga_reset_held=cam;
     for (unsigned i=0; i<8; ++i) {
         uint8_t bit = (uint8_t)(1u << i);
         if ((s->modifiers ^ modifiers) & bit)

@@ -20,7 +20,7 @@ romtag:
         .long   hdf_idstring
         .long   dev_inittab
 
-        .globl  stub_init, stub_open, stub_close, stub_expunge, stub_null, stub_beginio, stub_abortio
+        .globl  stub_init, stub_open, stub_close, stub_expunge, stub_null, stub_beginio, stub_abortio, stub_vbl
 stub_init:                              /* d0 = base, a0 = seglist */
         move.l  %a0, -(%sp)
         move.l  %d0, -(%sp)
@@ -45,6 +45,14 @@ stub_expunge:
         moveq   #0, %d0                 /* in ROM: never goes */
         rts
 stub_null:
+        moveq   #0, %d0
+        rts
+stub_vbl:                               /* a vertical blank server: a1 = is_Data; Z set: the next one too */
+        movem.l %d2-%d7/%a2-%a6, -(%sp)
+        move.l  %a1, -(%sp)
+        jsr     hdf_vbl
+        addq.l  #4, %sp
+        movem.l (%sp)+, %d2-%d7/%a2-%a6
         moveq   #0, %d0
         rts
 stub_beginio:

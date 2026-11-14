@@ -57,6 +57,7 @@ extern void frf_post_usb_devices(unsigned kb, unsigned ms, unsigned gp, unsigned
 extern void frf_native_usb_keyboard_boot_report(const uint8_t report[8]);
 extern void frf_native_usb_keyboard_force_release(void);
 extern int  frf_native_usb_reboot_requested(void);
+extern int  frf_native_usb_amiga_reset_requested(void);
 extern void aga_virtual_mouse_update(int dx, int dy, unsigned buttons);
 extern void aga_reboot(int tryboot);
 extern volatile uint8_t frf_usb_mouse_seen, frf_usb_mouse_buttons;
@@ -1031,6 +1032,7 @@ void __attribute__((noreturn)) frf_xhci_main(void)
             xlog("[FRF-XHCI] Ctrl+LeftShift+F11: host reboot\n");
             aga_reboot(0);
         }
+        pt_amiga_reset(frf_native_usb_amiga_reset_requested());   /* Ctrl-Amiga-Amiga (frf_xhci_pt.c) */
         __asm__ volatile("yield");                 /* CPU1 is USB's alone: no sleeping, every request starts at once */
     }
 dead:

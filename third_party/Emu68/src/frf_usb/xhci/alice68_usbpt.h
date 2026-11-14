@@ -105,7 +105,7 @@ struct pt_hdr {
     int          wheel_x;       /* ...and horizontal wheel steps (+ = right) */
     unsigned int mouse_btn;     /* the mouse's buttons now: bit 3 the 4th, bit 4 the 5th */
     unsigned int mouse_seq;     /* +1 on every change of the three above */
-    unsigned int pad[1];
+    unsigned int reset_req;     /* kernel: 1 = Ctrl-Amiga-Amiga; alice68hdf.device: 2 = taken (ColdReboot) */
     struct pt_port port[PT_PORTS];
 };                              /* 64 + 128 bytes */
 

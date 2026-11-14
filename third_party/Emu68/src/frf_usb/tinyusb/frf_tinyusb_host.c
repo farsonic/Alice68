@@ -31,6 +31,7 @@ extern void frf_vcia_keyboard_stats(uint32_t*,uint32_t*,uint32_t*,
                                     uint32_t*,uint32_t*);
 
 extern int frf_native_usb_reboot_requested(void);
+extern int frf_native_usb_amiga_reset_requested(void);   /* Alice68 */
 extern void aga_reboot(int tryboot);
 extern void aga_virtual_mouse_update(int dx,int dy,unsigned buttons);
 extern void frf_boot_stage(unsigned stage);
@@ -741,6 +742,12 @@ void frf_tinyusb_host_main(void)
            and only after a newly pressed Ctrl+LeftShift+F11 chord. */
         if(frf_native_usb_reboot_requested()) {
             kprintf("[FRF-TINYUSB] Ctrl+LeftShift+F11: host reboot\n");
+            aga_reboot(0);
+        }
+        /* Alice68: Ctrl-Amiga-Amiga on the USB-C port (frf_usb=neptune): the Pi restarts, as a
+           PiStorm does (the USB-A kernel asks the 68k to reset itself instead) */
+        if(frf_native_usb_amiga_reset_requested()) {
+            kprintf("[FRF-TINYUSB] Ctrl-Amiga-Amiga: host reboot\n");
             aga_reboot(0);
         }
         uint32_t now=tusb_time_millis_api();

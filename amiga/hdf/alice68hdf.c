@@ -42,6 +42,7 @@ const char hdf_idstring[] = "alice68hdf.device 0.7 (09.11.2026) Alice68 hardfile
 
 #include "hdf_dev.h"
 #include "exfat.h"
+#include "../../third_party/Emu68/src/frf_usb/xhci/alice68_usbpt.h"
 
 void *memcpy(void *d, const void *s, unsigned long n) { UBYTE *a = d; const UBYTE *b = s; while (n--) *a++ = *b++; return d; }
 void *memset(void *d, int c, unsigned long n) { UBYTE *a = d; while (n--) *a++ = (UBYTE)c; return d; }
@@ -58,6 +59,14 @@ static void DeleteMsgPort(struct MsgPort *p)          { lvo(SYSBASE, -672, 0, 0,
 static APTR CreateIORequest(struct MsgPort *p, ULONG n) { return (APTR)lvo(SYSBASE, -654, n, 0, (ULONG)p, 0); }
 static void DeleteIORequest(APTR io)                  { lvo(SYSBASE, -660, 0, 0, (ULONG)io, 0); }
 static APTR MakeDosNode(APTR eb, ULONG *pkt)          { return (APTR)lvo(eb, -144, 0, 0, (ULONG)pkt, 0); }
+extern void stub_vbl(void);
+static inline void ColdReboot(void) { lvo(SYSBASE, -726, 0, 0, 0, 0); }
+/* every vertical blank: Ctrl-Amiga-Amiga asked by the kernel? (1 -> 2: taken) */
+void hdf_vbl(struct HdfBase *db)
+{
+    volatile struct pt_hdr *b = db->ptb;
+    if (b && b->reset_req == 1) { b->reset_req = 2; ColdReboot(); }
+}
 static LONG AddBootNode(APTR eb, LONG pri, ULONG fl, APTR dn, APTR cd) { return (LONG)lvo(eb, -36, (ULONG)pri, fl, (ULONG)dn, (ULONG)cd); }
 static void RawPutChar(char c)                        { lvo(SYSBASE, -516, (ULONG)(UBYTE)c, 0, 0, 0); }
 static void CacheClearU(void)                         { lvo(SYSBASE, -636, 0, 0, 0, 0); }
@@ -760,6 +769,19 @@ APTR dev_init(struct HdfBase *db, APTR seglist)
     sd_volumes(db, &io);
     APTR eb = OpenLibrary("expansion.library", 36);
     struct ConfigDev *cd = eb ? FindConfigDev(eb, 0, 0x6d73, 2) : 0;       /* Emu68's ROM board */
+    /* Ctrl-Amiga-Amiga: the kernel asks on the USB card; a vertical blank server answers with
+       ColdReboot (hdf_vbl). If AmigaOS is hung the kernel reboots the Pi instead after 2 s */
+    struct ConfigDev *pcd = eb ? FindConfigDev(eb, 0, PT_MANUFACTURER, PT_PRODUCT) : 0;
+    if (pcd && ((volatile struct pt_hdr *)pcd->cd_BoardAddr)->magic == PT_MAGIC) {
+        db->ptb = pcd->cd_BoardAddr;
+        ((volatile struct pt_hdr *)db->ptb)->reset_req = 0;                  /* this boot has taken it */
+        db->vbl.is_Node.ln_Type = 2;                                        /* NT_INTERRUPT */
+        db->vbl.is_Node.ln_Pri = -60;
+        db->vbl.is_Node.ln_Name = (char *)hdf_devname;
+        db->vbl.is_Data = db;
+        db->vbl.is_Code = stub_vbl;
+        AddIntServer(INTB_VERTB, &db->vbl);
+    }
     /* the chosen hardfile first, so that it gets its names before the others ask */
     for (int pass = 0; pass < 2; pass++) {
         for (int i = 0; i < n; i++) {
