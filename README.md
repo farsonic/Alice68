@@ -275,7 +275,7 @@ it.
 | Card | The card's partitions: type, file system, label, size, free space (**Count free space**). Which of them is Alice68's FAT partition, the exFAT volume, Emu68's own Amiga disk. Whether AmigaOS may write the exFAT partition. The hardfiles and CD images mounted from the card. |
 | Files | Browse the FAT partition and the exFAT partition: folders first, sizes, `in use` for anything that can't be changed now. Filter to hardfiles, CD images, Kickstart ROMs or WiFi firmware. **Open folder** (or double-click), **Parent**, **New folder**, **Rename to name**, **Delete...** (it asks first). **Boot from it** makes a hardfile the boot drive (`hdf.boot=`), **Use as Kickstart** makes a ROM the Kickstart (`initramfs` in `config.txt`). |
 | Settings | The options of `cmdline.txt`, the same ones the [setup screen](#setup) offers (both use one table, `src/raspi/alice_opts.c`), and the Kickstart ROM. Each shows what it does underneath when you pick it. **Back to the card's** drops your changes. |
-| Bluetooth | The kernel's Bluetooth: its state, the paired devices (**Connect now**, **Forget...**), **Scan** and **Pair**, and the passkey to type. Pairings are written to `cmdline.txt` at once. See [Bluetooth](#bluetooth-keyboards-and-mice-new-not-yet-tested-on-a-pi). |
+| Bluetooth | The kernel's Bluetooth: its state, the paired devices (**Connect now**, **Forget...**), **Scan** and **Pair**, the passkey to type, and its last log lines. Pairings are written to `cmdline.txt` at once. See [Bluetooth](#bluetooth-keyboards-and-mice-new-not-yet-tested-on-a-pi). |
 | Text files | `config.txt` line by line: pick a line to change it, **Add**, **Delete**. `cmdline.txt` as it will be saved; type into it to change it directly, and the Settings page follows. |
 
 The window can be resized: lists grow with it, and the buttons stay sized to their labels.
@@ -434,6 +434,14 @@ The kernel keeps USB keyboards and mice for itself and offers every other device
 Neptune sees an 8-port USB 2.0 root hub, with every device the kernel doesn't keep for
 itself on it. USB 3 devices work as USB 2.0. `Alice68-USBLog FOLLOW` tails the kernel's and
 the driver's USB logs in a Shell.
+
+`Alice68-USBLog` prints the last 40 lines of each log. `LINES=200` prints more, `ALL`
+everything, and `MATCH=[BT]` only the lines with that text. Ctrl-C stops it at any line.
+For example, the Bluetooth lines only:
+
+```
+Alice68-USBLog MATCH=[BT] LINES=100
+```
 
 - **Network adapters:** the Neptune class is the SANA-II driver. For `cdceth.usbclass`,
   give your TCP/IP stack `usbcdceth.device`, unit 0, as a bare name.

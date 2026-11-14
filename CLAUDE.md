@@ -112,6 +112,7 @@ python3 amiga/test/harness_netprefs.py amiga/out/Alice68-NetworkGT # the GadTool
 python3 amiga/test/harness_showconfig.py amiga/out/Alice68-ShowConfig # boards, memory and Alice68's cards, faked
 python3 amiga/test/harness_alice68net.py amiga/out/alice68net.device # opens of units the kernel does not serve, and close
 python3 amiga/test/harness_card.py amiga/out/Alice68-Card   # the SD card manager against fake libraries and card service
+python3 amiga/test/harness_usblog.py amiga/out/Alice68-USBLog # the log tool: last lines, MATCH, Ctrl-C
 tools/splash-preview/build.sh > out.ppm  # the splash, drawn by the kernel's own code (W H setup-storage: the setup screen)
 ```
 

@@ -813,9 +813,27 @@ void bt_poll(struct bt_host *h)
 {
     if (h->state == BT_FAILED || h->state == BT_OFF) return;
     if (h->pending_op && due(h, h->wait_until)) {
+        static const char hx[] = "0123456789abcdef";
+        char why[64];
+        unsigned k = 0;
+        const char *w0 = h->state == BT_FW && h->step == S_RESET ? "the chip does not answer" : "the chip stopped answering";
+        for (; w0[k]; k++) why[k] = w0[k];
+        const char *w1 = " (command ";
+        for (unsigned i = 0; w1[i]; i++) why[k++] = w1[i];
+        for (int sh = 12; sh >= 0; sh -= 4) why[k++] = hx[(h->pending_op >> sh) & 15];
+        if (h->state == BT_FW && h->step == S_PATCH) {             /* ", record N" */
+            for (const char *q = ", record "; *q; ) why[k++] = *q++;
+            char d[6]; int n = 0; uint32_t v = h->fwrec;
+            do { d[n++] = (char)('0' + v % 10); v /= 10; } while (v && n < 5);
+            while (n) why[k++] = d[--n];
+        } else if (h->state == BT_INIT) {                          /* ", set-up step N" */
+            for (const char *q = ", set-up "; *q; ) why[k++] = *q++;
+            why[k++] = (char)('0' + (h->step % 10));
+        }
+        why[k++] = ')'; why[k] = 0;
         if (h->state == BT_FW && h->step == S_PATCH) lg(h, "no answer to firmware record %u (command %x, byte %u of %u)", h->fwrec, h->pending_op, h->fwpos, h->fwlen);
         else lg(h, "no answer to command %x (start-up step %u)", h->pending_op, (uint32_t)h->step);
-        fail(h, h->state == BT_FW && h->step == S_RESET ? "the chip does not answer" : "the chip stopped answering");
+        fail(h, why);
         return;
     }
     if (h->state == BT_FW && !h->pending_op) {

@@ -58,7 +58,8 @@ static int phase;                              /* 0 not started, 1 waiting for f
 static uint32_t phase_t, wait_since;
 static char shown[64];
 static int shown_col = -1;
-static int keys_loaded, uart_done, retried;
+static int keys_loaded, uart_done, retried, fail_logged;
+static uint32_t rx_total, rx_errors;
 
 static void blog(const char *s)
 {
@@ -101,15 +102,28 @@ static void uart_init(void)
     wr(UART0 + U_CR, 1u | (1u << 8) | (1u << 9) | (1u << 14) | (1u << 15));    /* on, TX, RX, RTS/CTS flow control */
     while (!(rd(UART0 + U_FR) & FR_RXFE)) (void)rd(UART0 + U_DR);              /* whatever was there */
 }
+/* what goes to the chip waits in a ring and leaves as fast as the UART (and the chip's CTS)
+   let it, from every turn of CPU1's loop: the chip may hold CTS for a while after a command,
+   and a byte cut off mid-command loses the whole command */
+static uint8_t txr[8192];
+static unsigned tx_h, tx_t;
+static uint32_t tx_moved, tx_warned;
+static void tx_drain(void)
+{
+    while (tx_h != tx_t && !(rd(UART0 + U_FR) & FR_TXFF)) { wr(UART0 + U_DR, txr[tx_h % sizeof txr]); tx_h++; tx_moved = ms_now(); }
+    if (tx_h != tx_t && ms_now() - tx_moved > 2000 && !tx_warned) {
+        tx_warned = 1;
+        blog("[BT] the chip has held CTS for 2 s: it is not taking data");
+    }
+    if (tx_h == tx_t) tx_warned = 0;
+}
 static void io_send(void *c, const uint8_t *p, unsigned n)
 {
     (void)c;
-    uint64_t lim = tick_hz() / 4;                       /* the chip holds CTS: 250 ms at most, then give up */
-    for (unsigned i = 0; i < n; i++) {
-        uint64_t t = ticks();
-        while (rd(UART0 + U_FR) & FR_TXFF) if (ticks() - t > lim) { blog("[BT] the chip is not taking data (CTS held)"); return; }
-        wr(UART0 + U_DR, p[i]);
-    }
+    if (tx_t - tx_h + n > sizeof txr) { blog("[BT] the send ring is full: a packet dropped"); return; }
+    if (tx_h == tx_t) tx_moved = ms_now();
+    for (unsigned i = 0; i < n; i++) txr[tx_t++ % sizeof txr] = p[i];
+    tx_drain();
 }
 static void io_baud(void *c, uint32_t b) { (void)c; uart_baud(b); }
 static uint32_t io_ms(void *c) { (void)c; return ms_now(); }
@@ -252,6 +266,7 @@ void bt_pi_poll(void)
         if ((int32_t)(now - phase_t) < 250) break;      /* the chip boots its ROM */
         while (!(rd(UART0 + U_FR) & FR_RXFE)) (void)rd(UART0 + U_DR);
         phase = 4;
+        tx_h = tx_t = 0;
         bt_init(&bh, &bio, bh.fw, bh.fwlen);
         break;
     case 7:                                             /* BT_ON low again, for a fresh start */
@@ -260,8 +275,10 @@ void bt_pi_poll(void)
         phase = 2; phase_t = now;
         break;
     case 4: {
+        tx_drain();
         if (bh.state == BT_FAILED && bh.fw && !retried) {  /* the firmware file did not go in: the chip's own, once */
             retried = 1;
+            fail_logged = 0;
             blog("[BT] loading BCM4345C0.hcd failed: trying again with the chip's own firmware");
             bh.fw = 0; bh.fwlen = 0;
             phase = 7; phase_t = now;
@@ -271,12 +288,33 @@ void bt_pi_poll(void)
         uint8_t buf[64];
         for (int rounds = 0; rounds < 8; rounds++) {
             unsigned n = 0;
-            while (n < sizeof buf && !(rd(UART0 + U_FR) & FR_RXFE)) buf[n++] = (uint8_t)rd(UART0 + U_DR);
+            while (n < sizeof buf && !(rd(UART0 + U_FR) & FR_RXFE)) {
+                uint32_t v = rd(UART0 + U_DR);
+                if (v & 0xf00u) rx_errors++;               /* framing, parity, break, overrun */
+                buf[n++] = (uint8_t)v;
+            }
+            rx_total += n;
             if (!n) break;
             bt_rx(&bh, buf, n);
         }
         bt_poll(&bh);
+        tx_drain();
         int col = bh.state == BT_READY ? 1 : bh.state == BT_FAILED ? 2 : 0;
+        if (bh.state == BT_FAILED && !fail_logged) {
+            fail_logged = 1;
+            char t[160];
+            unsigned k = 0;
+            uint32_t vals[7] = { rx_total, rx_errors, tx_h, tx_t - tx_h, rd(UART0 + U_FR), rd(UART0 + U_CR), uart_hz };
+            static const char *const parts[7] = { "[BT] UART: ", " bytes from the chip, ", " with errors; ", " sent, ", " waiting; FR ", " CR ", " clock " };
+            for (int i = 0; i < 7; i++) {
+                for (const char *q = parts[i]; *q && k < 140; ) t[k++] = *q++;
+                char d[12]; int n = 0; uint32_t v = vals[i]; int hexv_ = i == 4 || i == 5;
+                do { d[n++] = "0123456789abcdef"[v % (hexv_ ? 16u : 10u)]; v /= hexv_ ? 16u : 10u; } while (v && n < 11);
+                while (n && k < 150) t[k++] = d[--n];
+            }
+            t[k] = 0;
+            blog(t);
+        }
         if (bh.state == BT_FAILED) { char t[64] = "FAILED: "; unsigned k = 8; for (unsigned i = 0; bh.why[i] && k < 63; i++) t[k++] = bh.why[i]; t[k] = 0; post(t, 2); }
         else post(bh.status[0] ? bh.status : "starting", col);
         break;

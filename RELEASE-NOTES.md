@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Alice68-USBLog no longer locks up the Shell.** It printed its whole log (tens of KB, minutes
+  through the console) without heeding Ctrl-C, and turned FOLLOW on for any word with an "f"
+  in it. Now it prints the last 40 lines of each log; `LINES=n`, `ALL`, `MATCH=text` (e.g.
+  `MATCH=[BT]`), `FOLLOW`; Ctrl-C at any line.
+- **Bluetooth:** what goes to the chip waits in a ring and leaves as the chip's flow control
+  allows (it was cut off after 250 ms, losing the command: a suspect for "the chip stopped
+  answering"). The error names the command that went unanswered; on a failure the log has the
+  UART's counts and state. Alice68-Card's Bluetooth page shows the last `[BT]` log lines.
 - **Alice68-Card 1.1:** the window can be resized; lists grow with it, and buttons and tabs
   are sized to their labels, so none is cut off. The WiFi password is never shown: the
   Settings page and the cmdline.txt line show `********`, a password typed in turns into

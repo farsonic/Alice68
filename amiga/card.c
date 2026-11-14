@@ -202,7 +202,7 @@ enum {
     /* Text files */
     G_LINES, G_LINE, G_ADDL, G_DELL, G_CMD, G_TNOTE,
     /* Bluetooth */
-    G_TAB4, G_BSTAT, G_BPAIRED, G_BFOUND, G_BSCAN, G_BPAIR, G_BCONN, G_BFORGET, G_BKEY, G_BNOTE,
+    G_TAB4, G_BSTAT, G_BPAIRED, G_BFOUND, G_BSCAN, G_BPAIR, G_BCONN, G_BFORGET, G_BKEY, G_BNOTE, G_BLOG,
     G_OPT0                                           /* G_OPT0 + i: option i (alice_opts.c) */
 };
 #define G_N (G_OPT0 + OPT_MAX)
@@ -666,6 +666,37 @@ static struct Node_ n_bp[AN_BT_KEYS], n_bf[AN_BT_FOUND];
 static char t_bp[AN_BT_KEYS][80], t_bf[AN_BT_FOUND][80];
 static struct lv lv_bp = { { 0, 0, 0, 0, 0 }, n_bp, t_bp, 0, AN_BT_KEYS };
 static struct lv lv_bf = { { 0, 0, 0, 0, 0 }, n_bf, t_bf, 0, AN_BT_FOUND };
+#define BLOG_N 8
+static struct Node_ n_bl[BLOG_N];
+static char t_bl[BLOG_N][80];
+static struct lv lv_bl = { { 0, 0, 0, 0, 0 }, n_bl, t_bl, 0, BLOG_N };
+static ULONG blog_seen = ~0u;
+/* the network board's log ring: its last [BT] lines (the kernel's Bluetooth writes them there) */
+static void bt_log_show(void)
+{
+    if (!nb) return;
+    ULONG wr = ((volatile struct an_hdr *)nb)->log_wr;
+    if (wr == blog_seen) return;
+    blog_seen = wr;
+    volatile const char *r = (volatile const char *)(nb + AN_OFF_LOG);
+    ULONG start = wr > AN_LOG_BYTES ? wr - AN_LOG_BYTES : 0;
+    static char ln[BLOG_N][80];
+    int nl = 0;
+    char cur[80]; unsigned n = 0;
+    for (ULONG i = start; i != wr; i++) {
+        char c = r[i % AN_LOG_BYTES];
+        if (c != '\n') { if (n < 79) cur[n++] = c; continue; }
+        cur[n] = 0;
+        if (n > 4 && cur[0] == '[' && cur[1] == 'B' && cur[2] == 'T' && cur[3] == ']') {
+            if (nl == BLOG_N) { for (int k = 1; k < BLOG_N; k++) scpy(ln[k - 1], ln[k], 80); nl--; }
+            scpy(ln[nl++], cur + 5, 80);
+        }
+        n = 0;
+    }
+    lv_begin(&lv_bl, G_BLOG);
+    for (int k = 0; k < nl; k++) { char *t = lv_add(&lv_bl); scpy(t, ln[k], 80); }
+    lv_end(&lv_bl, G_BLOG);
+}
 static char bstat[120], bkey[120];
 static volatile struct an_bt *btb(void) { return nb ? (volatile struct an_bt *)(nb + AN_OFF_BT) : 0; }
 static void saddr(struct sb *b, const volatile unsigned char *a)
@@ -726,6 +757,8 @@ static void bt_show(void)
     else if (x->pairing) ss(&b, "Pairing...");
     textset(G_BKEY, bkey);
     textset(G_BNOTE, "Paired devices are kept in cmdline.txt (bt.dev=...) and reconnect by themselves once AmigaOS starts.");
+    blog_seen = ~0u;
+    bt_log_show();
 }
 static void bt_cmd(ULONG cmd, const volatile unsigned char *addr)
 {
@@ -769,6 +802,7 @@ static void bt_tick(void)
     if (x->keys_gen != bt_gen_seen) { bt_gen_seen = x->keys_gen; bt_save_keys(); }
     ULONG sg = bt_signature();
     if (page == 4 && sg != bt_sig) { bt_sig = sg; bt_show(); }
+    else if (page == 4) bt_log_show();
 }
 
 /* ---- the window ----------------------------------------------------------------------- */
@@ -950,8 +984,8 @@ static int make_gadgets(void)
 
     /* Bluetooth: paired above, found below, the buttons beside them */
     g = CreateContext(&glist_page[4]);
-    int bb = bw_("Connect now") + 24, bx = W - 8 - bb, bl = bx - 16, bh = (PB - PY - 74) / 2;
-    if (bh < 30) bh = 30;
+    int bb = bw_("Connect now") + 24, bx = W - 8 - bb, bl = bx - 16, bh = (PB - PY - 74 - 50) / 2;
+    if (bh < 28) bh = 28;
     g = mk(g, 4, TEXT_KIND, G_BSTAT, 8, PY + 4, W - 16, 12, 0, 0, txt);
     g = mk(g, 4, LISTVIEW_KIND, G_BPAIRED, 8, PY + 20, bl, bh, 0, 0, sel);
     g = mk(g, 4, BUTTON_KIND, G_BCONN, bx, PY + 20, bb, 14, "Connect now", PLACETEXT_IN, 0);
@@ -960,6 +994,7 @@ static int make_gadgets(void)
     g = mk(g, 4, LISTVIEW_KIND, G_BFOUND, 8, fy, bl, bh, 0, 0, sel);
     g = mk(g, 4, BUTTON_KIND, G_BSCAN, bx, fy, bb, 14, "Scan", PLACETEXT_IN, 0);
     g = mk(g, 4, BUTTON_KIND, G_BPAIR, bx, fy + 16, bb, 14, "Pair", PLACETEXT_IN, 0);
+    g = mk(g, 4, LISTVIEW_KIND, G_BLOG, 8, fy + bh + 6, W - 16, PB - 34 - (fy + bh + 6), 0, 0, ro);   /* the last [BT] log lines */
     g = mk(g, 4, TEXT_KIND, G_BKEY, 8, PB - 32, W - 16, 12, 0, 0, txt);
     g = mk(g, 4, TEXT_KIND, G_BNOTE, 8, PB - 15, W - 16, 12, 0, 0, 0);
     if (!g) return 0;
