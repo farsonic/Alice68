@@ -85,7 +85,7 @@ int main(void)
     uint8_t k4[] = { TAB, DOWN, DEL, DOWN, ENTER };
     keys(k4, sizeof k4, 0);
     type("pass word1");
-    uint8_t k5[] = { ENTER, DOWN, DOWN, DEL };
+    uint8_t k5[] = { ENTER, DOWN, DOWN, DOWN, DEL };       /* Country, Bluetooth, then Ethernet */
     keys(k5, sizeof k5, 0);
     CHECK(as_changed(&st), "changed");
     char e[768];

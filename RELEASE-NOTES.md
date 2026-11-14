@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Bluetooth keyboards and mice** (Classic Bluetooth; not yet tested on a Pi). The kernel
+  drives the Pi 4 chip's Bluetooth half on UART0 and loads its firmware
+  (`BCM4345C0.hcd` in the WIFI folder, handed over by AmigaOS like the WiFi's). It pairs
+  devices from Alice68-Card's new Bluetooth page (a passkey to type for keyboards, Just
+  Works for mice, PIN 0000 for old ones) and keeps them in `cmdline.txt` (`bt.dev=`).
+  Keyboards and mice then work like USB ones (Ctrl-Amiga-Amiga, the wheel), from early
+  in AmigaOS's start. The splash has a BLUETOOTH cell; `bt=off` turns it off. Written
+  from the Bluetooth specifications; `tools/bt-test` checks the host against a scripted
+  controller. Not yet: Bluetooth Low Energy, the setup screen, and the USB-less kernel.
 - **Alice68-Card: the SD card from AmigaOS.** A GadTools window (`ALICE68:C/Alice68-Card`)
   with four pages:
   - **Card:** the partitions, with sizes and free space, and what is mounted from the card.

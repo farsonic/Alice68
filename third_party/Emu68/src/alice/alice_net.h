@@ -32,7 +32,8 @@
 #define AN_OFF_SCAN       0x1800u          /* struct an_scan[AN_SCAN_MAX]: WiFi scan results */
 #define AN_SCAN_MAX       36               /* 36 * 56 bytes: up to 0x1FE0 */
 #define AN_OFF_LOG        0x2000u          /* the kernel network log ring (text) */
-#define AN_LOG_BYTES      0x2000u
+#define AN_LOG_BYTES      0x1800u
+#define AN_OFF_BT         0x3800u          /* struct an_bt: the kernel's Bluetooth (src/alice/bt/) */
 #define AN_SLOT_BYTES     0x0800u          /* one frame slot: struct an_slot */
 #define AN_RX_SLOTS       16               /* per unit */
 #define AN_TX_SLOTS       12
@@ -74,6 +75,38 @@ struct an_setup {
 #define AN_SET_OFFERED  1u          /* the kernel: here are the changes */
 #define AN_SET_SAVED    2u          /* alice68hdf.device: cmdline.txt written */
 #define AN_SET_FAILED   3u          /* alice68hdf.device: not written; text says why */
+
+/* Bluetooth (bt_pi.c): what the kernel sees, and commands from Alice68-Card.
+   Addresses as the controller gives them (least significant byte first). A command: write
+   cmd_addr and cmd, then cmd_seq + 1; the kernel answers with cmd_done = cmd_seq. */
+#define AN_BT_KEYS   6
+#define AN_BT_FOUND  12
+struct an_btkey { unsigned char addr[8]; unsigned char key[16]; unsigned int type, flags; char name[40]; };   /* 72 */
+struct an_btfound { unsigned char addr[8]; unsigned int cod; int rssi; char name[40]; };                    /* 56 */
+struct an_bt {
+    unsigned int state;             /* AN_BT_* */
+    unsigned int scanning, pairing, passkey, passkey_shown;
+    unsigned int keys_gen;          /* +1 when keys[] changed: Alice68-Card saves them in cmdline.txt */
+    unsigned int nkeys, nfound;
+    unsigned int cmd, cmd_seq, cmd_done, cmd_result;
+    unsigned char cmd_addr[8];
+    char msg[64];
+    unsigned char bdaddr[8];
+    struct an_btkey keys[AN_BT_KEYS];
+    struct an_btfound found[AN_BT_FOUND];
+};
+#define AN_BT_OFF       0u          /* bt=off, or not started */
+#define AN_BT_NOFW      1u          /* waiting for AmigaOS to hand over the firmware */
+#define AN_BT_STARTING  2u
+#define AN_BT_READY     3u
+#define AN_BT_FAILED    4u
+#define AN_BTK_CONNECTED 1u
+#define AN_BTK_KEYBOARD  2u
+#define AN_BTK_MOUSE     4u
+#define AN_BT_CMD_SCAN    1u
+#define AN_BT_CMD_PAIR    2u
+#define AN_BT_CMD_FORGET  3u
+#define AN_BT_CMD_CONNECT 4u
 
 struct an_fw {
     char         name[64];          /* file name, e.g. "cyfmac43455-sdio.bin" */

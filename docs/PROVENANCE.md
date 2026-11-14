@@ -36,6 +36,12 @@ Alice68's history starts with three commits that keep the inputs apart:
      OpenBSD bwfm (ISC) as references; no code from other Amiga or RISC OS WiFi drivers
      was used.
      `netdev.h` is lwip-amiga's (BSD-3-Clause), copied unchanged;
+   - Bluetooth (`third_party/Emu68/src/alice/bt/`), written for Alice68 from the Bluetooth
+     Core Specification (HCI, L2CAP, Secure Simple Pairing) and the HID profile; the
+     Broadcom vendor commands (firmware download) as Linux's `btbcm` uses them (GPL-2.0).
+     No code from BlueZ, BTstack or Zephyr;
+   - `Alice68-Card` (`amiga/card.c`) and the card service (`amiga/hdf/cardsvc.c`), the
+     setup screen (`src/raspi/alice_setup.c`, `alice_opts.c`), written for Alice68;
    - `Alice68-Network` (`amiga/netgui/`), built on the MUI layer of Riptide's RiptidePrefs
      (GPL-2.0-only, https://github.com/farsonic/riptide at `4e5f73c`), copied into
      `amiga/netgui/rt/` with the changes listed in its README;

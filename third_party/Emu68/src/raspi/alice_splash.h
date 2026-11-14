@@ -22,6 +22,8 @@ struct al_status {
     int wifi_col;               /* 0 waiting, 1 good, 2 failed */
     const char *eth;            /* the kernel's Ethernet, as the WiFi; 0 or "" = not in use */
     int eth_col;
+    const char *bt;             /* the kernel's Bluetooth, as the WiFi; 0 or "" = none */
+    int bt_col;
 };
 
 /* a line of the header's table: "Version   0.5.0" */

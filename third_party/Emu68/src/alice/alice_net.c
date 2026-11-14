@@ -36,6 +36,7 @@ _Static_assert(sizeof(struct an_hdr) == 64, "an_hdr");
 _Static_assert(sizeof(struct an_unit) <= 0x800, "an_unit");
 _Static_assert(sizeof(struct an_fw) == 72 && sizeof(struct an_scan) == 56, "an_fw/an_scan");
 _Static_assert(AN_OFF_FW + AN_FW_MAX * 72 <= AN_OFF_SCAN && AN_OFF_SCAN + AN_SCAN_MAX * 56 <= AN_OFF_LOG, "layout");
+_Static_assert(AN_OFF_LOG + AN_LOG_BYTES <= AN_OFF_BT && AN_OFF_BT + sizeof(struct an_bt) <= AN_OFF_RX(0), "Bluetooth layout");
 _Static_assert(AN_OFF_TX(1) + AN_TX_SLOTS * AN_SLOT_BYTES <= AN_BOARD_BYTES, "slots");
 
 extern void *tlsf;
@@ -334,6 +335,8 @@ void wifi_udelay(uint32_t us)
 }
 
 /* ---- cmdline.txt -------------------------------------------------------------- */
+const char *alice_bootargs(void);
+const char *alice_bootargs(void) { of_node_t *ch = dt_find_node("/chosen"); of_property_t *ba = ch ? dt_find_property(ch, "bootargs") : 0; return ba && ba->op_value ? ba->op_value : ""; }
 static const char *bootargs(void)
 {
     of_node_t *ch = dt_find_node("/chosen");
@@ -396,7 +399,8 @@ static void fw_take(void)
     volatile struct an_hdr *h = H();
     if (h->fw_state != AN_FW_OFFERED) return;
     __asm__ volatile("dmb ish" ::: "memory");
-    if (wifi_disabled) { h->fw_state = AN_FW_REFUSED; return; }
+    extern int bt_pi_wanted(void);
+    if (wifi_disabled && !bt_pi_wanted()) { h->fw_state = AN_FW_REFUSED; return; }
     unsigned n = h->fw_count > AN_FW_MAX ? AN_FW_MAX : h->fw_count;
     volatile struct an_fw *t = (volatile struct an_fw *)(anb + AN_OFF_FW);
     for (unsigned i = 0; i < n; i++) {
@@ -437,6 +441,19 @@ static const struct fwfile *fw_find(const char *const *stems, const char *suffix
     return 0;
 }
 
+/* for bt_pi.c: a firmware file AmigaOS handed over, by stems and suffix ("BCM4345C0", ".hcd") */
+const uint8_t *alice_fw_get(const char *const *stems, const char *suffix, uint32_t *len)
+{
+    const struct fwfile *f = fw_find(stems, suffix);
+    if (!f) return 0;
+    *len = f->len;
+    return f->p;
+}
+/* 1 once alice68hdf.device has offered its files (or said there are none) */
+int alice_fw_offered(void) { return anb && (H()->fw_state == AN_FW_TAKEN || H()->fw_state == AN_FW_REFUSED || nfw > 0); }
+volatile uint8_t *alice_net_board(void) { return anb; }
+void alice_net_ring(const char *s, unsigned n) { ring_put(s, n); }
+
 /* ---- VideoCore mailbox (own buffer: the kernel's shared one is CPU0's) ------------- */
 #define MBOX_READ   0xf200b880u
 #define MBOX_STATUS 0xf200b898u
@@ -444,7 +461,16 @@ static const struct fwfile *fw_find(const char *const *stems, const char *suffix
 static inline uint32_t mrd(uint32_t a) { return __builtin_bswap32(*(volatile uint32_t *)(uintptr_t)a); }
 static inline void mwr(uint32_t a, uint32_t v) { *(volatile uint32_t *)(uintptr_t)a = __builtin_bswap32(v); }
 static uint32_t *mbuf;
+static volatile int mbox_busy;               /* the WiFi coroutine is inside mbox_tag (it yields there) */
+static int mbox_tag_(uint32_t tag, uint32_t a, uint32_t b, uint32_t *out);
 static int mbox_tag(uint32_t tag, uint32_t a, uint32_t b, uint32_t *out)
+{
+    mbox_busy = 1;
+    int r = mbox_tag_(tag, a, b, out);
+    mbox_busy = 0;
+    return r;
+}
+static int mbox_tag_(uint32_t tag, uint32_t a, uint32_t b, uint32_t *out)
 {
     if (!mbuf) mbuf = tlsf_malloc_aligned(tlsf, 64, 64);
     if (!mbuf) return -1;
@@ -475,6 +501,12 @@ static int mbox_try(uint32_t tag, uint32_t a, uint32_t b, uint32_t *out)
     int e = -1;
     for (int i = 0; i < 4 && e; i++) { e = mbox_tag(tag, a, b, out); if (e) wifi_log("mailbox tag %x: error %d, again\n", tag, e); }
     return e;
+}
+/* for bt_pi.c, from CPU1's loop (not the WiFi coroutine): -9 while the WiFi has the mailbox */
+int alice_mbox(uint32_t tag, uint32_t a, uint32_t b, uint32_t *out)
+{
+    if (mbox_busy) return -9;
+    return mbox_try(tag, a, b, out);
 }
 static void wl_on(int on) { mbox_try(0x00038041u, 128u + 1u, on ? 1u : 0u, 0); }   /* SET_GPIO_STATE, expander line 1 */
 
@@ -1953,6 +1985,8 @@ static void loop_stats(void)
 
 void alice_net_poll(void)
 {
+    extern void bt_pi_poll(void);
+    bt_pi_poll();                                   /* Bluetooth (src/alice/bt/bt_pi.c): it waits for the board itself */
     if (!anb) return;
     setup_poll();                                   /* the setup screen's changes written yet? */
     if (H()->restart == AN_RESTART) {               /* AmigaOS asks for a fresh start (Alice68-Card) */

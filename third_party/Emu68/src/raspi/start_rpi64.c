@@ -263,6 +263,8 @@ static volatile uint32_t post_kb=~0u, post_ms=~0u, post_gp=~0u, post_storage=~0u
 static volatile int post_hdf_boot = -1, post_hdf_other = -1, post_hdf_left = -1;   /* Alice68 hardfiles */
 static char post_wifi[48];                               /* Alice68 WiFi (alice_net.c), "" none yet */
 static volatile int post_wifi_col;
+static char post_bt[48];                                 /* Alice68 Bluetooth (bt_pi.c), "" none yet */
+static volatile int post_bt_col;
 static char post_eth[48];                                /* Alice68 Ethernet (alice_net.c), "" not in use */
 static volatile int post_eth_col;
 static volatile uint32_t post_rx, post_bad, post_err, post_id, post_len;
@@ -886,6 +888,17 @@ void frf_post_hardfiles(int bootable, int other, int left)
 #endif
 }
 
+/* the kernel's Bluetooth, in a few words (bt_pi.c, CPU1); col as the WiFi's */
+void frf_post_bt(const char *text, int col)
+{
+    unsigned i = 0;
+    for (; text && text[i] && i < sizeof post_bt - 1; i++) post_bt[i] = text[i];
+    post_bt[i] = 0;
+    post_bt_col = col;
+#ifdef ALICE_SPLASH
+    alice_status();
+#endif
+}
 /* the kernel's WiFi, in a few words (alice_net.c, CPU1); col 0 waiting, 1 good, 2 failed */
 void frf_post_wifi(const char *text, int col)
 {
@@ -1001,6 +1014,7 @@ static void alice_status_now(struct al_status *st)
     st->hdf_boot = post_hdf_boot; st->hdf_other = post_hdf_other; st->hdf_left = post_hdf_left;
     st->wifi = post_wifi; st->wifi_col = post_wifi_col;
     st->eth = post_eth; st->eth_col = post_eth_col;
+    st->bt = post_bt; st->bt_col = post_bt_col;
 }
 
 static void alice_status(void)

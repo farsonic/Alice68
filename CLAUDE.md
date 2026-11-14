@@ -61,6 +61,13 @@ User-facing docs: README.md. History of where code came from: docs/PROVENANCE.md
 - Ctrl-Amiga-Amiga: `frf_native_keyboard.c` spots Ctrl + both GUI keys; `frf_xhci_pt.c` sets
   `pt_hdr.reset_req` = 1; `alice68hdf.device`'s vertical blank server (`hdf_vbl`) sets 2 and calls
   `ColdReboot()`; not taken in 2 s: the Pi reboots (`aga_reboot`). Ctrl+LShift+F11: the Pi reboots.
+- `third_party/Emu68/src/alice/bt/` — Bluetooth (Classic HID): `bthost.[ch]` host-independent (H4/HCI, Broadcom
+  `.hcd` download, SSP/legacy pairing, L2CAP, HID boot protocol, empty SDP; `tools/bt-test` against a scripted
+  controller), `bt_pi.c` the Pi (PL011 UART0 on GPIO 30-33 ALT3 with RTS/CTS, BT_ON = expander line 0 via
+  `alice_mbox`, polled from `alice_net_poll`; firmware from the board's offered files; keys from `bt.dev=` in
+  bootargs; state and commands in the network board's `AN_OFF_BT`, `struct an_bt`). Keyboard reports go to
+  `frf_native_usb_keyboard_boot_report`, mice to `aga_virtual_mouse_update`/`pt_mouse_extra`. The mailbox
+  buffer is the WiFi coroutine's too: `alice_mbox` refuses (-9) while it is inside one.
 - `amiga/card.c` — `Alice68-Card` (GadTools): the SD card's partitions, files, cmdline.txt (options from
   `src/raspi/alice_opts.c`, shared with the setup screen; `cmd_apply` from `hdf/cmdedit.c`), config.txt,
   Kickstart, Restart (network board `an_hdr.restart` = `AN_RESTART`, CPU1 reboots). It works only through
@@ -97,6 +104,7 @@ python3 amiga/test/harness.py amiga/out/alice68-usb.device   # USB pass-through 
 python3 amiga/test/harness_netcheck.py amiga/out/Alice68-NetCheck   # the network check tool against a fake SANA-II driver
 tools/wifi-test/run.sh                   # WiFi protocol layer on the PC (expect "ALL OK")
 tools/hid-test/run.sh                    # the USB mouse report parser on the PC (expect "ALL OK")
+tools/bt-test/run.sh                     # the Bluetooth host against a scripted controller (expect "ALL OK")
 python3 amiga/test/harness_wheel.py amiga/out/Alice68-Wheel  # the mouse wheel tool against a fake card and input.device
 python3 amiga/test/harness_wifitool.py amiga/out/Alice68-WiFi   # the WiFi tool against a fake driver
 python3 amiga/test/harness_monitor.py amiga/out/Alice68-Monitor  # Alice68-Monitor DUMP against a fake board

@@ -19,6 +19,7 @@ static const char *const o_iso[] = { "", "iso=off" };
 static const char *const n_exfat[] = { "As config.txt", "Off", "Read-only", "Read-write", "Read-write, boot", 0 };
 static const char *const o_exfat[] = { "", "alice68.exfat=off", "alice68.exfat=ro", "alice68.exfat=rw", "alice68.exfat=boot" };
 static const char *const o_wifi[] = { "", "wifi=off" };
+static const char *const o_bt[] = { "", "bt=off" };
 static const char *const n_eth[] = { "When opened", "On at boot", "Off", 0 };
 static const char *const o_eth[] = { "", "eth=on", "eth=off" };
 static const char *const n_mac[] = { "Commodore OUI", "The Pi's own", 0 };
@@ -61,6 +62,9 @@ const struct opt_item opt_items[] = {
     { 2, OPT_TEXTV, 0, OT_UPPER, 2, 0, "Country",
       "Two letters, such as GB, DE or US: the WiFi channels allowed where you are.",
       0, 0, 0, "wifi.country" },
+    { 2, OPT_CHOICE, 0, 0, 0, 0, "Bluetooth",
+      "Bluetooth keyboards and mice, from the Pi's own chip. It starts once AmigaOS does (it needs BCM4345C0.hcd in the WIFI folder); pair them in Alice68-Card.",
+      "bt", n_onoff, o_bt, 0 },
     { 2, OPT_CHOICE, 0, 0, 0, 0, "Ethernet",
       "The Pi's Ethernet port, for alice68net.device unit 1: started when a program opens the unit, at boot, or never (Off leaves it to rondoval's genet.device).",
       "eth", n_eth, o_eth, 0 },

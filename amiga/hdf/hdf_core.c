@@ -220,11 +220,11 @@ static void take(struct fat *f, struct scan *sc, const uint8_t *e, const char *l
     sc->n++;
 }
 
-/* the WiFi firmware's files: anything in the WIFI folder; in the root, the
-   names the kernel looks for (cyfmac4345x..., brcmfmac4345x...) */
+/* the WiFi and Bluetooth firmware's files: anything in the WIFI folder; in the root, the
+   names the kernel looks for (cyfmac4345x..., brcmfmac4345x..., BCM4345C0.hcd) */
 static int fw_name(const char *n)
 {
-    static const char *const pre[] = { "cyfmac4345", "brcmfmac4345", 0 };
+    static const char *const pre[] = { "cyfmac4345", "brcmfmac4345", "bcm4345c", 0 };    /* bcm4345c: Bluetooth's .hcd */
     for (int i = 0; pre[i]; i++) {
         int k = 0;
         while (pre[i][k] && (n[k] == pre[i][k] || (n[k] >= 'A' && n[k] <= 'Z' && n[k] + 32 == pre[i][k]))) k++;

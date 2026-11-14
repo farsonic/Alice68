@@ -179,7 +179,7 @@ struct cell { const char *label; const char *value; uint16_t col; };
 void al_status_draw(const struct al_status *s)
 {
     if (!fb) return;
-    struct cell c[8];
+    struct cell c[9];
     unsigned n = 0;
     uint32_t st = s->stages;
     char in[48], hd[64];
@@ -217,9 +217,11 @@ void al_status_draw(const struct al_status *s)
         c[n++] = (struct cell){ "ETHERNET", s->eth, s->eth_col == 1 ? AL_OK : s->eth_col == 2 ? AL_FAIL : AL_WAIT };
     if (s->wifi && s->wifi[0])                           /* the kernel's WiFi */
         c[n++] = (struct cell){ "WIFI", s->wifi, s->wifi_col == 1 ? AL_OK : s->wifi_col == 2 ? AL_FAIL : AL_WAIT };
+    if (s->bt && s->bt[0] && n < 9)                      /* the kernel's Bluetooth (src/alice/bt/) */
+        c[n++] = (struct cell){ "BLUETOOTH", s->bt, s->bt_col == 1 ? AL_OK : s->bt_col == 2 ? AL_FAIL : AL_WAIT };
 
     al_fill(0, bar_y, fw, CELL_H, AL_BG);
-    uint32_t avail = fw > 2 * MARGIN ? fw - 2 * MARGIN : fw, x = MARGIN, need = 0, cw[8];
+    uint32_t avail = fw > 2 * MARGIN ? fw - 2 * MARGIN : fw, x = MARGIN, need = 0, cw[9];
     for (unsigned i = 0; i < n; i++) {                 /* each as wide as its words, and a gap */
         uint32_t k = slen(c[i].label) > slen(c[i].value) ? slen(c[i].label) : slen(c[i].value);
         cw[i] = 14 + k * 8 + 32;

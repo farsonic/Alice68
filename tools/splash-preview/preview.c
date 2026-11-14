@@ -93,7 +93,7 @@ int main(int argc, char **argv)
     struct al_info rows[] = { { "Version", ALICE_VERSION }, { "Build", "6be46ab (14.11.2026)" },
                               { "Emu68", "1.1.0-beta.1" }, { "AGA core", "1.120" }, { "Display", disp } };
     al_header(rows, sizeof rows / sizeof *rows);
-    struct al_status s = { 0x7fe, 1, 1, 0, 1, 1, 6, "connected MyNetwork", 1, 0, 0 };
+    struct al_status s = { 0x7fe, 1, 1, 0, 1, 1, 6, "connected MyNetwork", 1, 0, 0, "keyboard connected", 1 };
     al_status_draw(&s);
     al_panel(0, sys_log, sizeof sys_log / sizeof *sys_log);
     al_panel(1, usb_log, sizeof usb_log / sizeof *usb_log);

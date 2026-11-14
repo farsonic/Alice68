@@ -380,7 +380,9 @@ if(FRF_VIRTUAL_AGA)
         ${CMAKE_SOURCE_DIR}/src/alice/alice_net.c
         ${CMAKE_SOURCE_DIR}/src/alice/wifi/sdio.c
         ${CMAKE_SOURCE_DIR}/src/alice/wifi/chip.c
-        ${CMAKE_SOURCE_DIR}/src/alice/wifi/fmac.c)
+        ${CMAKE_SOURCE_DIR}/src/alice/wifi/fmac.c
+        ${CMAKE_SOURCE_DIR}/src/alice/bt/bthost.c
+        ${CMAKE_SOURCE_DIR}/src/alice/bt/bt_pi.c)
     target_include_directories(Emu68.elf PRIVATE ${CMAKE_SOURCE_DIR}/src/alice)
 endif()
 

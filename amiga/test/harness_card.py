@@ -132,7 +132,8 @@ def doio(o, p):
     setd0(cs_do(io))
 lvo(SYS, -456, doio)
 # the network board
-BOARD = alloc(0x400); mem.w32(BOARD, 0x4136384e)
+BOARD = alloc(0x4000); mem.w32(BOARD, 0x4136384e)
+BT = BOARD + 0x3800                                  # struct an_bt
 CD = alloc(48); mem.w32(CD + 32, BOARD)
 lvo(EXP, -72, lambda o, p: setd0(CD if (d(R.D0), d(R.D1)) == (0x6d73, 0x6b) else 0))
 # dos
@@ -213,7 +214,8 @@ for off in (-342, -306): lvo(GFX, off, lambda o, p: None)
 # ---- what the user does, one event per turn of the loop -------------------------------------------
 G = dict(TAB0=1, TAB1=2, TAB2=3, TAB3=4, SAVE=5, RESTART=6, STATUS=7, CARD=8, PARTS=9, EXFAT=10, USED=11, FREE=12, VOL=13, FILTER=14,
          PARENT=15, PATH=16, FILES=17, OPEN=18, BOOT=19, KICK=20, DELETE=21, RENAME=22, MKDIR=23, NAME=24, FINFO=25, KS=26, REVERT=27,
-         HELP0=28, LINES=31, LINE=32, ADDL=33, DELL=34, CMD=35, TNOTE=36, OPT0=37)
+         HELP0=28, LINES=31, LINE=32, ADDL=33, DELL=34, CMD=35, TNOTE=36, TAB4=37, BSTAT=38, BPAIRED=39, BFOUND=40, BSCAN=41, BPAIR=42,
+         BCONN=43, BFORGET=44, BKEY=45, BNOTE=46, OPT0=47)
 UP, CLOSE = 0x40, 0x200
 def typ(gid, s): mem.w_block(gstr[gid], s.encode('latin1') + b'\0')
 def ev(gid, code=0, cls=UP): return lambda: script.append((cls, code, gid))
@@ -241,9 +243,21 @@ steps = [
     lambda: (typ(G['LINE'], 'hdmi_force_hotplug=1'), script.append((UP, 0, G['ADDL']))),
     pick(G['LINES'], 'arm_64bit=1'), ev(G['DELL']), note('lines'),
     ev(G['SAVE']), note('saved2'),
+    lambda: bt_ready(), ev(G['TAB4']), ev(0, 0, 0x400000), note('bt'),
+    ev(G['BSCAN']), note('btscan'),
+    lambda: script.append((UP, 0, G['BFOUND'])), ev(G['BPAIR']), note('btpair'),
+    lambda: bt_paired(), ev(0, 0, 0x400000), ev(0, 0, 0x400000), note('btkept'),
+    lambda: script.append((UP, 0, G['BPAIRED'])), ev(G['BFORGET']), note('btforget'),
     ev(G['RESTART']), note('restart'),
     ev(0, 0, CLOSE),
 ]
+def bt_ready():
+    mem.w32(BT, 3); mem.w_block(BT + 56, b'ready\0'); mem.w32(BT + 28, 1)
+    mem.w_block(BT + 560, bytes([0x11, 0x12, 0x13, 0x14, 0x15, 0x16])); mem.w32(BT + 560 + 8, 0x002540); mem.w_block(BT + 560 + 16, b'Slim Keys\0')
+def bt_paired():
+    mem.w32(BT + 24, 1); mem.w_block(BT + 128, bytes([0x11, 0x12, 0x13, 0x14, 0x15, 0x16])); mem.w_block(BT + 136, bytes(range(16)))
+    mem.w32(BT + 152, 4); mem.w32(BT + 156, 3); mem.w_block(BT + 160, b'Slim Keys\0'); mem.w32(BT + 20, 1)
+    mem.w32(BT + 40, mem.r32(BT + 36))                  # the kernel took the command
 def wait2(o, p):
     st['step'] += 1
     if st['step'] > 200: fails.append('the event loop never ended'); st['done'] = True; cpu.end(); return
@@ -273,7 +287,7 @@ def chk(c, m):
 kinds = sorted(set(k for k, *_ in st['gadgets']))
 chk(kinds == [1, 4, 7, 12, 13], 'gadget kinds %s' % kinds)
 labels = [t for k, i, g, t in st['gadgets'] if i >= G['OPT0']]
-chk(labels[:4] == ['Picture', 'Scaling', 'Boot log panels', 'Hardfiles'] and 'Country' in labels and len(labels) == 15, 'settings gadgets %s' % labels)
+chk(labels[:4] == ['Picture', 'Scaling', 'Boot log panels', 'Hardfiles'] and 'Country' in labels and 'Bluetooth' in labels and len(labels) == 16, 'settings gadgets %s' % labels)
 chk(st.get('wintags', {}).get(0x80000076) == 632, 'window width %s' % st.get('wintags'))
 if 'start' in checks:
     c, calls, texts, lst = checks['start']
@@ -306,8 +320,16 @@ if 'saved2' in checks:
     c = checks['saved2'][0]
     chk(c.get('config.txt') == b'# the Pi\n[pi4]\n[all]\ninitramfs kick32.rom followkernel\nalice68.folder=Games:Spiele\nhdmi_force_hotplug=1\n', 'config.txt %r' % c.get('config.txt'))
     chk(b'hdf.boot=Spare' in c.get('cmdline.txt', b'') and b'hdf.boot=Prism' not in c['cmdline.txt'], 'boot from Spare.hdf: %r' % c.get('cmdline.txt'))
-missing = [k for k in ('start', 'free', 'saved', 'deleted', 'mkdir', 'renamed', 'hdf', 'inuse', 'lines', 'saved2', 'restart') if k not in checks]
+missing = [k for k in ('start', 'free', 'saved', 'deleted', 'mkdir', 'renamed', 'hdf', 'inuse', 'lines', 'saved2', 'bt', 'btscan', 'btpair', 'btkept', 'btforget', 'restart') if k not in checks]
 chk(not missing, 'steps never reached: %s' % missing)
+if 'bt' in checks:
+    chk(any('Slim Keys' in x and 'keyboard' in x and '16:15:14:13:12:11' in x for x in checks['bt'][3].get(G['BFOUND'], [])), 'found list %s' % checks['bt'][3].get(G['BFOUND']))
+    chk(checks['bt'][2].get(G['BSTAT'], '').startswith('ready'), 'Bluetooth state %r' % checks['bt'][2].get(G['BSTAT']))
+chk(mem.r32(BT + 36) >= 1 and mem.r32(BT + 32) == 3, 'Bluetooth commands: seq %d, last %d' % (mem.r32(BT + 36), mem.r32(BT + 32)))
+if 'btkept' in checks:
+    c = checks['btkept'][0].get('cmdline.txt', b'')
+    chk(b'bt.dev=161514131211:000102030405060708090a0b0c0d0e0f:1' in c, 'pairing kept in cmdline.txt: %r' % c)
+    chk(any('Slim Keys' in x and 'connected' in x for x in checks['btkept'][3].get(G['BPAIRED'], [])), 'paired list %s' % checks['btkept'][3].get(G['BPAIRED']))
 chk(mem.r32(BOARD + 44) == 0x52455354, 'restart not asked on the board (%x)' % mem.r32(BOARD + 44))
 chk(st.get('closed'), 'window not closed')
 chk(not opened, 'the device left open')

@@ -88,6 +88,7 @@ static void RectFill(APTR rp, LONG a, LONG b, LONG c, LONG d) { LY(gfx, -306, (U
 #define IDCMP_GADGETUP      0x40u
 #define IDCMP_CLOSEWINDOW   0x200u
 #define IDCMP_VANILLAKEY    0x200000u
+#define IDCMP_INTUITICKS    0x400000u
 
 struct TextAttr_ { const char *name; UWORD ysize; UBYTE style, flags; };
 struct NewGadget_ { WORD left, top, width, height; const char *text; const struct TextAttr_ *ta; UWORD id; ULONG flags; APTR vi; APTR user; };
@@ -198,6 +199,8 @@ enum {
     G_KS, G_REVERT, G_HELP0, G_HELP1, G_HELP2,
     /* Text files */
     G_LINES, G_LINE, G_ADDL, G_DELL, G_CMD, G_TNOTE,
+    /* Bluetooth */
+    G_TAB4, G_BSTAT, G_BPAIRED, G_BFOUND, G_BSCAN, G_BPAIR, G_BCONN, G_BFORGET, G_BKEY, G_BNOTE,
     G_OPT0                                           /* G_OPT0 + i: option i (alice_opts.c) */
 };
 #define G_N (G_OPT0 + OPT_MAX)
@@ -205,7 +208,7 @@ static APTR gad[G_N];
 static int gpage[G_N];                               /* the page a gadget is on, -1 always there */
 static UBYTE *win;
 static APTR vi;
-static APTR glist_top, glist_page[4];
+static APTR glist_top, glist_page[5];
 static int page = -1;
 static int x0, y0;
 
@@ -599,6 +602,120 @@ static int ask(const char *title, const char *text, const char *buttons)
     return (int)EasyRequestArgs(win, &es, 0);
 }
 
+static volatile UBYTE *find_board(void);
+/* ---- Bluetooth: the kernel's, through the network board (alice_net.h struct an_bt) ------------ */
+static volatile UBYTE *nb;                           /* the network board */
+static ULONG bt_gen_seen, bt_sig;
+static int bt_psel = -1, bt_fsel = -1;
+static struct Node_ n_bp[AN_BT_KEYS], n_bf[AN_BT_FOUND];
+static char t_bp[AN_BT_KEYS][80], t_bf[AN_BT_FOUND][80];
+static struct lv lv_bp = { { 0, 0, 0, 0, 0 }, n_bp, t_bp, 0, AN_BT_KEYS };
+static struct lv lv_bf = { { 0, 0, 0, 0, 0 }, n_bf, t_bf, 0, AN_BT_FOUND };
+static char bstat[120], bkey[120];
+static volatile struct an_bt *btb(void) { return nb ? (volatile struct an_bt *)(nb + AN_OFF_BT) : 0; }
+static void saddr(struct sb *b, const volatile unsigned char *a)
+{
+    static const char hx[] = "0123456789ABCDEF";
+    for (int i = 5; i >= 0; i--) { sc(b, hx[a[i] >> 4]); sc(b, hx[a[i] & 15]); if (i) sc(b, ':'); }
+}
+static ULONG bt_signature(void)
+{
+    volatile struct an_bt *x = btb();
+    if (!x) return 0;
+    ULONG h = x->state * 7 + x->nkeys * 131 + x->nfound * 977 + x->scanning * 3 + x->passkey + x->passkey_shown * 5 + x->keys_gen * 11;
+    for (int i = 0; i < 64 && x->msg[i]; i++) h = h * 31 + (UBYTE)x->msg[i];
+    for (ULONG i = 0; i < x->nkeys && i < AN_BT_KEYS; i++) h = h * 17 + x->keys[i].flags;
+    for (ULONG i = 0; i < x->nfound && i < AN_BT_FOUND; i++) h = h * 13 + (UBYTE)x->found[i].name[0] + x->found[i].addr[0];
+    return h;
+}
+static void bt_show(void)
+{
+    volatile struct an_bt *x = btb();
+    struct sb b = { bstat, 0, sizeof bstat };
+    if (!x) { ss(&b, "No Alice68 network board: Bluetooth needs an Alice68 kernel"); textset(G_BSTAT, bstat); return; }
+    static const char *const st[] = { "off", "waiting for its firmware (BCM4345C0.hcd in the WIFI folder)", "starting", "ready", "FAILED" };
+    ss(&b, x->state < 5 ? st[x->state] : "?");
+    char m[65];
+    for (int i = 0; i < 64; i++) { m[i] = x->msg[i]; if (!m[i]) break; }
+    m[64] = 0;
+    if (m[0] && x->state != 1) { ss(&b, ": "); ss(&b, m); }
+    textset(G_BSTAT, bstat);
+    lv_begin(&lv_bp, G_BPAIRED);
+    for (ULONG i = 0; i < x->nkeys && i < AN_BT_KEYS; i++) {
+        char *t = lv_add(&lv_bp);
+        struct sb l = { t, 0, 80 };
+        volatile struct an_btkey *k = &x->keys[i];
+        saddr(&l, k->addr); spad(&l, 19);
+        ss(&l, k->flags & AN_BTK_KEYBOARD ? (k->flags & AN_BTK_MOUSE ? "keyboard+mouse" : "keyboard") : k->flags & AN_BTK_MOUSE ? "mouse" : "device");
+        spad(&l, 34);
+        char nm[41]; for (int j = 0; j < 40; j++) { nm[j] = k->name[j]; if (!nm[j]) break; } nm[40] = 0;
+        ss(&l, nm); spad(&l, 50);
+        if (k->flags & AN_BTK_CONNECTED) ss(&l, "connected");
+    }
+    lv_end(&lv_bp, G_BPAIRED);
+    lv_begin(&lv_bf, G_BFOUND);
+    for (ULONG i = 0; i < x->nfound && i < AN_BT_FOUND; i++) {
+        char *t = lv_add(&lv_bf);
+        struct sb l = { t, 0, 80 };
+        volatile struct an_btfound *f = &x->found[i];
+        saddr(&l, f->addr); spad(&l, 19);
+        ULONG m2 = (f->cod >> 6) & 3;
+        ss(&l, m2 == 3 ? "keyboard+mouse" : m2 == 1 ? "keyboard" : m2 == 2 ? "mouse" : "device"); spad(&l, 34);
+        char nm[41]; for (int j = 0; j < 40; j++) { nm[j] = f->name[j]; if (!nm[j]) break; } nm[40] = 0;
+        ss(&l, nm[0] ? nm : "(no name yet)");
+    }
+    lv_end(&lv_bf, G_BFOUND);
+    b = (struct sb){ bkey, 0, sizeof bkey };
+    if (x->passkey_shown) { ss(&b, "Type "); char d[7]; ULONG v = x->passkey; for (int i = 5; i >= 0; i--) { d[i] = (char)('0' + v % 10); v /= 10; } d[6] = 0; ss(&b, d); ss(&b, " on the Bluetooth keyboard, then Enter"); }
+    else if (x->scanning) ss(&b, "Scanning for 10 seconds: put the keyboard or mouse in pairing mode now");
+    else if (x->pairing) ss(&b, "Pairing...");
+    textset(G_BKEY, bkey);
+    textset(G_BNOTE, "Paired devices are kept in cmdline.txt (bt.dev=...) and reconnect by themselves once AmigaOS starts.");
+}
+static void bt_cmd(ULONG cmd, const volatile unsigned char *addr)
+{
+    volatile struct an_bt *x = btb();
+    if (!x) { say("No Alice68 network board", 0); return; }
+    if (x->state != AN_BT_READY) { say("Bluetooth is not ready: ", x->state == AN_BT_NOFW ? "its firmware has not arrived" : "see the line above"); return; }
+    for (int i = 0; i < 6; i++) x->cmd_addr[i] = addr ? addr[i] : 0;
+    x->cmd = cmd;
+    x->cmd_seq = x->cmd_seq + 1;
+}
+/* the paired list changed: bt.dev= in cmdline.txt, at once (pairing would be lost otherwise) */
+static void bt_save_keys(void)
+{
+    volatile struct an_bt *x = btb();
+    if (!x) return;
+    static char ed[700];
+    struct sb b = { ed, 0, sizeof ed };
+    static const char hx[] = "0123456789abcdef";
+    ss(&b, "-bt.dev\n");
+    for (ULONG i = 0; i < x->nkeys && i < AN_BT_KEYS; i++) {
+        volatile struct an_btkey *k = &x->keys[i];
+        ss(&b, "+bt.dev=");
+        for (int j = 5; j >= 0; j--) { sc(&b, hx[k->addr[j] >> 4]); sc(&b, hx[k->addr[j] & 15]); }
+        sc(&b, ':');
+        for (int j = 0; j < 16; j++) { sc(&b, hx[k->key[j] >> 4]); sc(&b, hx[k->key[j] & 15]); }
+        sc(&b, ':'); sc(&b, (char)('0' + ((k->flags >> 1) & 3)));
+        sc(&b, '\n');
+    }
+    static char t[1200];
+    if (cmd_apply(cmd_file, ed, t, sizeof t) < 0) { say("Bluetooth: cmdline.txt would be too long to keep the pairing", 0); return; }
+    int e = write_text("cmdline.txt", t, slen(t));
+    if (e) { say("Bluetooth: the pairing could not be kept in cmdline.txt: ", cs_err(e)); return; }
+    scpy(cmd_file, t, sizeof cmd_file);
+    if (cmd_apply(cmd_base, ed, t, sizeof t) >= 0) { scpy(cmd_base, t, sizeof cmd_base); for (char *p = cmd_base; *p; p++) if (*p == '\n') *p = ' '; }
+    say("Bluetooth: the paired devices are kept in cmdline.txt", 0);
+}
+static void bt_tick(void)
+{
+    volatile struct an_bt *x = btb();
+    if (!x) return;
+    if (x->keys_gen != bt_gen_seen) { bt_gen_seen = x->keys_gen; bt_save_keys(); }
+    ULONG sg = bt_signature();
+    if (page == 4 && sg != bt_sig) { bt_sig = sg; bt_show(); }
+}
+
 /* ---- the window ----------------------------------------------------------------------- */
 static void page_frame(void)
 {
@@ -639,9 +756,9 @@ static int make_gadgets(void)
     struct TagItem txt[] = { { GTTX_Border, 1 }, { TAG_DONE, 0 } };
     struct TagItem ro[] = { { GTLV_ReadOnly, 1 }, { TAG_DONE, 0 } };
     struct TagItem sel[] = { { GTLV_ShowSelected, 0 }, { TAG_DONE, 0 } };
-    static const char *const tabs[] = { "Card", "Files", "Settings", "Text files" };
+    static const char *const tabs[] = { "Card", "Files", "Settings", "Text files", "Bluetooth" };
     APTR g = CreateContext(&glist_top);
-    for (int i = 0; i < 4; i++) g = mk(g, -1, BUTTON_KIND, G_TAB0 + i, i * 100, 0, 96, 14, tabs[i], PLACETEXT_IN, 0);
+    for (int i = 0; i < 5; i++) g = mk(g, -1, BUTTON_KIND, i < 4 ? G_TAB0 + i : G_TAB4, i * 82, 0, 80, 14, tabs[i], PLACETEXT_IN, 0);
     g = mk(g, -1, BUTTON_KIND, G_SAVE, 420, 0, 92, 14, "Save", PLACETEXT_IN, 0);
     g = mk(g, -1, BUTTON_KIND, G_RESTART, 520, 0, 96, 14, "Restart Pi", PLACETEXT_IN, 0);
     g = mk(g, -1, TEXT_KIND, G_STATUS, 0, 220, 616, 12, 0, 0, txt);
@@ -681,19 +798,19 @@ static int make_gadgets(void)
     int row[2] = { 0, 0 };
     for (int i = 0; i < opt_count && i < OPT_MAX; i++) {
         const struct opt_item *it = &opt_items[i];
-        int col = it->sec >= 2, y = 22 + row[col]++ * 15, x = col ? 452 : 140;
+        int col = it->sec >= 2, y = 22 + row[col]++ * 14, x = col ? 452 : 140;
         int id = G_OPT0 + i;
         opt_gadget_item[id] = i;
         if (it->kind == OPT_CHOICE) {
             struct TagItem ct[] = { { GTCY_Labels, (ULONG)it->names }, { GTCY_Active, ov.cur[i] }, { TAG_DONE, 0 } };
-            g = mk(g, 2, CYCLE_KIND, id, x, y, 156, 14, it->label, PLACETEXT_LEFT, ct);
+            g = mk(g, 2, CYCLE_KIND, id, x, y, 156, 13, it->label, PLACETEXT_LEFT, ct);
         } else {
             struct TagItem tt[] = { { GTST_String, (ULONG)ov.text[i] }, { GTST_MaxChars, it->maxlen }, { TAG_DONE, 0 } };
-            g = mk(g, 2, STRING_KIND, id, x, y, 156, 14, it->label, PLACETEXT_LEFT, tt);
+            g = mk(g, 2, STRING_KIND, id, x, y, 156, 13, it->label, PLACETEXT_LEFT, tt);
         }
     }
     struct TagItem kt[] = { { GTCY_Labels, (ULONG)rom_labels }, { GTCY_Active, (ULONG)(rom_cur < 0 ? 0 : rom_cur) }, { TAG_DONE, 0 } };
-    g = mk(g, 2, CYCLE_KIND, G_KS, 140, 22 + row[0] * 15, 156, 14, "Kickstart ROM", PLACETEXT_LEFT, kt);
+    g = mk(g, 2, CYCLE_KIND, G_KS, 140, 22 + row[0] * 14, 156, 13, "Kickstart ROM", PLACETEXT_LEFT, kt);
     for (int k = 0; k < 3; k++) g = mk(g, 2, TEXT_KIND, G_HELP0 + k, 8, 152 + k * 12, 600, 12, 0, 0, 0);
     g = mk(g, 2, BUTTON_KIND, G_REVERT, 8, 196, 200, 14, "Back to the card's", PLACETEXT_IN, 0);
     if (!g) return 0;
@@ -708,6 +825,19 @@ static int make_gadgets(void)
     struct TagItem cs_[] = { { GTST_MaxChars, 1000 }, { TAG_DONE, 0 } };
     g = mk(g, 3, STRING_KIND, G_CMD, 104, 164, 504, 14, "cmdline.txt", PLACETEXT_LEFT, cs_);
     g = mk(g, 3, TEXT_KIND, G_TNOTE, 8, 182, 600, 12, 0, 0, 0);
+    if (!g) return 0;
+
+    /* Bluetooth */
+    g = CreateContext(&glist_page[4]);
+    g = mk(g, 4, TEXT_KIND, G_BSTAT, 8, 22, 600, 12, 0, 0, txt);
+    g = mk(g, 4, LISTVIEW_KIND, G_BPAIRED, 8, 40, 432, 52, 0, 0, sel);
+    g = mk(g, 4, BUTTON_KIND, G_BCONN, 448, 40, 160, 14, "Connect now", PLACETEXT_IN, 0);
+    g = mk(g, 4, BUTTON_KIND, G_BFORGET, 448, 58, 160, 14, "Forget...", PLACETEXT_IN, 0);
+    g = mk(g, 4, LISTVIEW_KIND, G_BFOUND, 8, 100, 432, 68, 0, 0, sel);
+    g = mk(g, 4, BUTTON_KIND, G_BSCAN, 448, 100, 160, 14, "Scan", PLACETEXT_IN, 0);
+    g = mk(g, 4, BUTTON_KIND, G_BPAIR, 448, 118, 160, 14, "Pair", PLACETEXT_IN, 0);
+    g = mk(g, 4, TEXT_KIND, G_BKEY, 8, 176, 600, 12, 0, 0, txt);
+    g = mk(g, 4, TEXT_KIND, G_BNOTE, 8, 196, 600, 12, 0, 0, 0);
     if (!g) return 0;
     return 1;
 }
@@ -837,6 +967,8 @@ LONG card_main(const char *args, ULONG arglen)
     if (!csopen) put(VERSTR ": alice68hdf.device's card service did not open: is this an Alice68 kernel?\n");
     for (int i = 0; i < G_N; i++) gpage[i] = -1;
     load_all();
+    nb = find_board();
+    if (btb()) bt_gen_seen = btb()->keys_gen;
 
     scr = LockPubScreen(0);
     if (!scr) { rc = 20; goto end; }
@@ -847,7 +979,7 @@ LONG card_main(const char *args, ULONG arglen)
     struct TagItem wt[] = {
         { WA_(19), 632 }, { WA_(20), 248 }, { WA_(9), (ULONG)glist_top }, { WA_(11), (ULONG)VERSTR " - the SD card" },
         { WA_(31), 1 }, { WA_(32), 1 }, { WA_(33), 1 }, { WA_(38), 1 }, { WA_(42), 1 }, { WA_(22), (ULONG)scr },
-        { WA_(7), IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | IDCMP_GADGETUP | IDCMP_GADGETDOWN | IDCMP_MOUSEMOVE | IDCMP_MOUSEBUTTONS },
+        { WA_(7), IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | IDCMP_GADGETUP | IDCMP_GADGETDOWN | IDCMP_MOUSEMOVE | IDCMP_MOUSEBUTTONS | IDCMP_INTUITICKS },
         { TAG_DONE, 0 } };
     win = OpenWindowTagList(wt);
     UnlockPubScreen(scr); scr = 0;
@@ -879,6 +1011,19 @@ LONG card_main(const char *args, ULONG arglen)
                 if (id >= G_TAB0 && id <= G_TAB3) {
                     show_page(id - G_TAB0);
                     if (id == G_TAB3) text_page_show();
+                } else if (id == G_TAB4) { show_page(4); bt_sig = bt_signature(); bt_show(); }
+                else if (id == G_BSCAN) { bt_cmd(AN_BT_CMD_SCAN, 0); bt_fsel = -1; }
+                else if (id == G_BFOUND) bt_fsel = code;
+                else if (id == G_BPAIRED) bt_psel = code;
+                else if (id == G_BPAIR) {
+                    volatile struct an_bt *x = btb();
+                    if (!x || bt_fsel < 0 || (ULONG)bt_fsel >= x->nfound) say("Pair: Scan, then pick the device in the lower list", 0);
+                    else { bt_cmd(AN_BT_CMD_PAIR, x->found[bt_fsel].addr); say("Pairing - follow what the line above the note says", 0); }
+                } else if (id == G_BCONN || id == G_BFORGET) {
+                    volatile struct an_bt *x = btb();
+                    if (!x || bt_psel < 0 || (ULONG)bt_psel >= x->nkeys) say("Pick a paired device first", 0);
+                    else if (id == G_BCONN) bt_cmd(AN_BT_CMD_CONNECT, x->keys[bt_psel].addr);
+                    else if (ask(VERSTR, "Forget this Bluetooth device?\nIt has to be paired again to be used.", "Forget|Cancel")) { bt_cmd(AN_BT_CMD_FORGET, x->keys[bt_psel].addr); bt_psel = -1; }
                 } else if (id == G_SAVE) save_all();
                 else if (id == G_RESTART) {
                     volatile UBYTE *b = find_board();
@@ -945,6 +1090,7 @@ LONG card_main(const char *args, ULONG arglen)
                 }
             }
         }
+        bt_tick();
         if (page == 3) textset(G_TNOTE, changed() ? "Changes not saved yet: Save writes them (the old files are kept as .bak)" : "As on the card");
     }
 end:
@@ -953,7 +1099,7 @@ end:
         CloseWindow(win);
     }
     if (glist_top) FreeGadgets(glist_top);
-    for (int i = 0; i < 4; i++) if (glist_page[i]) FreeGadgets(glist_page[i]);
+    for (int i = 0; i < 5; i++) if (glist_page[i]) FreeGadgets(glist_page[i]);
     if (vi) FreeVisualInfo(vi);
     if (scr) UnlockPubScreen(scr);
     if (csopen) CloseDevice(csio);
