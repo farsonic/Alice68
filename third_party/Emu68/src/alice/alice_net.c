@@ -461,6 +461,7 @@ void alice_net_ring(const char *s, unsigned n) { ring_put(s, n); }
 static inline uint32_t mrd(uint32_t a) { return __builtin_bswap32(*(volatile uint32_t *)(uintptr_t)a); }
 static inline void mwr(uint32_t a, uint32_t v) { *(volatile uint32_t *)(uintptr_t)a = __builtin_bswap32(v); }
 static uint32_t *mbuf;
+static uint32_t mbox_code;                   /* the answer's code when a call failed (-4) */
 static volatile int mbox_busy;               /* the WiFi coroutine is inside mbox_tag (it yields there) */
 static int mbox_tag_(uint32_t tag, uint32_t a, uint32_t b, uint32_t *out);
 static int mbox_tag(uint32_t tag, uint32_t a, uint32_t b, uint32_t *out)
@@ -472,8 +473,12 @@ static int mbox_tag(uint32_t tag, uint32_t a, uint32_t b, uint32_t *out)
 }
 static int mbox_tag_(uint32_t tag, uint32_t a, uint32_t b, uint32_t *out)
 {
-    if (!mbuf) mbuf = tlsf_malloc_aligned(tlsf, 64, 64);
-    if (!mbuf) return -1;
+    /* The VideoCore reads the buffer by its physical address and can only reach the first
+       1 GB. The kernel's heap is at the top of RAM (start.c moves it there), so a buffer
+       from tlsf is out of its reach on a 2, 4 or 8 GB Pi: it answers, but cannot have read
+       the request (every call failed with -4 until November 2026). This one is in the low
+       page Emu68's own mailbox buffer (FBReq, support_rpi.c) uses, 2 KB past it. */
+    if (!mbuf) mbuf = (uint32_t *)0xffffff9000001800ull;
     mbuf[0] = __builtin_bswap32(8 * 4); mbuf[1] = 0; mbuf[2] = __builtin_bswap32(tag);
     mbuf[3] = __builtin_bswap32(8); mbuf[4] = 0; mbuf[5] = __builtin_bswap32(a); mbuf[6] = __builtin_bswap32(b); mbuf[7] = 0;
     arm_flush_cache((uintptr_t)mbuf, 64);
@@ -492,14 +497,16 @@ static int mbox_tag_(uint32_t tag, uint32_t a, uint32_t b, uint32_t *out)
     }
     arm_dcache_invalidate((uintptr_t)mbuf, 64);
     if (out) *out = __builtin_bswap32(mbuf[6]);
-    return __builtin_bswap32(mbuf[1]) == 0x80000000u ? 0 : -4;
+    uint32_t code = __builtin_bswap32(mbuf[1]);
+    if (code != 0x80000000u) { mbox_code = code; return -4; }
+    return 0;
 }
 /* The mailbox is shared with CPU0, CPU2 and the 68k's mailbox.resource, each of which may take
    another's answer: try again rather than give up. */
 static int mbox_try(uint32_t tag, uint32_t a, uint32_t b, uint32_t *out)
 {
     int e = -1;
-    for (int i = 0; i < 4 && e; i++) { e = mbox_tag(tag, a, b, out); if (e) wifi_log("mailbox tag %x: error %d, again\n", tag, e); }
+    for (int i = 0; i < 4 && e; i++) { e = mbox_tag(tag, a, b, out); if (e) wifi_log("mailbox tag %x: error %d (code %x), again\n", tag, e, e == -4 ? mbox_code : 0); }
     return e;
 }
 /* for bt_pi.c, from CPU1's loop (not the WiFi coroutine): -9 while the WiFi has the mailbox */

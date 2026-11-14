@@ -58,7 +58,7 @@ static int phase;                              /* 0 not started, 1 waiting for f
 static uint32_t phase_t, wait_since;
 static char shown[64];
 static int shown_col = -1;
-static int keys_loaded;
+static int keys_loaded, uart_done;
 
 static void blog(const char *s)
 {
@@ -232,7 +232,9 @@ void bt_pi_poll(void)
         if (!fw && !(alice_fw_offered() && now - wait_since > 3000) && now - wait_since < 30000) break;
         if (!fw) blog("[BT] no BCM4345C0.hcd in the WIFI folder: the chip's own (older) firmware is used");
         bh.fw = fw; bh.fwlen = fw ? len : 0;
-        uart_init();
+        if (!uart_done) { uart_init(); uart_done = 1; }
+        if ((int32_t)(now - phase_t) < 250) break;      /* a mailbox try at most 4 times a second */
+        phase_t = now;
         if (alice_mbox(0x00038041u, 128u + 0u, 0u, 0)) {           /* BT_ON low first; the mailbox may be busy */
             if (now - wait_since > 40000) { phase = 8; post("FAILED: BT_ON could not be set", 2); blog("[BT] FAIL: the mailbox would not set BT_ON"); }
             break;
@@ -242,12 +244,12 @@ void bt_pi_poll(void)
         break;
     }
     case 2:
-        if (now - phase_t < 20) break;
-        if (alice_mbox(0x00038041u, 128u + 0u, 1u, 0)) break;     /* BT_ON high; again next time if the mailbox was busy */
+        if ((int32_t)(now - phase_t) < 20) break;
+        if (alice_mbox(0x00038041u, 128u + 0u, 1u, 0)) { phase_t = now + 230; break; }   /* BT_ON high; again in 250 ms */
         phase = 3; phase_t = now;
         break;
     case 3:
-        if (now - phase_t < 250) break;                 /* the chip boots its ROM */
+        if ((int32_t)(now - phase_t) < 250) break;      /* the chip boots its ROM */
         while (!(rd(UART0 + U_FR) & FR_RXFE)) (void)rd(UART0 + U_DR);
         phase = 4;
         bt_init(&bh, &bio, bh.fw, bh.fwlen);

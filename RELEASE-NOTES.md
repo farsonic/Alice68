@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Fixed: the network driver's firmware (mailbox) calls never worked on a Pi with more than
+  1 GB.** Its request buffer came from the kernel's heap, which lives at the top of RAM, out
+  of the VideoCore's reach: every call failed (`mailbox tag ... error -4`), so the WiFi and
+  Bluetooth halves of the chip could not be switched on (WiFi only worked because it is on
+  at boot) and Bluetooth never started. The buffer is now in the low page Emu68's own
+  mailbox buffer uses. Bluetooth also no longer retries the mailbox on every turn of CPU1's
+  loop, which flooded the log.
 - **Bluetooth keyboards and mice** (Classic Bluetooth; not yet tested on a Pi). The kernel
   drives the Pi 4 chip's Bluetooth half on UART0 and loads its firmware
   (`BCM4345C0.hcd` in the WIFI folder, handed over by AmigaOS like the WiFi's). It pairs
