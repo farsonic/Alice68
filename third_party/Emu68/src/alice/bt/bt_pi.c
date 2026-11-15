@@ -163,7 +163,11 @@ static void io_mouse(void *c, int dx, int dy, int w, unsigned b)
 static void io_keys(void *c) { (void)c; }
 static const struct bt_io bio = { 0, io_send, io_baud, io_ms, io_log, io_kb, io_mouse, io_keys, io_kick };
 
-/* ---- cmdline.txt: bt=off, bt.dev=ADDR:KEY:KIND ----------------------------------------- */
+/* ---- cmdline.txt: bt=off, bt.dev=ADDR:KEY:KIND -----------------------------------------
+   KIND: a hex digit, 1 keyboard + 2 mouse + 4 LE. An LE device goes on with
+   :EDIV:RAND:T[:IRK] - EDIV 4 hex digits (the number), RAND 16 hex digits (its
+   bytes in order), T the address type (0 public, 1 random), IRK 32 hex digits.
+   KEY is then its LTK. Older kernels read the first three fields only. */
 static int word(const char *s, const char *w)
 {
     unsigned n = 0;
@@ -192,6 +196,23 @@ static void load_keys(void)
         for (int i = 0; i < 16 && ok; i++) { int h = hexv(q[2 * i]), l = hexv(q[2 * i + 1]); if (h < 0 || l < 0) ok = 0; else k[i] = (uint8_t)(h << 4 | l); }
         if (!ok) continue;
         uint32_t kind = q[32] == ':' && hexv(q[33]) >= 0 ? (uint32_t)hexv(q[33]) : 0;
+        if (kind & 4) {                                 /* LE: :EDIV:RAND:T[:IRK] */
+            const uint8_t *r = (const uint8_t *)q + 34;
+            uint8_t rand[8], irk[16]; uint32_t ediv = 0; int t = -1, has_irk = 0;
+            if (r[0] != ':') continue;
+            for (int i = 1; i <= 4 && ok; i++) { int v = hexv((char)r[i]); if (v < 0) ok = 0; else ediv = ediv << 4 | (uint32_t)v; }
+            if (!ok || r[5] != ':') continue;
+            for (int i = 0; i < 8 && ok; i++) { int h = hexv((char)r[6 + 2 * i]), l = hexv((char)r[7 + 2 * i]); if (h < 0 || l < 0) ok = 0; else rand[i] = (uint8_t)(h << 4 | l); }
+            if (!ok || r[22] != ':') continue;
+            t = hexv((char)r[23]);
+            if (t < 0 || t > 1) continue;
+            if (r[24] == ':') {
+                has_irk = 1;
+                for (int i = 0; i < 16 && has_irk; i++) { int h = hexv((char)r[25 + 2 * i]), l = hexv((char)r[26 + 2 * i]); if (h < 0 || l < 0) has_irk = 0; else irk[i] = (uint8_t)(h << 4 | l); }
+            }
+            bt_add_le_key(&bh, a, (uint8_t)t, k, (uint16_t)ediv, rand, has_irk ? irk : 0, kind << 1 & (BTK_KEYBOARD | BTK_MOUSE));
+            continue;
+        }
         bt_add_key(&bh, a, k, 4, kind << 1 & (BTK_KEYBOARD | BTK_MOUSE));
     }
 }
@@ -229,6 +250,11 @@ static void board_sync(void)
         for (int j = 0; j < 6; j++) k->addr[j] = bh.keys[i].addr[j];
         for (int j = 0; j < 16; j++) k->key[j] = bh.keys[i].key[j];
         k->type = bh.keys[i].type; k->flags = bh.keys[i].flags;
+        k->addr[6] = bh.keys[i].addr_type; k->addr[7] = bh.keys[i].has_irk;
+        volatile struct an_btle *e = &x->le[i];
+        for (int j = 0; j < 8; j++) e->rand[j] = bh.keys[i].rand[j];
+        e->ediv = bh.keys[i].ediv;
+        for (int j = 0; j < 16; j++) e->irk[j] = bh.keys[i].irk[j];
         for (int j = 0; j < 40; j++) { k->name[j] = bh.keys[i].name[j]; if (!bh.keys[i].name[j]) break; }
     }
     x->nfound = (unsigned)bh.nfound;

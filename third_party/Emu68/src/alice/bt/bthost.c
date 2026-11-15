@@ -80,6 +80,21 @@ void bt_addr_str(const uint8_t a[6], char o[18])
 #define C_LE_HOST        OP(3, 0x6d)
 #define C_LE_SCAN_PARAM  OP(8, 0x0b)
 #define C_LE_SCAN_ENABLE OP(8, 0x0c)
+#define C_LE_EVMASK      OP(8, 0x01)
+#define C_LE_BUFSIZE     OP(8, 0x02)
+#define C_LE_CREATE      OP(8, 0x0d)
+#define C_LE_CREATE_CANCEL OP(8, 0x0e)
+#define C_LE_ACC_CLEAR   OP(8, 0x10)
+#define C_LE_ACC_ADD     OP(8, 0x11)
+#define C_LE_CONN_UPDATE OP(8, 0x13)
+#define C_LE_ENCRYPT     OP(8, 0x17)
+#define C_LE_RAND        OP(8, 0x18)
+#define C_LE_START_ENC   OP(8, 0x19)
+#define C_LE_LTK_REPLY   OP(8, 0x1a)
+#define C_LE_LTK_NEG     OP(8, 0x1b)
+#define C_LE_RES_ADD     OP(8, 0x27)
+#define C_LE_RES_CLEAR   OP(8, 0x29)
+#define C_LE_RES_ENABLE  OP(8, 0x2d)
 #define C_SSP_MODE       OP(3, 0x56)
 #define C_LOCAL_VERSION  OP(4, 0x01)
 #define C_BUFFER_SIZE    OP(4, 0x05)
@@ -113,11 +128,13 @@ static void cmd_handle(struct bt_host *h, uint16_t op, uint16_t handle) { uint8_
 /* ---- ACL out ----------------------------------------------------------------- */
 static void acl_flush(struct bt_host *h)
 {
-    while (h->acl_free > 0 && h->aq_head != h->aq_tail) {
+    while (h->aq_head != h->aq_tail) {
         unsigned i = h->aq_head % BT_ACLQ;
+        uint16_t *pool = h->aclq_le[i] ? &h->le_free : &h->acl_free;   /* LE links: the LE buffers, if the controller has its own */
+        if (!*pool) break;
         h->io->send(h->io->ctx, h->aclq[i], h->aclq_len[i]);
         h->aq_head++;
-        h->acl_free--;
+        (*pool)--;
     }
 }
 /* an L2CAP frame on cid: one ACL packet (ours are all short) */
@@ -127,11 +144,12 @@ static void l2_send(struct bt_host *h, struct bt_conn *c, uint16_t cid, const ui
     unsigned i = h->aq_tail % BT_ACLQ;
     uint8_t *b = h->aclq[i];
     b[0] = 0x02;
-    put16(b + 1, (unsigned)(c->handle & 0x0fff) | 0x2000);      /* first, automatically flushable */
+    put16(b + 1, (unsigned)(c->handle & 0x0fff) | (c->le ? 0x0000u : 0x2000u));   /* first (LE: non-flushable, BR/EDR: flushable) */
     put16(b + 3, n + 4);
     put16(b + 5, n); put16(b + 7, cid);
     mcpy(b + 9, d, n);
     h->aclq_len[i] = (uint16_t)(n + 9);
+    h->aclq_le[i] = (uint8_t)(c->le && h->le_mtu);
     h->aq_tail++;
     acl_flush(h);
 }
@@ -222,8 +240,10 @@ static void setup_next(struct bt_host *h)
     case 7: mset(p, 0, 248); mcpy(p, name, sizeof name); sync_cmd(h, C_LOCAL_NAME, p, 248); break;
     case 8: put16(p, 0x2000); sync_cmd(h, C_PAGE_TIMEOUT, p, 2); break;          /* 5.12 s */
     case 9: put16(p, 0x0005); sync_cmd(h, C_LINK_POLICY, p, 2); break;           /* role switch, sniff */
-    case 10: p[0] = 1; p[1] = 0; sync_cmd(h, C_LE_HOST, p, 2); break;            /* LE on: the scan also hears LE devices */
-    case 11: p[0] = 0x02; sync_cmd(h, C_SCAN_ENABLE, p, 1); break;               /* page scan: paired devices reconnect */
+    case 10: p[0] = 1; p[1] = 0; sync_cmd(h, C_LE_HOST, p, 2); break;            /* LE on: LE keyboards and mice too */
+    case 11: sync_cmd(h, C_LE_BUFSIZE, 0, 0); break;
+    case 12: mset(p, 0, 8); p[0] = 0x1f; sync_cmd(h, C_LE_EVMASK, p, 8); break;   /* connections, adverts, updates, features, LTK requests */
+    case 13: p[0] = 0x02; sync_cmd(h, C_SCAN_ENABLE, p, 1); break;               /* page scan: paired devices reconnect */
     default:
         h->pending_op = 0;
         h->state = BT_READY;
@@ -309,6 +329,7 @@ static void startup_answer(struct bt_host *h, uint16_t op, const uint8_t *ret, u
     if (h->state == BT_INIT) {
         if (op == C_BDADDR && n >= 7) mcpy(h->bdaddr, ret + 1, 6);
         if (op == C_BUFFER_SIZE && n >= 8) { h->acl_mtu = le16(ret + 1); h->acl_free = le16(ret + 4); if (!h->acl_free) h->acl_free = 1; }
+        if (op == C_LE_BUFSIZE && n >= 4 && !st) { h->le_mtu = le16(ret + 1); h->le_free = ret[3]; if (!h->le_mtu || !h->le_free) h->le_mtu = h->le_free = 0; }
         if (op == C_LOCAL_VERSION && n >= 9) lg(h, "controller: HCI %u, revision %x, LMP %x, manufacturer %u", ret[1], le16(ret + 2), le16(ret + 6), le16(ret + 4));
         if (st && (op == C_BDADDR || op == C_BUFFER_SIZE)) { fail(h, "the chip did not answer its set-up"); return; }
         if (st) lg(h, "set-up command %x: status %u (going on)", op, st);
@@ -324,7 +345,7 @@ void bt_init(struct bt_host *h, const struct bt_io *io, const uint8_t *fw, unsig
     mset(h, 0, sizeof *h);
     mcpy(h->keys, keep, sizeof keep);
     h->nkeys = nk;
-    for (int i = 0; i < nk; i++) h->keys[i].flags &= ~BTK_CONNECTED;
+    for (int i = 0; i < nk; i++) { h->keys[i].flags &= ~BTK_CONNECTED; if (h->keys[i].flags & BTK_LE) h->le_lists_dirty = 1; }
     h->io = io;
     h->fw = fw; h->fwlen = fwlen;
     if (fw && !fw_check(h)) { h->fw = 0; h->fwlen = 0; }
@@ -336,6 +357,8 @@ void bt_init(struct bt_host *h, const struct bt_io *io, const uint8_t *fw, unsig
     h->step = S_RESET;
     sync_cmd(h, C_RESET, 0, 0);
 }
+
+static void le_l2_in(struct bt_host *h, struct bt_conn *c, uint16_t cid, const uint8_t *d, unsigned n);   /* btle.c */
 
 /* ---- L2CAP -------------------------------------------------------------------- */
 #define PSM_SDP     0x0001
@@ -508,6 +531,7 @@ static void l2_in(struct bt_host *h, struct bt_conn *c, const uint8_t *f, unsign
     unsigned len = le16(f);
     uint16_t cid = le16(f + 2);
     if (len + 4 > n) return;
+    if (c->le) { le_l2_in(h, c, cid, f + 4, len); return; }
     if (cid == 0x0001) { sig_in(h, c, f + 4, len); return; }
     struct bt_l2ch *ch = ch_by_lcid(c, cid);
     if (!ch || ch->state != CH_OPEN) return;
@@ -584,7 +608,7 @@ static void found_update(struct bt_host *h, const uint8_t a[6], uint8_t psr, uin
     }
 }
 /* an LE advertisement: HID ones (service 1812, or a keyboard/mouse appearance) are listed, marked LE */
-static void le_found(struct bt_host *h, const uint8_t a[6], const uint8_t *d, unsigned n, int8_t rssi)
+static void le_found(struct bt_host *h, const uint8_t a[6], uint8_t atype, const uint8_t *d, unsigned n, int8_t rssi)
 {
     char nm[BT_NAME]; nm[0] = 0;
     unsigned app = 0; int hid = 0;
@@ -612,8 +636,9 @@ static void le_found(struct bt_host *h, const uint8_t a[6], const uint8_t *d, un
         mset(f, 0, sizeof *f);
         mcpy(f->addr, a, 6);
         f->le = 1; f->named = 1;                        /* no name request over LE */
+        f->addr_type = atype & 1;
         f->cod = 5u << 8 | (app == 0x03c1 ? 0x40u : app == 0x03c2 ? 0x80u : 0);
-        lg(h, "found LE %a, appearance %x (Bluetooth LE: not served yet)", a, app);
+        lg(h, "found LE %a (address type %u), appearance %x", a, (uint32_t)atype, app);
     }
     f->rssi = rssi;
     if (nm[0]) mcpy(f->name, nm, BT_NAME);
@@ -625,6 +650,8 @@ static void le_scan_stop(struct bt_host *h)
     cmd(h, C_LE_SCAN_ENABLE, p, 2);
     h->le_scanning = 0;
 }
+static void next_name(struct bt_host *h);
+#include "btle.c"                                           /* LE: HID over GATT */
 static void next_name(struct bt_host *h)
 {
     for (int i = 0; i < h->nfound; i++) {
@@ -652,6 +679,7 @@ static void event(struct bt_host *h, const uint8_t *e, unsigned n)
     case 0x0e:                                          /* Command Complete */
         if (len < 3) return;
         h->credits = p[0];
+        le_cc(h, le16(p + 1), p + 3, len - 3);
         startup_answer(h, le16(p + 1), p + 3, len - 3);
         cmd_flush(h);
         return;
@@ -664,12 +692,17 @@ static void event(struct bt_host *h, const uint8_t *e, unsigned n)
             if (op == C_CREATE_CONN) { h->calling = 0; if (h->pairing) { h->pairing = 0; say(h, "could not reach the device"); } }
             if (op == C_INQUIRY) { h->scanning = 0; say(h, "scan refused"); }
             if (op == C_REMOTE_NAME) next_name(h);
+            if ((op >> 10) == 8) le_cstatus(h, op, p[0]);
             if (op == h->pending_op) startup_answer(h, op, p, 1);
         }
         cmd_flush(h);
         return;
     case 0x13:                                          /* Number Of Completed Packets */
-        for (unsigned i = 0; i < p[0] && 1 + 4 * i + 4 <= len; i++) h->acl_free = (uint16_t)(h->acl_free + le16(p + 1 + 4 * i + 2));
+        for (unsigned i = 0; i < p[0] && 1 + 4 * i + 4 <= len; i++) {
+            struct bt_conn *c = conn_of(h, le16(p + 1 + 4 * i) & 0x0fff);
+            uint16_t *pool = c && c->le && h->le_mtu ? &h->le_free : &h->acl_free;
+            *pool = (uint16_t)(*pool + le16(p + 1 + 4 * i + 2));
+        }
         acl_flush(h);
         return;
     case 0x01:                                          /* Inquiry Complete */
@@ -698,16 +731,8 @@ static void event(struct bt_host *h, const uint8_t *e, unsigned n)
         if (len < 15) return;
         found_update(h, p + 1, p[7], p[9] | p[10] << 8 | (uint32_t)p[11] << 16, le16(p + 12), (int8_t)p[14], p + 15, len - 15);
         return;
-    case 0x3e:                                          /* LE Meta: advertising reports (one after another) */
-        if (len >= 2 && p[0] == 0x02) {
-            unsigned m = p[1], i = 2;
-            for (unsigned r = 0; r < m && i + 10 <= len; r++) {
-                unsigned dl = p[i + 8];
-                if (i + 10 + dl > len) break;
-                le_found(h, p + i + 2, p + i + 9, dl, (int8_t)p[i + 9 + dl]);
-                i += 10 + dl;
-            }
-        }
+    case 0x3e:                                          /* LE Meta */
+        le_meta(h, p, len);
         return;
     case 0x07: {                                        /* Remote Name Request Complete */
         if (len < 7) return;
@@ -761,6 +786,7 @@ static void event(struct bt_host *h, const uint8_t *e, unsigned n)
         struct bt_conn *c = conn_of(h, le16(p + 1) & 0x0fff);
         if (!c) return;
         lg(h, "%a: disconnected (%u)", c->addr, p[3]);
+        if (c->le) le_gone(h, c);
         static const uint8_t up[8];
         int held = 0;
         for (int i = 0; i < 8; i++) held |= c->lastkb[i];
@@ -865,6 +891,7 @@ static void event(struct bt_host *h, const uint8_t *e, unsigned n)
         if (len < 4) return;
         struct bt_conn *c = conn_of(h, le16(p + 1) & 0x0fff);
         if (!c) return;
+        if (c->le) { le_enc_change(h, c, p[0], p[3]); return; }
         if (p[0] || !p[3]) { lg(h, "%a: not encrypted (%u)", c->addr, p[0]); return; }
         if (c->encrypted) return;
         c->encrypted = 1;
@@ -959,10 +986,11 @@ void bt_poll(struct bt_host *h)
     if (h->state != BT_READY) return;
     if (h->scanning && due(h, h->scan_end)) h->scanning = 0;
     if (!h->scanning && h->le_scanning) le_scan_stop(h);
-    /* paired devices: call each once after the start (they also call us) */
+    le_poll(h);
+    /* paired devices: call each once after the start (they also call us); LE ones advertise (le_poll) */
     if (!h->pairing && !h->scanning && !h->names_pending && !h->calling && h->reconnect_next < h->nkeys && due(h, h->reconnect_at)) {
         struct bt_key *k = &h->keys[h->reconnect_next++];
-        if (!conn_by_addr(h, k->addr)) { lg(h, "calling %a", k->addr); create_conn(h, k->addr); h->reconnect_at = now(h) + 6000; }
+        if (!(k->flags & BTK_LE) && !conn_by_addr(h, k->addr)) { lg(h, "calling %a", k->addr); create_conn(h, k->addr); h->reconnect_at = now(h) + 6000; }
     }
 }
 
@@ -973,6 +1001,7 @@ int bt_scan(struct bt_host *h)
     if (h->scanning) return 0;
     h->nfound = 0;
     h->heard_other = 0; h->heard_logged = 0;
+    le_cancel(h);                                       /* no scanning while the controller is connecting */
     uint8_t p[7] = { 0x33, 0x8b, 0x9e, 0x08, 0x00 };   /* GIAC, 10.24 s, no limit */
     cmd(h, C_INQUIRY, p, 5);
     p[0] = 1; put16(p + 1, 0x0060); put16(p + 3, 0x0030); p[5] = 0; p[6] = 0;   /* active (scan responses carry names), 60 ms / 30 ms */
@@ -989,8 +1018,18 @@ int bt_pair(struct bt_host *h, const uint8_t a[6])
 {
     if (h->state != BT_READY) return -1;
     struct bt_found *lf = found_of(h, a);
-    if (lf && lf->le) { say(h, "Bluetooth LE devices are not supported yet"); lg(h, "%a is a Bluetooth LE device: not supported yet", a); return -2; }
     if (h->scanning) { cmd(h, C_INQUIRY_CANCEL, 0, 0); h->scanning = 0; }
+    if (lf && lf->le) {                                 /* LE: connect, then SMP pairs it (btle.c) */
+        struct bt_conn *lc = conn_by_addr(h, a);
+        mcpy(h->pair_addr, a, 6);
+        h->pairing = 1;
+        h->passkey_shown = 0;
+        say(h, "pairing...");
+        lg(h, "pairing with LE %a", a);
+        if (lc && lc->le) { lc->pairing = 1; smp_start(h, lc); }
+        else le_connect_direct(h, a, lf->addr_type);
+        return 0;
+    }
     le_scan_stop(h);
     struct bt_conn *c = conn_by_addr(h, a);
     mcpy(h->pair_addr, a, 6);
@@ -1006,6 +1045,7 @@ int bt_connect(struct bt_host *h, const uint8_t a[6])
 {
     if (h->state != BT_READY || !key_of(h, a)) return -1;
     if (conn_by_addr(h, a)) return 0;
+    if (key_of(h, a)->flags & BTK_LE) { h->le_init_until = now(h); return 0; }   /* the accept list connects it when it advertises */
     h->reconnect_next = h->nkeys;                       /* the start-up's calls are over */
     create_conn(h, a);
     return 0;
@@ -1016,6 +1056,7 @@ int bt_forget(struct bt_host *h, const uint8_t a[6])
     if (c && h->state == BT_READY) { uint8_t r[3]; put16(r, c->handle); r[2] = 0x13; cmd(h, C_DISCONNECT, r, 3); }
     for (int i = 0; i < h->nkeys; i++)
         if (!mcmp(h->keys[i].addr, a, 6)) {
+            if (h->keys[i].flags & BTK_LE) h->le_lists_dirty = 1;
             for (int j = i; j + 1 < h->nkeys; j++) h->keys[j] = h->keys[j + 1];
             h->nkeys--;
             keys_changed(h);

@@ -283,6 +283,10 @@ def bt_ready():
 def bt_paired():
     mem.w32(BT + 24, 1); mem.w_block(BT + 128, bytes([0x11, 0x12, 0x13, 0x14, 0x15, 0x16])); mem.w_block(BT + 136, bytes(range(16)))
     mem.w32(BT + 152, 4); mem.w32(BT + 156, 3); mem.w_block(BT + 160, b'Slim Keys\0'); mem.w32(BT + 20, 1)
+    # an LE mouse with an IRK: keys[1] and le[1] (struct an_btle at BT + 1232, 28 bytes each)
+    mem.w32(BT + 24, 2); mem.w_block(BT + 200, bytes([0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 1, 1])); mem.w_block(BT + 208, bytes(range(0x20, 0x30)))
+    mem.w32(BT + 224, 0); mem.w32(BT + 228, 8 | 4 | 1); mem.w_block(BT + 232, b'LE Mouse\0')
+    mem.w_block(BT + 1260, bytes(range(1, 9))); mem.w32(BT + 1268, 0x1234); mem.w_block(BT + 1272, bytes(range(0x40, 0x50)))
     mem.w32(BT + 40, mem.r32(BT + 36))                  # the kernel took the command
 def wait2(o, p):
     st['step'] += 1
@@ -372,6 +376,7 @@ chk(mem.r32(BT + 36) >= 1 and mem.r32(BT + 32) == 3, 'Bluetooth commands: seq %d
 if 'btkept' in checks:
     c = checks['btkept'][0].get('cmdline.txt', b'')
     chk(b'bt.dev=161514131211:000102030405060708090a0b0c0d0e0f:1' in c, 'pairing kept in cmdline.txt: %r' % c)
+    chk(b'bt.dev=262524232221:202122232425262728292a2b2c2d2e2f:6:1234:0102030405060708:1:404142434445464748494a4b4c4d4e4f' in c, 'LE pairing kept in cmdline.txt: %r' % c)
     chk(any('Slim Keys' in x and 'connected' in x for x in checks['btkept'][3].get(G['BPAIRED'], [])), 'paired list %s' % checks['btkept'][3].get(G['BPAIRED']))
 chk(mem.r32(BOARD + 44) == 0x52455354, 'restart not asked on the board (%x)' % mem.r32(BOARD + 44))
 chk(st.get('closed'), 'window not closed')

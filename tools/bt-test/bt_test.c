@@ -16,7 +16,16 @@ static uint8_t sent[64][300]; static unsigned sentn[64], nsent, rd;
 static uint32_t clock_ms;
 static uint8_t kb[8]; static int nkb; static int mdx, mdy, mwh; static unsigned mbt; static int nmouse, nkeys_cb;
 static int verbose;
-static void io_send(void *c, const uint8_t *p, unsigned n) { (void)c; if (nsent < 64 && n <= 300) { memcpy(sent[nsent], p, n); sentn[nsent++] = n; } }
+static void io_send(void *c, const uint8_t *p, unsigned n)
+{
+    (void)c;
+    if (nsent == 64 && rd > 0) {                           /* full: what was read goes */
+        memmove(sent[0], sent[rd], (nsent - rd) * sizeof sent[0]); memmove(sentn, sentn + rd, (nsent - rd) * sizeof sentn[0]);
+        nsent -= rd; rd = 0;
+    }
+    if (nsent < 64 && n <= 300) { memcpy(sent[nsent], p, n); sentn[nsent++] = n; }
+    else { fails++; printf("FAIL: the sent list overflowed\n"); }
+}
 static void io_baud(void *c, uint32_t b) { (void)c; (void)b; }
 static uint32_t io_ms(void *c) { (void)c; return clock_ms; }
 static void io_log(void *c, const char *l) { (void)c; if (verbose) printf("  %s\n", l); }
@@ -43,7 +52,8 @@ static const uint8_t *next_cmd(uint16_t op, unsigned *plen, int line)
     if (got != op) { fails++; printf("FAIL %d: command %04x sent, wanted %04x\n", line, got, op); return 0; }
     if (plen) *plen = b[3];
     if (auto_ans) {
-        static const uint16_t complete[] = { 0x040b, 0x040c, 0x040d, 0x040e, 0x042b, 0x042c, 0x0402, 0 };
+        static const uint16_t complete[] = { 0x040b, 0x040c, 0x040d, 0x040e, 0x042b, 0x042c, 0x0402,
+                                             0x200b, 0x200c, 0x200e, 0x2010, 0x2011, 0x2013, 0x201a, 0x201b, 0x2027, 0x2029, 0x202d, 0 };
         int c = 0;
         for (int i = 0; complete[i]; i++) if (complete[i] == op) c = 1;
         if (c) cc0(op); else cstatus(op, 0);
@@ -201,9 +211,209 @@ static void startup(int with_fw)
     CMD(0x0c18); cc0(0x0c18);
     CMD(0x080f); cc0(0x080f);
     m = CMD(0x0c6d); CHECK(m && m[0] == 1, "LE host support on"); cc0(0x0c6d);
+    uint8_t lbs[4] = { 0, 27, 0, 4 };                      /* LE buffers: 27 bytes, 4 of them */
+    CMD(0x2002); cc(0x2002, lbs, 4);
+    m = CMD(0x2001); CHECK(m && m[0] == 0x1f, "LE events: connections, adverts, LTK requests"); cc0(0x2001);
     m = CMD(0x0c1a); CHECK(m && m[0] == 2, "page scan only"); cc0(0x0c1a);
     CHECK(H.state == BT_READY && H.bdaddr[0] == 0xa1 && H.acl_free == 8, "ready: state %d addr %02x buffers %u", H.state, H.bdaddr[0], H.acl_free);
     auto_ans = 1;
+}
+
+
+/* ---- a test-only AES-128 (FIPS-197), for the LE Encrypt answers and the expected SMP values ---- */
+static uint8_t sbox[256];
+static uint8_t xt(uint8_t a) { return (uint8_t)((a << 1) ^ ((a & 0x80) ? 0x1b : 0)); }
+static uint8_t rotl8(uint8_t x, int s) { return (uint8_t)((x << s) | (x >> (8 - s))); }
+static void sbox_init(void)
+{
+    uint8_t p = 1, q = 1;
+    do {
+        p = (uint8_t)(p ^ (uint8_t)(p << 1) ^ ((p & 0x80) ? 0x1b : 0));          /* p * 3 */
+        q ^= (uint8_t)(q << 1); q ^= (uint8_t)(q << 2); q ^= (uint8_t)(q << 4);   /* q / 3 */
+        if (q & 0x80) q ^= 0x09;
+        sbox[p] = (uint8_t)(q ^ rotl8(q, 1) ^ rotl8(q, 2) ^ rotl8(q, 3) ^ rotl8(q, 4) ^ 0x63);
+    } while (p != 1);
+    sbox[0] = 0x63;
+}
+static void aes128(const uint8_t key[16], const uint8_t in[16], uint8_t out[16])   /* most significant octet first */
+{
+    uint8_t w[176], s[16], t[16], rc = 1;
+    memcpy(w, key, 16);
+    for (int i = 16; i < 176; i += 4) {
+        uint8_t a[4] = { w[i - 4], w[i - 3], w[i - 2], w[i - 1] };
+        if (i % 16 == 0) { uint8_t x = a[0]; a[0] = (uint8_t)(sbox[a[1]] ^ rc); a[1] = sbox[a[2]]; a[2] = sbox[a[3]]; a[3] = sbox[x]; rc = xt(rc); }
+        for (int j = 0; j < 4; j++) w[i + j] = w[i - 16 + j] ^ a[j];
+    }
+    for (int i = 0; i < 16; i++) s[i] = in[i] ^ w[i];
+    for (int r = 1; r <= 10; r++) {
+        for (int i = 0; i < 16; i++) t[i] = sbox[s[i]];
+        for (int c = 0; c < 4; c++) for (int k = 0; k < 4; k++) s[k + 4 * c] = t[k + 4 * ((c + k) % 4)];
+        if (r < 10) for (int c = 0; c < 4; c++) {
+            uint8_t *m = s + 4 * c, a0 = m[0], a1 = m[1], a2 = m[2], a3 = m[3];
+            m[0] = (uint8_t)(xt(a0) ^ xt(a1) ^ a1 ^ a2 ^ a3);
+            m[1] = (uint8_t)(a0 ^ xt(a1) ^ xt(a2) ^ a2 ^ a3);
+            m[2] = (uint8_t)(a0 ^ a1 ^ xt(a2) ^ xt(a3) ^ a3);
+            m[3] = (uint8_t)(xt(a0) ^ a0 ^ a1 ^ a2 ^ xt(a3));
+        }
+        for (int i = 0; i < 16; i++) s[i] ^= w[16 * r + i];
+    }
+    memcpy(out, s, 16);
+}
+static void rev16(uint8_t *d, const uint8_t *s) { for (int i = 0; i < 16; i++) d[i] = s[15 - i]; }
+static void e_le(const uint8_t k[16], const uint8_t p[16], uint8_t o[16])   /* as SMP and HCI write them: least significant first */
+{
+    uint8_t K[16], P[16], O[16];
+    rev16(K, k); rev16(P, p); aes128(K, P, O); rev16(o, O);
+}
+static void c1(const uint8_t k[16], const uint8_t r[16], const uint8_t preq[7], const uint8_t pres[7], uint8_t iat, const uint8_t ia[6], uint8_t rat, const uint8_t ra[6], uint8_t o[16])
+{
+    uint8_t p1[16], p2[16], x[16];
+    p1[0] = iat; p1[1] = rat; memcpy(p1 + 2, preq, 7); memcpy(p1 + 9, pres, 7);
+    for (int i = 0; i < 16; i++) p1[i] ^= r[i];
+    e_le(k, p1, x);
+    memcpy(p2, ra, 6); memcpy(p2 + 6, ia, 6); memset(p2 + 12, 0, 4);
+    for (int i = 0; i < 16; i++) p2[i] ^= x[i];
+    e_le(k, p2, o);
+}
+static void s1(const uint8_t k[16], const uint8_t r1[16], const uint8_t r2[16], uint8_t o[16])
+{
+    uint8_t r[16]; memcpy(r, r2, 8); memcpy(r + 8, r1, 8); e_le(k, r, o);
+}
+static void hexle(uint8_t *d, const char *hex, int n)          /* a number written most significant first -> least first */
+{
+    for (int i = 0; i < n; i++) { unsigned v; sscanf(hex + 2 * (n - 1 - i), "%2x", &v); d[i] = (uint8_t)v; }
+}
+/* the controller's LE Encrypt and LE Rand: every one waiting is answered */
+static uint8_t rand_next = 0x30;
+static uint8_t last_rand[64]; static int nrand;
+static void crypto_run(void)
+{
+    for (;;) {
+        unsigned i;
+        for (i = rd; i < nsent; i++) {
+            uint16_t op = (uint16_t)(sent[i][1] | sent[i][2] << 8);
+            if (sent[i][0] == 0x01 && (op == 0x2017 || op == 0x2018)) break;
+        }
+        if (i >= nsent) return;
+        uint8_t *b = sent[i];
+        uint16_t op = (uint16_t)(b[1] | b[2] << 8);
+        b[0] = 0;                                           /* taken: the readers skip it */
+        if (op == 0x2017) { uint8_t o[17]; o[0] = 0; e_le(b + 4, b + 20, o + 1); cc(0x2017, o, 17); }
+        else { uint8_t o[9]; o[0] = 0; for (int k = 0; k < 8; k++) { o[1 + k] = rand_next++; if (nrand < 64) last_rand[nrand++] = o[1 + k]; } cc(0x2018, o, 9); }
+    }
+}
+/* the next ACL frame, on an LE fixed channel */
+static const uint8_t *le_acl(uint16_t want, unsigned *n, int line)
+{
+    uint16_t cid; unsigned k;
+    while (rd < nsent && sent[rd][0] != 0x02) rd++;
+    if (rd >= nsent) { fails++; printf("FAIL %d: no ACL frame on cid %x\n", line, want); return 0; }
+    const uint8_t *f = next_acl(&cid, &k, line);
+    if (cid != want) { fails++; printf("FAIL %d: ACL on cid %x (%02x), wanted cid %x\n", line, cid, f[0], want); return 0; }
+    if (n) *n = k;
+    return f;
+}
+#define LEACL(cid, n) le_acl((cid), (n), __LINE__)
+static void drain(void)                                    /* whatever was sent: commands answered, frames dropped */
+{
+    while (rd < nsent) {
+        if (sent[rd][0] == 0x01) next_cmd((uint16_t)(sent[rd][1] | sent[rd][2] << 8), 0, __LINE__);
+        else rd++;
+    }
+}
+static void le_ev(const uint8_t *p, unsigned n) { ev(0x3e, p, n); }
+static void le_conn(uint16_t hd, uint8_t ptype, const uint8_t a[6])
+{
+    uint8_t p[19] = { 0x01, 0, (uint8_t)hd, (uint8_t)(hd >> 8), 0, ptype };
+    memcpy(p + 6, a, 6); p[12] = 12; p[14] = 0; p[16] = 0xf4; p[17] = 1; p[18] = 0;
+    le_ev(p, 19);
+}
+static void le_adv(const uint8_t a[6], uint8_t atype, uint16_t appearance, int hid_uuid, const char *name)
+{
+    uint8_t p[64] = { 0x02, 1, 0x00, atype }; unsigned i = 4;
+    memcpy(p + i, a, 6); i += 6;
+    unsigned dl_at = i++, d0 = i;
+    if (appearance) { p[i++] = 3; p[i++] = 0x19; p[i++] = (uint8_t)appearance; p[i++] = (uint8_t)(appearance >> 8); }
+    if (hid_uuid) { p[i++] = 3; p[i++] = 0x03; p[i++] = 0x12; p[i++] = 0x18; }
+    unsigned nl = (unsigned)strlen(name); p[i++] = (uint8_t)(nl + 1); p[i++] = 0x09; memcpy(p + i, name, nl); i += nl;
+    p[dl_at] = (uint8_t)(i - d0);
+    p[i++] = (uint8_t)-55;
+    le_ev(p, i);
+}
+static void att_in(uint16_t hd, const uint8_t *d, unsigned n) { acl_in(hd, 4, d, n, 0); }
+static void smp_in(uint16_t hd, const uint8_t *d, unsigned n) { acl_in(hd, 6, d, n, 0); }
+/* SMP legacy pairing as the device; the host's passkey becomes the TK when asked; stk: what the host must use */
+static void le_pair_device(uint16_t hd, const uint8_t a[6], uint8_t atype, uint8_t io_cap, uint8_t auth, uint8_t rdist, int use_host_passkey, uint8_t stk[16])
+{
+    unsigned n;
+    const uint8_t *q = LEACL(6, &n);
+    uint8_t preq[7] = { 0 };
+    CHECK(q && n == 7 && q[0] == 0x01 && q[1] == 0x00 && q[4] == 16 && q[6] == 0x03, "pairing request: DisplayOnly, bonding, its LTK and identity");
+    if (q) memcpy(preq, q, 7);
+    uint8_t pres[7] = { 0x02, io_cap, 0, auth, 16, 0, rdist };
+    nrand = 0;
+    smp_in(hd, pres, 7);
+    crypto_run();
+    uint8_t tk[16]; memset(tk, 0, 16);
+    if (use_host_passkey) { CHECK(H.passkey_shown, "a passkey shown"); tk[0] = (uint8_t)H.passkey; tk[1] = (uint8_t)(H.passkey >> 8); tk[2] = (uint8_t)(H.passkey >> 16); }
+    uint8_t mrand[16]; memcpy(mrand, last_rand + (use_host_passkey ? 8 : 0), 16);
+    uint8_t want[16]; c1(tk, mrand, preq, pres, 0, H.bdaddr, atype, a, want);
+    q = LEACL(6, &n);
+    CHECK(q && n == 17 && q[0] == 0x03 && !memcmp(q + 1, want, 16), "the host's confirm is c1(TK, Mrand, ...)");
+    uint8_t srand[16]; for (int i = 0; i < 16; i++) srand[i] = (uint8_t)(0xa0 + i);
+    uint8_t sc[17]; sc[0] = 0x03; c1(tk, srand, preq, pres, 0, H.bdaddr, atype, a, sc + 1);
+    smp_in(hd, sc, 17);
+    q = LEACL(6, &n);
+    CHECK(q && n == 17 && q[0] == 0x04 && !memcmp(q + 1, mrand, 16), "then its random");
+    uint8_t sr[17]; sr[0] = 0x04; memcpy(sr + 1, srand, 16);
+    smp_in(hd, sr, 17);
+    crypto_run();
+    s1(tk, srand, mrand, stk);
+    const uint8_t *e = CMD(0x2019);
+    static const uint8_t z[10];
+    CHECK(e && (e[0] | e[1] << 8) == hd && !memcmp(e + 2, z, 10) && !memcmp(e + 12, stk, 16), "encryption with the STK = s1(TK, Srand, Mrand)");
+    uint8_t ec[4] = { 0, (uint8_t)hd, (uint8_t)(hd >> 8), 1 };
+    ev(0x08, ec, 4);
+}
+static const uint8_t LTK2[16] = { 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f, 0x60 };
+static const uint8_t RAND2[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+static const uint8_t IRK2[16] = { 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9a, 0x9b, 0x9c, 0x9d, 0x9e, 0x9f, 0xa0 };
+static void le_give_keys(uint16_t hd, const uint8_t a[6], uint8_t atype, int with_id)
+{
+    uint8_t d[17]; d[0] = 0x06; memcpy(d + 1, LTK2, 16); smp_in(hd, d, 17);
+    uint8_t m[11]; m[0] = 0x07; m[1] = 0x34; m[2] = 0x12; memcpy(m + 3, RAND2, 8); smp_in(hd, m, 11);
+    if (with_id) {
+        d[0] = 0x08; memcpy(d + 1, IRK2, 16); smp_in(hd, d, 17);
+        uint8_t ia[8]; ia[0] = 0x09; ia[1] = atype; memcpy(ia + 2, a, 6); smp_in(hd, ia, 8);
+    }
+}
+/* GATT as a boot mouse: HID service 0x10-0x20, Protocol Mode 0x12, Boot Mouse Input 0x14 (CCCD 0x15) */
+static void le_gatt_boot_mouse(uint16_t hd)
+{
+    unsigned n;
+    const uint8_t *q = LEACL(4, &n);
+    CHECK(q && q[0] == 0x02, "exchange MTU");
+    uint8_t mtu[3] = { 0x03, 23, 0 }; att_in(hd, mtu, 3);
+    q = LEACL(4, &n);
+    CHECK(q && n == 9 && q[0] == 0x06 && q[5] == 0x00 && q[6] == 0x28 && q[7] == 0x12 && q[8] == 0x18, "find the HID service");
+    uint8_t sv[5] = { 0x07, 0x10, 0, 0x20, 0 }; att_in(hd, sv, 5);
+    q = LEACL(4, &n);
+    CHECK(q && q[0] == 0x08 && q[1] == 0x10 && q[3] == 0x20 && q[5] == 0x03 && q[6] == 0x28, "its characteristics");
+    uint8_t ch[16] = { 0x09, 7, 0x11, 0, 0x06, 0x12, 0, 0x4e, 0x2a, 0x13, 0, 0x12, 0x14, 0, 0x33, 0x2a }; att_in(hd, ch, 16);
+    q = LEACL(4, &n);
+    CHECK(q && q[0] == 0x08 && q[1] == 0x14, "more characteristics from 0x14");
+    uint8_t er[5] = { 0x01, 0x08, 0x14, 0, 0x0a }; att_in(hd, er, 5);
+    q = LEACL(4, &n);
+    CHECK(q && q[0] == 0x04 && q[1] == 0x10, "descriptors");
+    uint8_t fi[6] = { 0x05, 1, 0x15, 0, 0x02, 0x29 }; att_in(hd, fi, 6);
+    q = LEACL(4, &n);
+    CHECK(q && q[0] == 0x04 && q[1] == 0x16, "more descriptors");
+    uint8_t er2[5] = { 0x01, 0x04, 0x16, 0, 0x0a }; att_in(hd, er2, 5);
+    q = LEACL(4, &n);
+    CHECK(q && n == 4 && q[0] == 0x52 && q[1] == 0x12 && q[3] == 0, "protocol mode: boot");
+    q = LEACL(4, &n);
+    CHECK(q && n == 5 && q[0] == 0x12 && q[1] == 0x15 && q[3] == 1 && q[4] == 0, "boot mouse notifications on");
+    uint8_t wr = 0x13; att_in(hd, &wr, 1);
 }
 
 int main(int argc, char **argv)
@@ -285,7 +495,6 @@ int main(int argc, char **argv)
         for (int k = 0; k < H.nfound; k++) if (H.found[k].le) lf = &H.found[k];
         CHECK(lf && !strcmp(lf->name, "Keys LE") && (lf->cod & 0x1f00) == 0x500, "marked LE, named: %s", lf ? lf->name : "-");
         CHECK(H.heard_other == 2, "the beacon heard, not listed (%u)", H.heard_other);
-        CHECK(bt_pair(&H, LEKB) == -2 && strstr(H.status, "LE"), "pairing an LE device refused: %s", H.status);
         H.nfound--;                                        /* the rest as before */
     }
     CHECK(H.nfound == 2 && !strcmp(H.found[0].name, "BT Mouse") && H.found[1].clkoff == 0x1234, "found %d: '%s'", H.nfound, H.found[0].name);
@@ -386,6 +595,151 @@ int main(int argc, char **argv)
     kc = nkeys_cb;
     CHECK(!bt_forget(&H, MOUSE) && H.nkeys == 2 && nkeys_cb == kc + 1, "mouse forgotten");
     p = CMD(0x0406); CHECK(p && p[0] == 0x41, "and disconnected");
+
+
+    /* LE 0: the AES and SMP's c1 and s1 against the specifications' examples */
+    sbox_init();
+    {
+        uint8_t k[16], pt[16], o[16], w[16];
+        for (int i = 0; i < 16; i++) { k[i] = (uint8_t)i; pt[i] = (uint8_t)(i * 0x11); }
+        aes128(k, pt, o); hexle(w, "5ac5b47080b7cdd830047b6ad8e0c469", 16);
+        CHECK(!memcmp(o, w, 16), "AES-128 as FIPS-197");
+        uint8_t z[16] = { 0 }, r[16], preq[7], pres[7], ia[6], ra[6];
+        hexle(r, "5783D52156AD6F0E6388274EC6702EE0", 16); hexle(preq, "07071000000101", 7); hexle(pres, "05000800000302", 7);
+        hexle(ia, "A1A2A3A4A5A6", 6); hexle(ra, "B1B2B3B4B5B6", 6);
+        c1(z, r, preq, pres, 1, ia, 0, ra, o); hexle(w, "1e1e3fef878988ead2a74dc5bef13b86", 16);
+        CHECK(!memcmp(o, w, 16), "c1 as the SMP specification");
+        uint8_t r1[16], r2[16];
+        hexle(r1, "000F0E0D0C0B0A091122334455667788", 16); hexle(r2, "010203040506070899AABBCCDDEEFF00", 16);
+        s1(z, r1, r2, o); hexle(w, "9a1fe1f0e8b0f49b5b4216ae796da062", 16);
+        CHECK(!memcmp(o, w, 16), "s1 as the SMP specification");
+    }
+
+    {
+    /* LE 1: a mouse (random static address) found by a scan, paired Just Works, boot protocol */
+    memset(&H, 0, sizeof H);
+    startup(0);
+    CHECK(H.le_mtu == 27 && H.le_free == 4, "LE buffers of their own");
+    static const uint8_t LEMS[6] = { 0x61, 0x62, 0x63, 0x64, 0x65, 0xc6 };
+    reset_sent();
+    CHECK(!bt_scan(&H), "scan");
+    CMD(0x0401); CMD(0x200b); CMD(0x200c);
+    le_adv(LEMS, 1, 0x03c2, 0, "LE Mouse");
+    CHECK(H.nfound == 1 && H.found[0].le && H.found[0].addr_type == 1 && !strcmp(H.found[0].name, "LE Mouse"), "the LE mouse found");
+    CHECK(!bt_pair(&H, LEMS), "pair it");
+    CMD(0x0402); CMD(0x200c);
+    const uint8_t *lc = CMD(0x200d);
+    CHECK(lc && lc[4] == 0 && lc[5] == 1 && !memcmp(lc + 6, LEMS, 6) && lc[12] == 0, "LE connect to it (random address)");
+    le_conn(0x0050, 1, LEMS);
+    uint8_t stk[16];
+    le_pair_device(0x0050, LEMS, 1, 0x03, 0x01, 0x03, 0, stk);
+    int kcb = nkeys_cb;
+    le_give_keys(0x0050, LEMS, 1, 1);
+    CHECK(H.nkeys == 1 && (H.keys[0].flags & BTK_LE) && (H.keys[0].flags & BTK_MOUSE) && !memcmp(H.keys[0].key, LTK2, 16) &&
+          H.keys[0].ediv == 0x1234 && !memcmp(H.keys[0].rand, RAND2, 8) && H.keys[0].has_irk && H.keys[0].addr_type == 1 && nkeys_cb == kcb + 1,
+          "bonded: its LTK, EDIV, Rand and IRK kept (%d keys)", H.nkeys);
+    le_gatt_boot_mouse(0x0050);
+    CHECK(strstr(H.status, "mouse connected") && (H.keys[0].flags & BTK_CONNECTED), "mouse connected: %s", H.status);
+    int nm0 = nmouse;
+    uint8_t note[7] = { 0x1b, 0x14, 0, 0x01, 5, 0xfb, 1 }; att_in(0x0050, note, 7);
+    CHECK(nmouse == nm0 + 1 && mdx == 5 && mdy == -5 && mwh == 1 && mbt == 1, "a notification moves the mouse (%d,%d,%d,%u)", mdx, mdy, mwh, mbt);
+    uint8_t cpu[12] = { 0x12, 9, 8, 0, 6, 0, 12, 0, 0, 0, 0xf4, 1 }; acl_in(0x0050, 5, cpu, 12, 0);
+    unsigned ln; const uint8_t *q = LEACL(5, &ln);
+    CHECK(q && ln == 6 && q[0] == 0x13 && q[1] == 9 && q[4] == 0, "connection parameters accepted");
+    q = CMD(0x2013); CHECK(q && q[0] == 0x50 && q[2] == 6 && q[4] == 12, "and asked of the controller");
+    uint8_t ask[7] = { 0x10, 1, 0, 0xff, 0xff, 0x00, 0x28 }; att_in(0x0050, ask, 7);
+    q = LEACL(4, &ln); CHECK(q && ln == 5 && q[0] == 0x01 && q[1] == 0x10 && q[4] == 0x0a, "its GATT questions: nothing here");
+    uint8_t dis[4] = { 0, 0x50, 0, 0x13 }; ev(0x05, dis, 4);
+    CHECK(mbt == 0 && nmouse == nm0 + 2 && !(H.keys[0].flags & BTK_CONNECTED), "disconnected: the buttons let go");
+    /* it comes back: the accept list (with its IRK) connects it, its stored key encrypts */
+    clock_ms += 600; bt_poll(&H);
+    CMD(0x2010);
+    q = CMD(0x2011); CHECK(q && q[0] == 1 && !memcmp(q + 1, LEMS, 6), "on the accept list");
+    q = CMD(0x202d); CHECK(q && q[0] == 0, "resolving off to change it");
+    CMD(0x2029);
+    q = CMD(0x2027); CHECK(q && q[0] == 1 && !memcmp(q + 1, LEMS, 6) && !memcmp(q + 7, IRK2, 16), "its IRK on the resolving list");
+    q = CMD(0x202d); CHECK(q && q[0] == 1, "resolving on");
+    q = CMD(0x200d); CHECK(q && q[4] == 1, "connect by the accept list");
+    CHECK(H.le_init == 2, "waiting for it");
+    le_conn(0x0051, 1, LEMS);
+    q = CMD(0x2019);
+    CHECK(q && q[0] == 0x51 && !memcmp(q + 2, RAND2, 8) && q[10] == 0x34 && q[11] == 0x12 && !memcmp(q + 12, LTK2, 16), "encrypted with the stored LTK, EDIV, Rand");
+    uint8_t ec[4] = { 0, 0x51, 0, 1 }; ev(0x08, ec, 4);
+    le_gatt_boot_mouse(0x0051);
+    att_in(0x0051, note, 7);
+    CHECK(mdx == 5 && (H.keys[0].flags & BTK_CONNECTED), "the mouse works again");
+    uint8_t ltkr[13] = { 0x05, 0x51, 0 }; le_ev(ltkr, 13);
+    q = CMD(0x201a); CHECK(q && q[0] == 0x51 && !memcmp(q + 2, LTK2, 16), "an LTK request answered from the key");
+
+    /* LE 2: a keyboard (public address) with a passkey, report mode from its Report Map */
+    static const uint8_t LEKB3[6] = { 0x71, 0x72, 0x73, 0x74, 0x75, 0x76 };
+    reset_sent();
+    CHECK(!bt_scan(&H), "scan again");
+    CMD(0x0401); CMD(0x200b); CMD(0x200c);
+    le_adv(LEKB3, 0, 0x03c1, 1, "LE Keys");
+    CHECK(!bt_pair(&H, LEKB3), "pair the keyboard");
+    CMD(0x0402); CMD(0x200c);
+    lc = CMD(0x200d); CHECK(lc && lc[5] == 0, "LE connect (public address)");
+    le_conn(0x0060, 0, LEKB3);
+    {
+        unsigned n2;
+        const uint8_t *pr = LEACL(6, &n2);
+        CHECK(pr && pr[3] == 0x05, "keyboard: bonding with MITM");
+        rd--;                                              /* le_pair_device reads it again */
+    }
+    uint8_t stk2[16];
+    le_pair_device(0x0060, LEKB3, 0, 0x02, 0x05, 0x01, 1, stk2);
+    CHECK(H.passkey < 1000000 && !H.passkey_shown, "the passkey was shown, now gone");
+    le_give_keys(0x0060, LEKB3, 0, 0);
+    struct bt_key *k3 = 0;
+    for (int i = 0; i < H.nkeys; i++) if (!memcmp(H.keys[i].addr, LEKB3, 6)) k3 = &H.keys[i];
+    CHECK(k3 && (k3->flags & BTK_LE) && (k3->flags & BTK_KEYBOARD) && !k3->has_irk && k3->addr_type == 0, "the keyboard bonded (no IRK)");
+    q = LEACL(4, &ln); uint8_t mtu[3] = { 0x03, 23, 0 }; att_in(0x0060, mtu, 3);
+    q = LEACL(4, &ln); uint8_t sv[5] = { 0x07, 0x30, 0, 0x40, 0 }; att_in(0x0060, sv, 5);
+    q = LEACL(4, &ln);
+    uint8_t ch[16] = { 0x09, 7, 0x31, 0, 0x12, 0x32, 0, 0x4d, 0x2a, 0x35, 0, 0x02, 0x36, 0, 0x4b, 0x2a }; att_in(0x0060, ch, 16);
+    q = LEACL(4, &ln); uint8_t er[5] = { 0x01, 0x08, 0x36, 0, 0x0a }; att_in(0x0060, er, 5);
+    q = LEACL(4, &ln); uint8_t fi[10] = { 0x05, 1, 0x33, 0, 0x02, 0x29, 0x34, 0, 0x08, 0x29 }; att_in(0x0060, fi, 10);
+    q = LEACL(4, &ln); uint8_t er2[5] = { 0x01, 0x04, 0x35, 0, 0x0a }; att_in(0x0060, er2, 5);
+    q = LEACL(4, &ln); CHECK(q && q[0] == 0x0a && q[1] == 0x34, "read the Report Reference");
+    uint8_t rr[3] = { 0x0b, 1, 1 }; att_in(0x0060, rr, 3);
+    q = LEACL(4, &ln); CHECK(q && q[0] == 0x0a && q[1] == 0x36, "read the Report Map");
+    static const uint8_t map[] = { 0x05, 0x01, 0x09, 0x06, 0xa1, 0x01, 0x85, 0x01, 0x05, 0x07, 0x19, 0xe0, 0x29, 0xe7, 0x15, 0x00,
+        0x25, 0x01, 0x75, 0x01, 0x95, 0x08, 0x81, 0x02, 0x95, 0x01, 0x75, 0x08, 0x81, 0x01, 0x95, 0x06, 0x75, 0x08, 0x15, 0x00,
+        0x25, 0x65, 0x05, 0x07, 0x19, 0x00, 0x29, 0x65, 0x81, 0x00, 0xc0 };
+    unsigned at = 0;
+    while (q && (q[0] == 0x0a || q[0] == 0x0c)) {
+        if (q[0] == 0x0c) CHECK((unsigned)(q[3] | q[4] << 8) == at, "read blob at %u", at);
+        unsigned k = sizeof map - at > 22 ? 22 : sizeof map - at;
+        uint8_t r[23]; r[0] = q[0] == 0x0a ? 0x0b : 0x0d; memcpy(r + 1, map + at, k); at += k;
+        att_in(0x0060, r, k + 1);
+        q = LEACL(4, &ln);
+    }
+    CHECK(at == sizeof map, "the whole Report Map read (%u)", at);
+    CHECK(q && ln == 5 && q[0] == 0x12 && q[1] == 0x33, "report notifications on");
+    uint8_t wr = 0x13; att_in(0x0060, &wr, 1);
+    CHECK(strstr(H.status, "keyboard connected"), "keyboard connected: %s", H.status);
+    int nk0 = nkb;
+    uint8_t kn[11] = { 0x1b, 0x32, 0, 0x02, 0, 0x04, 0x05, 0, 0, 0, 0 }; att_in(0x0060, kn, 11);
+    CHECK(nkb == nk0 + 1 && kb[0] == 0x02 && kb[2] == 0x04 && kb[3] == 0x05, "a report-mode key report as a boot one");
+    uint8_t dis2[4] = { 0, 0x60, 0, 0x13 }; ev(0x05, dis2, 4);
+    CHECK(nkb == nk0 + 2 && !kb[0] && !kb[2], "disconnected: the keys let go");
+
+    /* LE 3: a device that wants Secure Connections stops the pairing */
+    static const uint8_t LESC[6] = { 0x81, 0x82, 0x83, 0x84, 0x85, 0x86 };
+    clock_ms += 600; bt_poll(&H);                            /* the accept list is armed again: the scan cancels it */
+    drain();
+    CHECK(!bt_scan(&H), "scan");
+    drain();
+    le_adv(LESC, 0, 0x03c1, 1, "SC Only");
+    CHECK(!bt_pair(&H, LESC), "pair it");
+    drain();
+    le_conn(0x0070, 0, LESC);
+    q = LEACL(6, &ln);
+    uint8_t pf[2] = { 0x05, 0x03 }; smp_in(0x0070, pf, 2);
+    CHECK(strstr(H.status, "Secure Connections") && !H.pairing, "named: %s", H.status);
+    q = CMD(0x0406); CHECK(q && q[0] == 0x70, "and disconnected");
+    }
 
     /* 5b: the new firmware answers only the third reset; never: it fails after three */
     memset(&H, 0, sizeof H);

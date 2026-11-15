@@ -61,7 +61,11 @@ User-facing docs: README.md. History of where code came from: docs/PROVENANCE.md
 - Ctrl-Amiga-Amiga: `frf_native_keyboard.c` spots Ctrl + both GUI keys; `frf_xhci_pt.c` sets
   `pt_hdr.reset_req` = 1; `alice68hdf.device`'s vertical blank server (`hdf_vbl`) sets 2 and calls
   `ColdReboot()`; not taken in 2 s: the Pi reboots (`aga_reboot`). Ctrl+LShift+F11: the Pi reboots.
-- `third_party/Emu68/src/alice/bt/` — Bluetooth (Classic HID): `bthost.[ch]` host-independent (H4/HCI, Broadcom
+- `third_party/Emu68/src/alice/bt/` — Bluetooth (Classic HID, and LE HID over GATT in `btle.c`, which `bthost.c` #includes:
+  LE connect, SMP legacy pairing with the controller's LE Encrypt as AES, bonding (LTK/EDIV/Rand/IRK), GATT HID service,
+  boot or report mode (Report Map: keyboard by `kb_parse`, mouse by `alice_hid.c` included under `bt_` names), reconnect
+  by the filter accept list + resolving list; LE keys in `bt.dev=` as `:KIND+4:EDIV:RAND:TYPE[:IRK]`, board `an_btle`):
+  `bthost.[ch]` host-independent (H4/HCI, Broadcom
   `.hcd` download, SSP/legacy pairing, L2CAP, HID boot protocol, empty SDP; `tools/bt-test` against a scripted
   controller), `bt_pi.c` the Pi (PL011 UART0 on GPIO 30-33 ALT3 with RTS/CTS, BT_ON = expander line 0 via
   `alice_mbox`, polled from `alice_net_poll`; firmware from the board's offered files; keys from `bt.dev=` in
