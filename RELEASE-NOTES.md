@@ -7,7 +7,10 @@
 - **Bluetooth scan: what it hears.** A scan now also listens for Bluetooth LE devices. LE
   keyboards and mice are listed, marked "(LE)", but cannot be paired yet: only Classic works so
   far. Most current Microsoft mice and many newer keyboards are LE only. The log names the first
-  devices it heard that are no keyboard or mouse, and the scan's end says how many.
+  devices it heard that are no keyboard or mouse, and the scan's end says how many. It also
+  counts every inquiry result and LE report the chip passed up, before any filter, says when
+  the inquiry is running, and logs a refused LE scan command, so an empty list shows whether
+  the radio heard anything at all.
 - **Bluetooth: which chip, which file.** Before loading the firmware the kernel asks the chip's
   ROM what it is (version, LMP subversion, name: the name is the `.hcd` it wants) and logs
   the file it found, its size, record count and last record. A file that does not end with

@@ -652,12 +652,15 @@ static void event(struct bt_host *h, const uint8_t *e, unsigned n)
     case 0x0e:                                          /* Command Complete */
         if (len < 3) return;
         h->credits = p[0];
+        if ((le16(p + 1) == C_LE_SCAN_PARAM || le16(p + 1) == C_LE_SCAN_ENABLE || le16(p + 1) == C_INQUIRY_CANCEL) && len > 3 && p[3])
+            lg(h, "command %x: status %u", le16(p + 1), p[3]);
         startup_answer(h, le16(p + 1), p + 3, len - 3);
         cmd_flush(h);
         return;
     case 0x0f:                                          /* Command Status */
         if (len < 4) return;
         h->credits = p[1];
+        if (!p[0] && le16(p + 2) == C_INQUIRY) lg(h, "inquiry running");
         if (p[0]) {
             uint16_t op = le16(p + 2);
             lg(h, "command %x: status %u", op, p[0]);
@@ -675,11 +678,13 @@ static void event(struct bt_host *h, const uint8_t *e, unsigned n)
     case 0x01:                                          /* Inquiry Complete */
         h->scanning = 0;
         le_scan_stop(h);
-        lg(h, "scan done: %u found, %u other devices heard", (uint32_t)h->nfound, h->heard_other);
+        lg(h, "scan done (status %u): %u found, %u others heard", (uint32_t)(len ? p[0] : 0xff), (uint32_t)h->nfound, h->heard_other);
+        lg(h, "scan heard: %u inquiry, %u extended, %u LE reports", h->scan_ir, h->scan_eir, h->scan_le);
         next_name(h);
         return;
     case 0x02: case 0x22: {                             /* Inquiry Result (with RSSI): fields in arrays */
         unsigned m = p[0], rs = code == 0x22;
+        h->scan_ir += m;
         if (len < 1 + m * (rs ? 14u : 14u)) return;
         for (unsigned i = 0; i < m; i++) {
             const uint8_t *a = p + 1 + 6 * i;
@@ -695,12 +700,14 @@ static void event(struct bt_host *h, const uint8_t *e, unsigned n)
         return;
     }
     case 0x2f:                                          /* Extended Inquiry Result: one, with EIR */
+        h->scan_eir++;
         if (len < 15) return;
         found_update(h, p + 1, p[7], p[9] | p[10] << 8 | (uint32_t)p[11] << 16, le16(p + 12), (int8_t)p[14], p + 15, len - 15);
         return;
     case 0x3e:                                          /* LE Meta: advertising reports (one after another) */
         if (len >= 2 && p[0] == 0x02) {
             unsigned m = p[1], i = 2;
+            h->scan_le += m;
             for (unsigned r = 0; r < m && i + 10 <= len; r++) {
                 unsigned dl = p[i + 8];
                 if (i + 10 + dl > len) break;
@@ -957,7 +964,11 @@ void bt_poll(struct bt_host *h)
         else if (h->step == S_RESET2_PAUSE && due(h, h->wait_until)) { h->state = BT_INIT; h->step = 0; setup_next(h); }
     }
     if (h->state != BT_READY) return;
-    if (h->scanning && due(h, h->scan_end)) h->scanning = 0;
+    if (h->scanning && due(h, h->scan_end)) {
+        h->scanning = 0;
+        lg(h, "scan timed out without Inquiry Complete: %u inquiry, %u extended, %u LE reports", h->scan_ir, h->scan_eir, h->scan_le);
+        if (!h->names_pending) say(h, h->nfound ? "scan done" : "scan done - nothing found (is the device in pairing mode?)");
+    }
     if (!h->scanning && h->le_scanning) le_scan_stop(h);
     /* paired devices: call each once after the start (they also call us) */
     if (!h->pairing && !h->scanning && !h->names_pending && !h->calling && h->reconnect_next < h->nkeys && due(h, h->reconnect_at)) {
@@ -973,6 +984,7 @@ int bt_scan(struct bt_host *h)
     if (h->scanning) return 0;
     h->nfound = 0;
     h->heard_other = 0; h->heard_logged = 0;
+    h->scan_ir = h->scan_eir = h->scan_le = 0;
     uint8_t p[7] = { 0x33, 0x8b, 0x9e, 0x08, 0x00 };   /* GIAC, 10.24 s, no limit */
     cmd(h, C_INQUIRY, p, 5);
     p[0] = 1; put16(p + 1, 0x0060); put16(p + 3, 0x0030); p[5] = 0; p[6] = 0;   /* active (scan responses carry names), 60 ms / 30 ms */

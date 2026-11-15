@@ -92,6 +92,7 @@ struct bt_host {
     int tries;                          /* resets sent after the firmware's launch */
     int le_scanning;                    /* an LE scan beside the inquiry: LE devices are named, not served */
     unsigned heard_other, heard_logged; /* devices a scan heard that are no keyboard or mouse */
+    unsigned scan_ir, scan_eir, scan_le; /* inquiry results, extended ones, LE reports in this scan (all, before any filter) */
 };
 
 /* fw/fwlen: the .hcd file (0: none - the controller's ROM firmware is used) */
