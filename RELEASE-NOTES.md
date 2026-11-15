@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Bluetooth: which chip, which file.** Before loading the firmware the kernel asks the chip's
+  ROM what it is (version, LMP subversion, name: the name is the `.hcd` it wants) and logs
+  the file it found, its size, record count and last record. A file that does not end with
+  Launch_RAM (cut short, or not an `.hcd`) is not loaded. The log follows the chip's CTS
+  line: off and on around power, and every change after the launch with its time. An
+  unanswered reset after the launch is now tried five times.
 - **Alice68-Card: resizing the window crashed the machine.** The rebuild freed the page's
   gadgets twice (they were still linked behind the top row's). The test harness now models
   Intuition's gadget chain and catches it.

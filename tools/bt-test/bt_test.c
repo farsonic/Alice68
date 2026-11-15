@@ -157,6 +157,10 @@ static void startup(int with_fw)
     CHECK(nsent == rd, "waits 100 ms after the reset");
     clock_ms += 110; bt_poll(&H);
     if (with_fw) {
+        uint8_t rv[9] = { 0, 6, 0x00, 0x00, 6, 0x0f, 0x00, 0x19, 0x61 };
+        CMD(0x1001); cc(0x1001, rv, 9);                    /* the ROM: which chip */
+        uint8_t nm[249] = { 0 }; memcpy(nm + 1, "BCM4345C0", 9);
+        CMD(0x0c14); cc(0x0c14, nm, 249);
         CMD(0xfc2e); cc0(0xfc2e);
         CHECK(nsent == rd, "waits 50 ms before the records");
         clock_ms += 60; bt_poll(&H);
@@ -367,10 +371,21 @@ int main(int argc, char **argv)
         memset(&H, 0, sizeof H); reset_sent(); auto_ans = 0; kicks = 0;
         bt_init(&H, &io, fw1, sizeof fw1);
         CMD(0x0c03); cc0(0x0c03); clock_ms += 110; bt_poll(&H);
+        CMD(0x1001); clock_ms += 1100; bt_poll(&H);          /* a ROM that does not say what it is: on all the same */
         CMD(0xfc2e); cc0(0xfc2e); clock_ms += 60; bt_poll(&H);
         CMD(0xfc4e); cc0(0xfc4e); clock_ms += 300; bt_poll(&H);
-        for (int i = 0; i < 3; i++) { CMD(0x0c03); clock_ms += 3100; bt_poll(&H); }
-        CHECK(H.state == BT_FAILED && kicks == 2 && strstr(H.why, "new firmware"), "three unanswered resets: %s (%d)", H.why, kicks);
+        for (int i = 0; i < 5; i++) { CMD(0x0c03); clock_ms += 3100; bt_poll(&H); }
+        CHECK(H.state == BT_FAILED && kicks == 4 && strstr(H.why, "new firmware"), "three unanswered resets: %s (%d)", H.why, kicks);
+    }
+
+    /* 5c: a firmware file cut short (no Launch_RAM at the end) is not loaded */
+    {
+        static const uint8_t cut[] = { 0x4c, 0xfc, 0x05, 1, 2, 3, 4, 5, 0x4c, 0xfc, 0x09, 1, 2 };
+        memset(&H, 0, sizeof H); reset_sent(); auto_ans = 0;
+        bt_init(&H, &io, cut, sizeof cut);
+        CHECK(!H.fw, "a cut-short firmware file is not used");
+        CMD(0x0c03); cc0(0x0c03); clock_ms += 110; bt_poll(&H);
+        CHECK(H.state == BT_INIT, "and the chip starts on its own firmware");
     }
 
     /* 5: no firmware file: the ROM's; a chip that never answers fails */

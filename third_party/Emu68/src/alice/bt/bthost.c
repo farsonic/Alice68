@@ -72,6 +72,7 @@ void bt_addr_str(const uint8_t a[6], char o[18])
 #define C_EVENT_MASK     OP(3, 0x01)
 #define C_RESET          OP(3, 0x03)
 #define C_LOCAL_NAME     OP(3, 0x13)
+#define C_READ_NAME      OP(3, 0x14)
 #define C_PAGE_TIMEOUT   OP(3, 0x18)
 #define C_SCAN_ENABLE    OP(3, 0x1a)
 #define C_CLASS          OP(3, 0x24)
@@ -182,9 +183,9 @@ static void set_connected(struct bt_host *h, const uint8_t a[6], int on)
 }
 
 /* ---- the start-up --------------------------------------------------------------- */
-enum { S_RESET, S_MINIDRIVER, S_MINI_WAIT, S_PATCH, S_LAUNCH_WAIT, S_RESET2, S_SETUP, S_DONE, S_RESET_PAUSE, S_RESET2_PAUSE };
+enum { S_RESET, S_MINIDRIVER, S_MINI_WAIT, S_PATCH, S_LAUNCH_WAIT, S_RESET2, S_SETUP, S_DONE, S_RESET_PAUSE, S_RESET2_PAUSE, S_ROM_VER, S_ROM_NAME };
 #define RESET_PAUSE  100                    /* ms after a reset's answer before the next command (Linux btbcm_reset) */
-#define RESET2_TRIES 3                      /* resets after the launch before giving up */
+#define RESET2_TRIES 5                      /* resets after the launch before giving up */
 static const uint8_t ev_mask[8] = { 0xff, 0xff, 0xfb, 0xff, 0x07, 0xf8, 0xbf, 0x3d };   /* as Linux for 2.1+: SSP events in */
 
 static void fail(struct bt_host *h, const char *why)
@@ -246,6 +247,20 @@ static void patch_next(struct bt_host *h)
     h->fwrec++;
     sync_cmd(h, op, r + 3, n);
 }
+/* the firmware file: whole records, the last one Launch_RAM - else it is cut short or not an .hcd */
+static int fw_check(struct bt_host *h)
+{
+    unsigned pos = 0, recs = 0; uint16_t last = 0;
+    while (pos + 3 <= h->fwlen) { last = le16(h->fw + pos); pos += 3u + h->fw[pos + 2]; recs++; }
+    lg(h, "firmware file: %u bytes, %u records, the last %x", h->fwlen, recs, (uint32_t)last);
+    if (pos != h->fwlen || last != C_BCM_LAUNCH) { lg(h, "the firmware file is not whole (it must end with Launch_RAM fc4e): not loaded"); return 0; }
+    return 1;
+}
+static void after_rom(struct bt_host *h)
+{
+    h->step = S_MINIDRIVER;
+    sync_cmd(h, C_BCM_MINIDRIVER, 0, 0);
+}
 /* a Command Complete for the start-up's command */
 static void startup_answer(struct bt_host *h, uint16_t op, const uint8_t *ret, unsigned n)
 {
@@ -253,6 +268,18 @@ static void startup_answer(struct bt_host *h, uint16_t op, const uint8_t *ret, u
     if (op != h->pending_op) return;
     h->pending_op = 0;
     if (h->state == BT_FW) switch (h->step) {
+    case S_ROM_VER:                              /* the chip as its ROM says: which firmware it wants */
+        if (n >= 9) lg(h, "chip ROM: HCI %u, revision %x, LMP subversion %x, manufacturer %u", ret[1], le16(ret + 2), le16(ret + 7), le16(ret + 5));
+        h->step = S_ROM_NAME; sync_cmd(h, C_READ_NAME, 0, 0); h->wait_until = now(h) + 1000;
+        return;
+    case S_ROM_NAME: {
+        char nm[33]; unsigned i = 0;
+        for (; i < 32 && i + 1 < n && ret[1 + i] >= 32 && ret[1 + i] < 127; i++) nm[i] = (char)ret[1 + i];
+        nm[i] = 0;
+        lg(h, "chip ROM name: %s (it wants %s.hcd)", i ? nm : "(none)", i ? nm : "?");
+        after_rom(h);
+        return;
+    }
     case S_RESET:
         if (st) { fail(h, "the chip refused a reset"); return; }
         h->step = S_RESET_PAUSE;                 /* the chip is still resetting: a command now can be lost */
@@ -296,11 +323,12 @@ void bt_init(struct bt_host *h, const struct bt_io *io, const uint8_t *fw, unsig
     for (int i = 0; i < nk; i++) h->keys[i].flags &= ~BTK_CONNECTED;
     h->io = io;
     h->fw = fw; h->fwlen = fwlen;
+    if (fw && !fw_check(h)) { h->fw = 0; h->fwlen = 0; }
     h->credits = 1;
     h->acl_free = 1;
     h->next_cid = 0x40;
     h->state = BT_FW;
-    say(h, fw ? "loading its firmware" : "starting");
+    say(h, h->fw ? "loading its firmware" : "starting");
     h->step = S_RESET;
     sync_cmd(h, C_RESET, 0, 0);
 }
@@ -815,6 +843,12 @@ void bt_rx(struct bt_host *h, const uint8_t *p, unsigned n)
 void bt_poll(struct bt_host *h)
 {
     if (h->state == BT_FAILED || h->state == BT_OFF) return;
+    if (h->pending_op && due(h, h->wait_until) && h->state == BT_FW && (h->step == S_ROM_VER || h->step == S_ROM_NAME)) {
+        lg(h, "no answer to %x from the chip's ROM (going on)", h->pending_op);
+        h->pending_op = 0; h->credits = 1;
+        after_rom(h);
+        return;
+    }
     if (h->pending_op && due(h, h->wait_until) && h->state == BT_FW && h->step == S_RESET2 && h->tries < RESET2_TRIES) {
         /* the firmware is started but its reset went unanswered: the line may be stuck (bytes held
            in the UART behind CTS) - the host unsticks it, and the reset goes again */
@@ -855,7 +889,7 @@ void bt_poll(struct bt_host *h)
         if (h->step == S_MINI_WAIT && due(h, h->wait_until)) { h->step = S_PATCH; h->fwpos = 0; h->fwrec = 0; say(h, "loading its firmware"); lg(h, "firmware: %u bytes", h->fwlen); patch_next(h); }
         else if (h->step == S_LAUNCH_WAIT && due(h, h->wait_until)) { h->step = S_RESET2; h->tries = 1; h->credits = 1; sync_cmd(h, C_RESET, 0, 0); }
         else if (h->step == S_RESET_PAUSE && due(h, h->wait_until)) {
-            if (h->fw) { h->step = S_MINIDRIVER; sync_cmd(h, C_BCM_MINIDRIVER, 0, 0); }
+            if (h->fw) { h->step = S_ROM_VER; sync_cmd(h, C_LOCAL_VERSION, 0, 0); h->wait_until = now(h) + 1000; }
             else { h->state = BT_INIT; h->step = 0; setup_next(h); }
         }
         else if (h->step == S_RESET2_PAUSE && due(h, h->wait_until)) { h->state = BT_INIT; h->step = 0; setup_next(h); }

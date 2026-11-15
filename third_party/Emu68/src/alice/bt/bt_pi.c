@@ -260,6 +260,13 @@ static unsigned put_num(char *t, unsigned k, uint32_t v, int hex)
     return k;
 }
 static unsigned put_str(char *t, unsigned k, const char *s) { while (*s) t[k++] = *s++; return k; }
+static int cts_last = -1, cts_changes;
+static uint32_t t_init;
+static void cts_note(const char *what)
+{
+    char t[48]; unsigned k = put_str(t, 0, what);
+    k = put_str(t, k, (rd(UART0 + U_FR) & FR_CTS) ? "on" : "OFF"); t[k] = 0; blog(t);
+}
 /* the UART in two short lines (Alice68-Card's list shows about 70 characters) */
 static void fr_log(const char *what)
 {
@@ -293,9 +300,12 @@ void bt_pi_poll(void)
         /* fall through */
     case 1: {
         uint32_t len = 0;
-        const uint8_t *fw = alice_fw_get(stems, ".hcd", &len);
+        const uint8_t *fw = 0;
+        int which = -1;
+        for (int i = 0; stems[i] && !fw; i++) { const char *one[2] = { stems[i], 0 }; fw = alice_fw_get(one, ".hcd", &len); if (fw) which = i; }
         if (!fw && !(alice_fw_offered() && now - wait_since > 3000) && now - wait_since < 30000) break;
         if (!fw) blog("[BT] no BCM4345C0.hcd in the WIFI folder: the chip's own (older) firmware is used");
+        else { char t[64]; unsigned k = put_str(t, 0, "[BT] firmware from the WIFI folder: "); k = put_str(t, k, stems[which]); k = put_str(t, k, ".hcd"); t[k] = 0; blog(t); }
         bh.fw = fw; bh.fwlen = fw ? len : 0;
         if (!uart_done) { uart_init(); uart_done = 1; }
         if ((int32_t)(now - phase_t) < 250) break;      /* a mailbox try at most 4 times a second */
@@ -310,12 +320,15 @@ void bt_pi_poll(void)
     }
     case 2:
         if ((int32_t)(now - phase_t) < 20) break;
+        cts_note("[BT] chip off: CTS ");
         if (alice_mbox(0x00038041u, 128u + 0u, 1u, 0)) { phase_t = now + 230; break; }   /* BT_ON high; again in 250 ms */
         phase = 3; phase_t = now;
         break;
     case 3:
         if ((int32_t)(now - phase_t) < 250) break;      /* the chip boots its ROM */
+        cts_note("[BT] chip on: CTS ");
         uart_flush(CR_ON);                              /* nothing stale from an earlier try */
+        cts_last = -1; cts_changes = 0; t_init = now;
         while (!(rd(UART0 + U_FR) & FR_RXFE)) (void)rd(UART0 + U_DR);
         phase = 4;
         tx_h = tx_t = 0;
@@ -328,10 +341,21 @@ void bt_pi_poll(void)
         break;
     case 4: {
         tx_drain();
+        {
+            int c = (rd(UART0 + U_FR) & FR_CTS) ? 1 : 0;
+            if (c != cts_last && cts_changes < 24) {        /* when the chip lets us send and when not: the firmware's launch shows here */
+                char t[64]; unsigned k = put_str(t, 0, "[BT] CTS ");
+                k = put_str(t, k, c ? "on" : "OFF"); k = put_str(t, k, " at +"); k = put_num(t, k, now - t_init, 0);
+                k = put_str(t, k, " ms, step "); k = put_num(t, k, (uint32_t)bh.step, 0); t[k] = 0;
+                if (cts_last >= 0) blog(t);
+                cts_changes++;
+            }
+            cts_last = c;
+        }
         if (bh.state == BT_FAILED && bh.fw && !retried) {  /* the firmware file did not go in: the chip's own, once */
             retried = 1;
             fail_logged = 0;
-            blog("[BT] loading BCM4345C0.hcd failed: trying again with the chip's own firmware");
+            blog("[BT] the firmware file did not start: trying again with the chip's own firmware");
             bh.fw = 0; bh.fwlen = 0;
             phase = 7; phase_t = now;
             post("starting again (without the firmware file)", 0);
