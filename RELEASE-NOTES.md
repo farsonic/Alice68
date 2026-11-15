@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Bluetooth LE keyboards that ignore boot mode** (seen with a Keychron V6 Max: paired and
+  connected, but no keys). Many keyboards keep sending on their report characteristics after
+  Protocol Mode = Boot. The Report Map is now always read; report mode is used whenever it
+  shows a keyboard or mouse, boot mode only otherwise, and notifications are switched on for
+  both kinds. Key bitmaps (n-key rollover) are understood as well as key arrays, the Report
+  Map may be 1 KB, and the first reports of each link are logged as they came.
 - **Bluetooth LE keyboards and mice** (HID over GATT; tested on the PC only so far). Scan
   lists LE devices marked "(LE)" and **Pair** now pairs them: legacy LE pairing, Just Works
   for mice, and for keyboards a six-digit passkey to type on the keyboard. The controller does

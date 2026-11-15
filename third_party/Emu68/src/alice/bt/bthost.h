@@ -61,7 +61,8 @@ struct bt_l2ch { uint16_t psm, lcid, rcid; uint8_t state, conf; };
 /* an LE link: pairing (SMP) and the HID service as GATT found it */
 #define BT_LE_CHARS 16
 #define BT_LE_REPORTS 8
-struct bt_kbmap { uint8_t id, ok; uint16_t mod_pos, keys_pos; uint8_t nkeys; };   /* a report-mode keyboard report */
+struct bt_kbrep { uint8_t id, has_mod, nkeys, bm_n, bm_min; uint16_t mod_pos, keys_pos, bm_pos; };   /* one keyboard input report */
+struct bt_kbmap { uint8_t ok, n; struct bt_kbrep r[3]; };     /* report mode: key arrays (6KRO) and key bitmaps (NKRO), by report id */
 struct bt_le {
     uint8_t addr_type, rat, ra[6];       /* identity type; the address (and type) the link was made with, for c1 */
     uint8_t rekey;                       /* encrypting with the stored LTK */
@@ -80,6 +81,7 @@ struct bt_le {
     uint8_t mouse_ok; uint8_t hmouse[40];   /* struct hid_mouse (btle.c), opaque here */
     struct bt_kbmap kbm;
     uint8_t lastbtn;
+    uint8_t nlog;                        /* notifications logged on this link (the first few) */
 };
 struct bt_conn {
     int used;
@@ -138,7 +140,7 @@ struct bt_host {
     int le_cancelling;                  /* an LE Create Connection Cancel is out */
     int le_lists_dirty;                 /* the accept/resolving lists must be written again */
     int aes_busy; uint16_t aes_handle;  /* an LE Encrypt / LE Rand of SMP's is out, for that link */
-    uint8_t rmap[512]; unsigned rmap_n; /* a Report Map being read (one link at a time) */
+    uint8_t rmap[1024]; unsigned rmap_n; /* a Report Map being read (one link at a time) */
 };
 
 /* fw/fwlen: the .hcd file (0: none - the controller's ROM firmware is used) */

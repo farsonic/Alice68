@@ -725,6 +725,67 @@ int main(int argc, char **argv)
     uint8_t dis2[4] = { 0, 0x60, 0, 0x13 }; ev(0x05, dis2, 4);
     CHECK(nkb == nk0 + 2 && !kb[0] && !kb[2], "disconnected: the keys let go");
 
+    /* LE 2b: a keyboard with boot reports and Protocol Mode that sends on its report characteristics
+       anyway, one of them a key bitmap (NKRO): report mode, notifications on all, the bitmap read */
+    {
+        static const uint8_t LEKB4[6] = { 0x61, 0x62, 0x63, 0x64, 0x65, 0x66 };
+        clock_ms += 600; bt_poll(&H);
+        drain();
+        CHECK(!bt_scan(&H), "scan");
+        drain();
+        le_adv(LEKB4, 0, 0x03c1, 1, "NKRO Keys");
+        CHECK(!bt_pair(&H, LEKB4), "pair the NKRO keyboard");
+        drain();
+        le_conn(0x0050, 0, LEKB4);
+        uint8_t stk4[16];
+        le_pair_device(0x0050, LEKB4, 0, 0x03, 0x01, 0x01, 0, stk4);       /* it cannot type: Just Works */
+        le_give_keys(0x0050, LEKB4, 0, 0);
+        q = LEACL(4, &ln); uint8_t m4[3] = { 0x03, 23, 0 }; att_in(0x0050, m4, 3);
+        q = LEACL(4, &ln); uint8_t sv4[5] = { 0x07, 0x50, 0, 0x70, 0 }; att_in(0x0050, sv4, 5);
+        q = LEACL(4, &ln);
+        uint8_t c4a[23] = { 0x09, 7, 0x51, 0, 0x06, 0x52, 0, 0x4e, 0x2a,  0x53, 0, 0x12, 0x54, 0, 0x22, 0x2a,  0x56, 0, 0x12, 0x57, 0, 0x4d, 0x2a };
+        att_in(0x0050, c4a, 23);
+        q = LEACL(4, &ln); CHECK(q && q[0] == 0x08 && q[1] == 0x57, "characteristics from 0x57");
+        uint8_t c4b[16] = { 0x09, 7, 0x5a, 0, 0x12, 0x5b, 0, 0x4d, 0x2a,  0x5e, 0, 0x02, 0x5f, 0, 0x4b, 0x2a };
+        att_in(0x0050, c4b, 16);
+        q = LEACL(4, &ln); uint8_t e4[5] = { 0x01, 0x08, 0x5f, 0, 0x0a }; att_in(0x0050, e4, 5);
+        q = LEACL(4, &ln); CHECK(q && q[0] == 0x04, "descriptors");
+        uint8_t d4[22] = { 0x05, 1, 0x55, 0, 0x02, 0x29,  0x58, 0, 0x02, 0x29,  0x59, 0, 0x08, 0x29,  0x5c, 0, 0x02, 0x29,  0x5d, 0, 0x08, 0x29 };
+        att_in(0x0050, d4, 22);
+        q = LEACL(4, &ln); uint8_t e5[5] = { 0x01, 0x04, 0x5e, 0, 0x0a }; att_in(0x0050, e5, 5);
+        q = LEACL(4, &ln); CHECK(q && q[0] == 0x0a && q[1] == 0x59, "report reference 1");
+        uint8_t r1[3] = { 0x0b, 1, 1 }; att_in(0x0050, r1, 3);
+        q = LEACL(4, &ln); CHECK(q && q[0] == 0x0a && q[1] == 0x5d, "report reference 2");
+        uint8_t r2[3] = { 0x0b, 2, 1 }; att_in(0x0050, r2, 3);
+        static const uint8_t map4[] = {
+            0x05, 0x01, 0x09, 0x06, 0xa1, 0x01, 0x85, 0x01, 0x05, 0x07, 0x19, 0xe0, 0x29, 0xe7, 0x15, 0x00, 0x25, 0x01, 0x75, 0x01,
+            0x95, 0x08, 0x81, 0x02, 0x95, 0x01, 0x75, 0x08, 0x81, 0x01, 0x95, 0x06, 0x75, 0x08, 0x15, 0x00, 0x25, 0x65, 0x05, 0x07,
+            0x19, 0x00, 0x29, 0x65, 0x81, 0x00, 0xc0,
+            0x05, 0x01, 0x09, 0x06, 0xa1, 0x01, 0x85, 0x02, 0x05, 0x07, 0x19, 0xe0, 0x29, 0xe7, 0x15, 0x00, 0x25, 0x01, 0x75, 0x01,
+            0x95, 0x08, 0x81, 0x02, 0x19, 0x00, 0x29, 0x77, 0x95, 0x78, 0x75, 0x01, 0x81, 0x02, 0xc0 };
+        q = LEACL(4, &ln); CHECK(q && q[0] == 0x0a && q[1] == 0x5f, "read the Report Map");
+        unsigned at4 = 0;
+        while (q && (q[0] == 0x0a || q[0] == 0x0c)) {
+            unsigned k = sizeof map4 - at4 > 22 ? 22 : sizeof map4 - at4;
+            uint8_t r[23]; r[0] = q[0] == 0x0a ? 0x0b : 0x0d; memcpy(r + 1, map4 + at4, k); at4 += k;
+            att_in(0x0050, r, k + 1);
+            q = LEACL(4, &ln);
+        }
+        CHECK(at4 == sizeof map4, "the whole map (%u)", at4);
+        CHECK(q && ln == 4 && q[0] == 0x52 && q[1] == 0x52 && q[3] == 1, "protocol mode: report (the map is understood)");
+        q = LEACL(4, &ln); CHECK(q && ln == 5 && q[0] == 0x12 && q[1] == 0x55, "boot keyboard notifications on as well");
+        uint8_t w4 = 0x13; att_in(0x0050, &w4, 1);
+        q = LEACL(4, &ln); CHECK(q && q[0] == 0x12 && q[1] == 0x58, "report 1 notifications on"); att_in(0x0050, &w4, 1);
+        q = LEACL(4, &ln); CHECK(q && q[0] == 0x12 && q[1] == 0x5c, "report 2 (NKRO) notifications on"); att_in(0x0050, &w4, 1);
+        CHECK(strstr(H.status, "keyboard connected"), "NKRO keyboard connected: %s", H.status);
+        int nk4 = nkb;
+        uint8_t nn[3 + 16] = { 0x1b, 0x5b, 0, 0x02, 0x30 };      /* left shift; usages 04 and 05 in the bitmap */
+        att_in(0x0050, nn, sizeof nn);
+        CHECK(nkb == nk4 + 1 && kb[0] == 0x02 && kb[2] == 0x04 && kb[3] == 0x05 && !kb[4], "an NKRO report as a boot one (%02x %02x %02x)", kb[0], kb[2], kb[3]);
+        uint8_t dis4[4] = { 0, 0x50, 0, 0x13 }; ev(0x05, dis4, 4);
+        CHECK(!kb[0] && !kb[2], "NKRO keyboard gone: keys let go");
+    }
+
     /* LE 3: a device that wants Secure Connections stops the pairing */
     static const uint8_t LESC[6] = { 0x81, 0x82, 0x83, 0x84, 0x85, 0x86 };
     clock_ms += 600; bt_poll(&H);                            /* the accept list is armed again: the scan cancels it */

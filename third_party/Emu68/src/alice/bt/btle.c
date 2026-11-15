@@ -456,9 +456,13 @@ static void kb_parse(const uint8_t *d, unsigned len, struct bt_kbmap *k)
                 if (j == noff && noff < 16) { offid[noff] = id; off[noff] = 0; noff++; }
                 uint16_t at = j < 16 ? off[j] : 0;
                 if (kbdepth >= 0 && page == 0x07 && !(v & 1)) {
-                    if ((v & 2) && umin == 0xe0 && rsize == 1 && rcount == 8 && !have_mod) { k->mod_pos = at; k->id = id; have_mod = 1; }
-                    else if (!(v & 2) && rsize == 8 && !have_keys && (!have_mod || id == k->id)) {
-                        k->keys_pos = at; k->nkeys = (uint8_t)(rcount > 6 ? 6 : rcount); k->id = id; have_keys = 1;
+                    struct bt_kbrep *r = 0;
+                    for (unsigned q = 0; q < k->n; q++) if (k->r[q].id == id) r = &k->r[q];
+                    if (!r && k->n < 3) { r = &k->r[k->n++]; mset(r, 0, sizeof *r); r->id = id; }
+                    if (r) {
+                        if ((v & 2) && umin == 0xe0 && rsize == 1 && rcount == 8 && !r->has_mod) { r->mod_pos = at; r->has_mod = 1; }
+                        else if (!(v & 2) && rsize == 8 && !r->nkeys) { r->keys_pos = at; r->nkeys = (uint8_t)(rcount > 6 ? 6 : rcount); }
+                        else if ((v & 2) && rsize == 1 && rcount > 8 && !r->bm_n) { r->bm_pos = at; r->bm_min = (uint8_t)umin; r->bm_n = (uint8_t)(rcount > 255 ? 255 : rcount); }   /* NKRO */
                     }
                 }
                 if (j < 16) off[j] = (uint16_t)(at + rsize * rcount);
@@ -466,8 +470,8 @@ static void kb_parse(const uint8_t *d, unsigned len, struct bt_kbmap *k)
             usage = 0; umin = umax = 0; nus = 0;
         }
     }
-    (void)umax; (void)nus;
-    k->ok = (uint8_t)(have_mod && have_keys);
+    (void)umax; (void)nus; (void)have_mod; (void)have_keys;
+    for (unsigned q = 0; q < k->n; q++) if (k->r[q].nkeys || k->r[q].bm_n) k->ok = 1;
 }
 static unsigned bits(const uint8_t *r, unsigned n, unsigned pos, unsigned size)
 {
@@ -492,6 +496,7 @@ static void gatt_next_cccd(struct bt_host *h, struct bt_conn *c);
 static void gatt_start(struct bt_host *h, struct bt_conn *c)
 {
     struct bt_le *l = &c->l;
+    l->nlog = 0;
     l->g = G_MTU; l->nchr = 0; l->pm = l->kb_in = l->ms_in = l->map = 0; l->boot = 0; l->mouse_ok = 0;
     mset(&l->kbm, 0, sizeof l->kbm);
     l->mtu = 23;
@@ -519,17 +524,21 @@ static void gatt_choose(struct bt_host *h, struct bt_conn *c)
     if ((i = chr_find(l, U_BOOT_KB)) >= 0) l->kb_in = l->chr_vh[i];
     if ((i = chr_find(l, U_BOOT_MS)) >= 0) l->ms_in = l->chr_vh[i];
     if ((i = chr_find(l, U_MAP)) >= 0) l->map = l->chr_vh[i];
-    if ((l->kb_in || l->ms_in) && l->pm) {
-        l->boot = 1;
-        uint8_t d[4] = { 0x52, 0, 0, 0x00 }; put16(d + 1, l->pm);    /* Write Command: Protocol Mode = Boot */
-        att_send(h, c, d, 4);
-        l->g = G_CCCD; l->gi = 0;
-        gatt_next_cccd(h, c);
-        return;
-    }
-    l->kb_in = l->ms_in = 0;                         /* no Protocol Mode: the boot reports are not used */
+    l->boot = 0;                                     /* the Report Map first: report mode when it is understood */
     l->g = G_REFS; l->gi = 0;
     gatt_next_ref(h, c);
+}
+/* report mode when the Report Map gave a keyboard or a mouse (many keyboards keep sending their
+   reports, ignoring Protocol Mode = Boot); boot mode only when it did not and the device has boot
+   reports. Notifications are asked for on both kinds either way. */
+static void gatt_mode(struct bt_host *h, struct bt_conn *c)
+{
+    struct bt_le *l = &c->l;
+    l->boot = !(l->kbm.ok || l->mouse_ok) && (l->kb_in || l->ms_in) && l->pm;
+    if (!l->boot && !l->pm) l->kb_in = l->ms_in = 0;          /* boot reports only mean something in boot mode */
+    if (l->pm) { uint8_t d[4] = { 0x52, 0, 0, (uint8_t)(l->boot ? 0 : 1) }; put16(d + 1, l->pm); att_send(h, c, d, 4); }   /* Write Command: Protocol Mode */
+    l->g = G_CCCD; l->gi = 0;
+    gatt_next_cccd(h, c);
 }
 static void gatt_next_ref(struct bt_host *h, struct bt_conn *c)
 {
@@ -541,7 +550,7 @@ static void gatt_next_ref(struct bt_host *h, struct bt_conn *c)
         return;
     }
     l->g = G_MAP; h->rmap_n = 0;
-    if (!l->map) { lg(h, "%a: no Report Map", c->addr); l->g = G_CCCD; l->gi = 0; gatt_next_cccd(h, c); return; }
+    if (!l->map) { lg(h, "%a: no Report Map", c->addr); gatt_mode(h, c); return; }
     uint8_t d[3] = { 0x0a, 0, 0 }; put16(d + 1, l->map);
     att_send(h, c, d, 3);
 }
@@ -551,13 +560,14 @@ static void gatt_map_done(struct bt_host *h, struct bt_conn *c)
     l->mouse_ok = (uint8_t)bt_hid_mouse_parse(h->rmap, (int)h->rmap_n, (struct hid_mouse *)(void *)l->hmouse);
     kb_parse(h->rmap, h->rmap_n, &l->kbm);
     lg(h, "%a: Report Map %u bytes: %s%s", c->addr, h->rmap_n, l->kbm.ok ? "keyboard " : "", l->mouse_ok ? "mouse" : "");
-    l->g = G_CCCD; l->gi = 0;
-    gatt_next_cccd(h, c);
+    for (unsigned q = 0; q < l->kbm.n; q++)
+        if (l->kbm.r[q].nkeys || l->kbm.r[q].bm_n) lg(h, "%a: keyboard report %u: %s", c->addr, l->kbm.r[q].id, l->kbm.r[q].bm_n ? "key bitmap (NKRO)" : "key array");
+    gatt_mode(h, c);
 }
 static int wants_notify(struct bt_le *l, int i)
 {
     if (!l->chr_cccd[i]) return 0;
-    if (l->boot) return l->chr_uuid[i] == U_BOOT_KB || l->chr_uuid[i] == U_BOOT_MS;
+    if (l->chr_uuid[i] == U_BOOT_KB || l->chr_uuid[i] == U_BOOT_MS) return l->pm != 0;
     return l->chr_uuid[i] == U_REPORT && l->rep_type[i] == 1;
 }
 static void gatt_next_cccd(struct bt_host *h, struct bt_conn *c)
@@ -653,29 +663,46 @@ static void gatt_rsp(struct bt_host *h, struct bt_conn *c, const uint8_t *p, uns
         return;
     }
 }
+static void kb_send(struct bt_host *h, struct bt_conn *c, const uint8_t r[8])
+{
+    mcpy(c->lastkb, r, 8);
+    if (h->io->keyboard) h->io->keyboard(h->io->ctx, r);
+}
 static void le_notify(struct bt_host *h, struct bt_conn *c, uint16_t hd, const uint8_t *v, unsigned n)
 {
     struct bt_le *l = &c->l;
     if (l->g != G_UP) return;
-    if (l->boot) {
-        if (hd == l->kb_in && n >= 8) { mcpy(c->lastkb, v, 8); if (h->io->keyboard) h->io->keyboard(h->io->ctx, v); }
-        else if (hd == l->ms_in && n >= 3) {
-            l->lastbtn = v[0];
-            if (h->io->mouse) h->io->mouse(h->io->ctx, (int8_t)v[1], (int8_t)v[2], n >= 4 ? (int8_t)v[3] : 0, v[0]);
-        }
+    if (l->nlog < 4) {                               /* the first few, as they came: what the device really sends */
+        l->nlog++;
+        char t[40]; unsigned k = 0;
+        for (unsigned j = 0; j < n && j < 12; j++) { t[k++] = "0123456789abcdef"[v[j] >> 4]; t[k++] = "0123456789abcdef"[v[j] & 15]; t[k++] = ' '; }
+        t[k] = 0;
+        lg(h, "%a: report on %x, %u bytes: %s", c->addr, hd, n, t);
+    }
+    if (hd && hd == l->kb_in) { if (n >= 8) kb_send(h, c, v); return; }
+    if (hd && hd == l->ms_in) {
+        if (n >= 3) { l->lastbtn = v[0]; if (h->io->mouse) h->io->mouse(h->io->ctx, (int8_t)v[1], (int8_t)v[2], n >= 4 ? (int8_t)v[3] : 0, v[0]); }
         return;
     }
     int i = 0;
     for (; i < l->nchr && !(l->chr_vh[i] == hd && l->chr_uuid[i] == U_REPORT); i++) ;
     if (i == l->nchr) return;
     uint8_t id = l->rep_id[i];
-    if (l->kbm.ok && id == l->kbm.id) {
+    const struct bt_kbrep *kr = 0;
+    for (unsigned q = 0; q < l->kbm.n; q++) if (l->kbm.r[q].id == id && (l->kbm.r[q].nkeys || l->kbm.r[q].bm_n)) kr = &l->kbm.r[q];
+    if (kr) {
         uint8_t r[8];
         mset(r, 0, 8);
-        r[0] = (uint8_t)bits(v, n, l->kbm.mod_pos, 8);
-        for (unsigned k = 0; k < l->kbm.nkeys; k++) r[2 + k] = (uint8_t)bits(v, n, l->kbm.keys_pos + 8 * k, 8);
-        mcpy(c->lastkb, r, 8);
-        if (h->io->keyboard) h->io->keyboard(h->io->ctx, r);
+        r[0] = kr->has_mod ? (uint8_t)bits(v, n, kr->mod_pos, 8) : c->lastkb[0];
+        unsigned nk = 0;
+        for (unsigned k = 0; k < kr->nkeys; k++) { uint8_t u = (uint8_t)bits(v, n, kr->keys_pos + 8 * k, 8); if (u && nk < 6) r[2 + nk++] = u; }
+        for (unsigned b = 0; b < kr->bm_n; b++) {
+            if (!bits(v, n, kr->bm_pos + b, 1)) continue;
+            unsigned u = kr->bm_min + b;
+            if (u >= 0xe0 && u <= 0xe7) r[0] |= (uint8_t)(1u << (u - 0xe0));
+            else if (u && nk < 6) r[2 + nk++] = (uint8_t)u;
+        }
+        kb_send(h, c, r);
         return;
     }
     if (l->mouse_ok) {
