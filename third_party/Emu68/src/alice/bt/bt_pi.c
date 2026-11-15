@@ -45,6 +45,10 @@ extern void pt_mouse_extra(int wheel, int pan, unsigned buttons) __attribute__((
 #define FR_RXFE   (1u << 4)
 #define FR_TXFF   (1u << 5)
 #define FR_BUSY   (1u << 3)
+#define FR_CTS    (1u << 0)                   /* the chip lets us send */
+#define FR_TXFE   (1u << 7)
+#define CR_ON     (1u | (1u << 8) | (1u << 9) | (1u << 14) | (1u << 15))   /* on, TX, RX, RTS and CTS flow control */
+#define CR_CTSEN  (1u << 15)
 
 static inline uint32_t rd(uint32_t a) { return __builtin_bswap32(*(volatile uint32_t *)(uintptr_t)a); }
 static inline void wr(uint32_t a, uint32_t v) { *(volatile uint32_t *)(uintptr_t)a = __builtin_bswap32(v); }
@@ -80,7 +84,18 @@ static void uart_baud(uint32_t baud)
     wr(UART0 + U_IBRD, div >> 6);
     wr(UART0 + U_FBRD, div & 63u);
     wr(UART0 + U_LCRH, 0x60u | 0x10u);                                          /* 8 bits, FIFOs on */
-    wr(UART0 + U_CR, cr ? cr : (1u | (1u << 8) | (1u << 9) | (1u << 14) | (1u << 15)));
+    wr(UART0 + U_CR, cr ? cr : CR_ON);
+}
+/* bytes still in the PL011's FIFO (held there while the chip keeps CTS off) are thrown away:
+   they would reach the chip late, as a stale command, once it lets us send again */
+static void uart_flush(uint32_t cr)
+{
+    wr(UART0 + U_CR, 0);
+    uint32_t l = rd(UART0 + U_LCRH);
+    wr(UART0 + U_LCRH, l & ~0x10u);                     /* FIFOs off: emptied */
+    wr(UART0 + U_LCRH, l | 0x10u);
+    wr(UART0 + U_ICR, 0x7ffu);
+    wr(UART0 + U_CR, cr);
 }
 static void uart_init(void)
 {
@@ -99,7 +114,7 @@ static void uart_init(void)
     wr(UART0 + U_IMSC, 0);
     wr(UART0 + U_ICR, 0x7ffu);
     uart_baud(115200);
-    wr(UART0 + U_CR, 1u | (1u << 8) | (1u << 9) | (1u << 14) | (1u << 15));    /* on, TX, RX, RTS/CTS flow control */
+    wr(UART0 + U_CR, CR_ON);
     while (!(rd(UART0 + U_FR) & FR_RXFE)) (void)rd(UART0 + U_DR);              /* whatever was there */
 }
 /* what goes to the chip waits in a ring and leaves as fast as the UART (and the chip's CTS)
@@ -107,10 +122,10 @@ static void uart_init(void)
    and a byte cut off mid-command loses the whole command */
 static uint8_t txr[8192];
 static unsigned tx_h, tx_t;
-static uint32_t tx_moved, tx_warned;
+static uint32_t tx_moved, tx_warned, tx_sent;
 static void tx_drain(void)
 {
-    while (tx_h != tx_t && !(rd(UART0 + U_FR) & FR_TXFF)) { wr(UART0 + U_DR, txr[tx_h % sizeof txr]); tx_h++; tx_moved = ms_now(); }
+    while (tx_h != tx_t && !(rd(UART0 + U_FR) & FR_TXFF)) { wr(UART0 + U_DR, txr[tx_h % sizeof txr]); tx_h++; tx_sent++; tx_moved = ms_now(); }
     if (tx_h != tx_t && ms_now() - tx_moved > 2000 && !tx_warned) {
         tx_warned = 1;
         blog("[BT] the chip has held CTS for 2 s: it is not taking data");
@@ -127,6 +142,16 @@ static void io_send(void *c, const uint8_t *p, unsigned n)
 }
 static void io_baud(void *c, uint32_t b) { (void)c; uart_baud(b); }
 static uint32_t io_ms(void *c) { (void)c; return ms_now(); }
+static void fr_log(const char *what);
+/* the reset after the firmware's launch went unanswered */
+static void io_kick(void *c, int attempt)
+{
+    (void)c;
+    fr_log("[BT] reset unanswered:");
+    tx_h = tx_t = 0;
+    if (attempt == 1) { uart_flush(CR_ON); blog("[BT] UART FIFO emptied, the reset again"); }
+    else { uart_flush(CR_ON & ~CR_CTSEN); blog("[BT] the reset again without CTS flow control"); }
+}
 static void io_log(void *c, const char *l) { (void)c; blog(l); }
 static void io_kb(void *c, const uint8_t r[8]) { (void)c; if (frf_native_usb_keyboard_boot_report) frf_native_usb_keyboard_boot_report(r); }
 static void io_mouse(void *c, int dx, int dy, int w, unsigned b)
@@ -136,7 +161,7 @@ static void io_mouse(void *c, int dx, int dy, int w, unsigned b)
     if (pt_mouse_extra) pt_mouse_extra(w, 0, b);
 }
 static void io_keys(void *c) { (void)c; }
-static const struct bt_io bio = { 0, io_send, io_baud, io_ms, io_log, io_kb, io_mouse, io_keys };
+static const struct bt_io bio = { 0, io_send, io_baud, io_ms, io_log, io_kb, io_mouse, io_keys, io_kick };
 
 /* ---- cmdline.txt: bt=off, bt.dev=ADDR:KEY:KIND ----------------------------------------- */
 static int word(const char *s, const char *w)
@@ -227,6 +252,32 @@ static void post(const char *s, int col)
     frf_post_bt(shown, col);
 }
 
+static unsigned put_num(char *t, unsigned k, uint32_t v, int hex)
+{
+    char d[12]; int n = 0;
+    do { d[n++] = "0123456789abcdef"[v % (hex ? 16u : 10u)]; v /= hex ? 16u : 10u; } while (v && n < 11);
+    while (n) t[k++] = d[--n];
+    return k;
+}
+static unsigned put_str(char *t, unsigned k, const char *s) { while (*s) t[k++] = *s++; return k; }
+/* the UART in two short lines (Alice68-Card's list shows about 70 characters) */
+static void fr_log(const char *what)
+{
+    char t[96]; unsigned k = 0;
+    uint32_t fr = rd(UART0 + U_FR), cr = rd(UART0 + U_CR);
+    k = put_str(t, k, what);
+    k = put_str(t, k, " CTS "); k = put_str(t, k, fr & FR_CTS ? "on" : "OFF (chip not taking data)");
+    k = put_str(t, k, ", FIFO "); k = put_str(t, k, fr & FR_TXFE ? "empty" : "NOT EMPTY");
+    k = put_str(t, k, fr & FR_BUSY ? ", busy" : "");
+    t[k] = 0; blog(t);
+    k = put_str(t, 0, "[BT] UART: in ");
+    k = put_num(t, k, rx_total, 0); k = put_str(t, k, " (bad "); k = put_num(t, k, rx_errors, 0);
+    k = put_str(t, k, "), out "); k = put_num(t, k, tx_sent, 0); k = put_str(t, k, " (queued "); k = put_num(t, k, tx_t - tx_h, 0);
+    k = put_str(t, k, "), FR "); k = put_num(t, k, fr, 1); k = put_str(t, k, " CR "); k = put_num(t, k, cr, 1);
+    k = put_str(t, k, ", "); k = put_num(t, k, uart_hz / 1000u, 0); k = put_str(t, k, " kHz");
+    t[k] = 0; blog(t);
+}
+
 /* ---- CPU1's turn ------------------------------------------------------------------- */
 void bt_pi_poll(void)
 {
@@ -264,6 +315,7 @@ void bt_pi_poll(void)
         break;
     case 3:
         if ((int32_t)(now - phase_t) < 250) break;      /* the chip boots its ROM */
+        uart_flush(CR_ON);                              /* nothing stale from an earlier try */
         while (!(rd(UART0 + U_FR) & FR_RXFE)) (void)rd(UART0 + U_DR);
         phase = 4;
         tx_h = tx_t = 0;
@@ -272,7 +324,7 @@ void bt_pi_poll(void)
     case 7:                                             /* BT_ON low again, for a fresh start */
         if ((int32_t)(now - phase_t) < 0) break;
         if (alice_mbox(0x00038041u, 128u + 0u, 0u, 0)) { phase_t = now + 250; break; }
-        phase = 2; phase_t = now;
+        phase = 2; phase_t = now + 300;                 /* off long enough for the chip to really reset */
         break;
     case 4: {
         tx_drain();
@@ -302,18 +354,7 @@ void bt_pi_poll(void)
         int col = bh.state == BT_READY ? 1 : bh.state == BT_FAILED ? 2 : 0;
         if (bh.state == BT_FAILED && !fail_logged) {
             fail_logged = 1;
-            char t[160];
-            unsigned k = 0;
-            uint32_t vals[7] = { rx_total, rx_errors, tx_h, tx_t - tx_h, rd(UART0 + U_FR), rd(UART0 + U_CR), uart_hz };
-            static const char *const parts[7] = { "[BT] UART: ", " bytes from the chip, ", " with errors; ", " sent, ", " waiting; FR ", " CR ", " clock " };
-            for (int i = 0; i < 7; i++) {
-                for (const char *q = parts[i]; *q && k < 140; ) t[k++] = *q++;
-                char d[12]; int n = 0; uint32_t v = vals[i]; int hexv_ = i == 4 || i == 5;
-                do { d[n++] = "0123456789abcdef"[v % (hexv_ ? 16u : 10u)]; v /= hexv_ ? 16u : 10u; } while (v && n < 11);
-                while (n && k < 150) t[k++] = d[--n];
-            }
-            t[k] = 0;
-            blog(t);
+            fr_log("[BT] UART:");
         }
         if (bh.state == BT_FAILED) { char t[64] = "FAILED: "; unsigned k = 8; for (unsigned i = 0; bh.why[i] && k < 63; i++) t[k++] = bh.why[i]; t[k] = 0; post(t, 2); }
         else post(bh.status[0] ? bh.status : "starting", col);

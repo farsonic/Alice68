@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **Alice68-Card: resizing the window crashed the machine.** The rebuild freed the page's
+  gadgets twice (they were still linked behind the top row's). The test harness now models
+  Intuition's gadget chain and catches it.
+- **Bluetooth after its firmware:** on a Pi the firmware went in (all records answered), then
+  the chip did not answer the reset after starting it, and the retry without the file stopped
+  after one answer. Now: a 100 ms pause after every reset (as Linux's btbcm), the UART's FIFO
+  emptied before each start (bytes held there behind CTS reached the chip later as stale
+  commands), the chip kept off for 300 ms on a retry, and an unanswered reset after the
+  firmware is sent up to three times: with the FIFO emptied, then without CTS flow control.
+  The log says each time whether CTS was on and the FIFO empty, in lines short enough for
+  Alice68-Card's list.
 - **Alice68-USBLog no longer locks up the Shell.** It printed its whole log (tens of KB, minutes
   through the console) without heeding Ctrl-C, and turned FOLLOW on for any word with an "f"
   in it. Now it prints the last 40 lines of each log; `LINES=n`, `ALL`, `MATCH=text` (e.g.

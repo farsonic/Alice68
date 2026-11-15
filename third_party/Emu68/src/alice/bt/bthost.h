@@ -41,6 +41,7 @@ struct bt_io {
     void (*keyboard)(void *ctx, const uint8_t rep[8]);            /* a boot keyboard report */
     void (*mouse)(void *ctx, int dx, int dy, int wheel, unsigned buttons);
     void (*keys)(void *ctx);                                      /* the paired list changed: save it */
+    void (*kick)(void *ctx, int attempt);                         /* the reset after the firmware went unanswered: unstick the line (may be 0) */
 };
 
 struct bt_l2ch { uint16_t psm, lcid, rcid; uint8_t state, conf; };
@@ -88,6 +89,7 @@ struct bt_host {
     char status[64];                    /* in a few words, for the splash and the tool */
     uint32_t reconnect_at; int reconnect_next;
     uint8_t call_addr[6]; int calling;  /* a Create Connection of ours is out */
+    int tries;                          /* resets sent after the firmware's launch */
 };
 
 /* fw/fwlen: the .hcd file (0: none - the controller's ROM firmware is used) */

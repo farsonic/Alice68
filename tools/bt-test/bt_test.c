@@ -23,7 +23,9 @@ static void io_log(void *c, const char *l) { (void)c; if (verbose) printf("  %s\
 static void io_kb(void *c, const uint8_t r[8]) { (void)c; memcpy(kb, r, 8); nkb++; }
 static void io_mouse(void *c, int dx, int dy, int w, unsigned b) { (void)c; mdx = dx; mdy = dy; mwh = w; mbt = b; nmouse++; }
 static void io_keys(void *c) { (void)c; nkeys_cb++; }
-static const struct bt_io io = { 0, io_send, io_baud, io_ms, io_log, io_kb, io_mouse, io_keys };
+static int kicks, last_kick;
+static void io_kick(void *c, int a) { (void)c; kicks++; last_kick = a; }
+static const struct bt_io io = { 0, io_send, io_baud, io_ms, io_log, io_kb, io_mouse, io_keys, io_kick };
 static struct bt_host H;
 
 static void reset_sent(void) { nsent = rd = 0; }
@@ -152,6 +154,8 @@ static void startup(int with_fw)
     bt_init(&H, &io, with_fw ? fw : 0, with_fw ? sizeof fw : 0);
     CHECK(H.state == BT_FW, "starts in firmware state");
     CMD(0x0c03); cc0(0x0c03);
+    CHECK(nsent == rd, "waits 100 ms after the reset");
+    clock_ms += 110; bt_poll(&H);
     if (with_fw) {
         CMD(0xfc2e); cc0(0xfc2e);
         CHECK(nsent == rd, "waits 50 ms before the records");
@@ -164,7 +168,19 @@ static void startup(int with_fw)
         CMD(0xfc4e); cc0(0xfc4e);
         CHECK(nsent == rd, "waits 250 ms after the launch");
         clock_ms += 300; bt_poll(&H);
-        CMD(0x0c03); cc0(0x0c03);
+        CMD(0x0c03);
+        if (with_fw == 2) {                                /* the new firmware misses the first reset, twice */
+            kicks = 0;
+            clock_ms += 3100; bt_poll(&H);
+            CHECK(kicks == 1 && last_kick == 1 && H.state == BT_FW, "unanswered reset: the line unstuck (%d)", kicks);
+            CMD(0x0c03);
+            clock_ms += 2100; bt_poll(&H);
+            CHECK(kicks == 2 && last_kick == 2, "and again, the second way");
+            CMD(0x0c03);
+        }
+        cc0(0x0c03);
+        CHECK(nsent == rd && H.state == BT_FW, "waits 100 ms after the reset");
+        clock_ms += 110; bt_poll(&H);
     }
     CHECK(H.state == BT_INIT, "set-up after the firmware");
     uint8_t ver[9] = { 0, 7, 0x22, 0x01, 0x0f, 0x00, 0x09, 0x41, 0x61 };
@@ -342,6 +358,20 @@ int main(int argc, char **argv)
     kc = nkeys_cb;
     CHECK(!bt_forget(&H, MOUSE) && H.nkeys == 2 && nkeys_cb == kc + 1, "mouse forgotten");
     p = CMD(0x0406); CHECK(p && p[0] == 0x41, "and disconnected");
+
+    /* 5b: the new firmware answers only the third reset; never: it fails after three */
+    memset(&H, 0, sizeof H);
+    startup(2);
+    {
+        static const uint8_t fw1[] = { 0x4e, 0xfc, 0x04, 0xff, 0xff, 0xff, 0xff };
+        memset(&H, 0, sizeof H); reset_sent(); auto_ans = 0; kicks = 0;
+        bt_init(&H, &io, fw1, sizeof fw1);
+        CMD(0x0c03); cc0(0x0c03); clock_ms += 110; bt_poll(&H);
+        CMD(0xfc2e); cc0(0xfc2e); clock_ms += 60; bt_poll(&H);
+        CMD(0xfc4e); cc0(0xfc4e); clock_ms += 300; bt_poll(&H);
+        for (int i = 0; i < 3; i++) { CMD(0x0c03); clock_ms += 3100; bt_poll(&H); }
+        CHECK(H.state == BT_FAILED && kicks == 2 && strstr(H.why, "new firmware"), "three unanswered resets: %s (%d)", H.why, kicks);
+    }
 
     /* 5: no firmware file: the ROM's; a chip that never answers fails */
     memset(&H, 0, sizeof H);

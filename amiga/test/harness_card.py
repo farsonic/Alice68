@@ -143,21 +143,28 @@ lvo(DOS, -48, dwrite)
 # intuition / gadtools / graphics
 SCR = alloc(64); mem.w8(SCR + 35, 4); mem.w8(SCR + 36, 4); FONT = alloc(8); mem.w16(FONT + 4, 8); mem.w32(SCR + 40, FONT)
 lvo(INT, -510, lambda o, p: setd0(SCR)); lvo(INT, -516, lambda o, p: None)
+attached = []                                         # list heads in the window, in order
+joined = {}                                           # a list taken out with others after it: they hang on its chain
 WIN = alloc(128); UPORT = alloc(34); mem.w8(UPORT + 15, 21); mem.w32(WIN + 86, UPORT); mem.w32(WIN + 50, alloc(100))
 def openwin(o, p):
     t = d(R.A1); tags = {}
     while mem.r32(t): tags[mem.r32(t)] = mem.r32(t + 4); t += 8
     st['wintags'] = tags
+    if tags.get(0x80000063 + 9): attached.append(tags[0x80000063 + 9]); joined[tags[0x80000063 + 9]] = []   # WA_Gadgets
     mem.w16(WIN + 8, tags.get(0x80000076, 600) + 8); mem.w16(WIN + 10, tags.get(0x80000077, 200) + 15)
     mem.w8(WIN + 54, 4); mem.w8(WIN + 55, 11); mem.w8(WIN + 56, 4); mem.w8(WIN + 57, 4)
     setd0(WIN)
-lvo(INT, -606, openwin); lvo(INT, -72, lambda o, p: st.__setitem__('closed', True))
-attached = []
-lvo(INT, -438, lambda o, p: (attached.append(d(R.A1)), setd0(0)))
-def remglist(o, p):
-    if d(R.A1) == contexts[0]: attached.clear(); st['removed_all'] = st.get('removed_all', 0) + 1   # the top row and all after it
-    elif d(R.A1) not in attached: fails.append('RemoveGList of a list not in the window')
-    else: attached.remove(d(R.A1))
+lvo(INT, -606, openwin); lvo(INT, -72, lambda o, p: (st.__setitem__('closed', True), st.__setitem__('at_close', list(attached)), attached.clear()))
+freed_set = set()
+def addglist(o, p):
+    if d(R.A1) in freed_set: fails.append('AddGList of a freed list')
+    joined[d(R.A1)] = []; attached.append(d(R.A1)); setd0(0)
+lvo(INT, -438, addglist)
+def remglist(o, p):                                   # RemoveGList(.., -1): that list and everything after it, still linked
+    x = d(R.A1)
+    if x not in attached: fails.append('RemoveGList of a list not in the window'); setd0(0); return
+    i = attached.index(x); joined[x] = attached[i + 1:]; del attached[i:]
+    if x == contexts[0]: st['removed_all'] = st.get('removed_all', 0) + 1
     setd0(0)
 lvo(INT, -444, remglist)
 lvo(INT, -432, lambda o, p: None)
@@ -189,7 +196,13 @@ def creategad(o, p):
         while a and mem.r32(a): labs.append(mem.r_cstr(mem.r32(a))); a += 4
         glab[gid] = labs; gcur[gid] = t.get(0x8008000f, 0)
     st['gadgets'].append((kind, gid, g, mem.r_cstr(mem.r32(ng + 8)) if mem.r32(ng + 8) else '')); setd0(g)
-lvo(GT, -30, creategad); lvo(GT, -36, lambda o, p: freed.append(d(R.A0)))
+def freegads(o, p):                                  # FreeGadgets walks the chain: lists hanging on it go too
+    x = d(R.A0); freed.append(x)
+    for h in [x] + joined.get(x, []):
+        if h in freed_set: fails.append('FreeGadgets: a gadget list freed twice (it hung on another list\'s chain)')
+        if h in attached: fails.append('FreeGadgets of a list still in the window')
+        freed_set.add(h)
+lvo(GT, -30, creategad); lvo(GT, -36, freegads)
 lists = {}
 def setattrs(o, p):
     g, t = d(R.A0), tagsof(d(R.A3))
@@ -364,7 +377,7 @@ chk(mem.r32(BOARD + 44) == 0x52455354, 'restart not asked on the board (%x)' % m
 chk(st.get('closed'), 'window not closed')
 chk(not opened, 'the device left open')
 chk(not st['allocs'], 'memory not given back: %s' % st['allocs'])
-chk(not [a for a in attached if a not in contexts[::6]], 'a page\'s gadgets left in the window at the end')
+chk(st.get('at_close') in ([], [contexts[-6]]), 'a page\'s gadgets still in the window when it closed: %r' % st.get('at_close'))
 if fails:
     print(''.join(st['out'])); print('card service calls:', st['cs'][-12:])
     print('\n'.join('FAIL: ' + f for f in fails)); sys.exit(1)

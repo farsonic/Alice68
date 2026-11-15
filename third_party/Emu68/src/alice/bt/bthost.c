@@ -182,7 +182,9 @@ static void set_connected(struct bt_host *h, const uint8_t a[6], int on)
 }
 
 /* ---- the start-up --------------------------------------------------------------- */
-enum { S_RESET, S_MINIDRIVER, S_MINI_WAIT, S_PATCH, S_LAUNCH_WAIT, S_RESET2, S_SETUP, S_DONE };
+enum { S_RESET, S_MINIDRIVER, S_MINI_WAIT, S_PATCH, S_LAUNCH_WAIT, S_RESET2, S_SETUP, S_DONE, S_RESET_PAUSE, S_RESET2_PAUSE };
+#define RESET_PAUSE  100                    /* ms after a reset's answer before the next command (Linux btbcm_reset) */
+#define RESET2_TRIES 3                      /* resets after the launch before giving up */
 static const uint8_t ev_mask[8] = { 0xff, 0xff, 0xfb, 0xff, 0x07, 0xf8, 0xbf, 0x3d };   /* as Linux for 2.1+: SSP events in */
 
 static void fail(struct bt_host *h, const char *why)
@@ -253,8 +255,8 @@ static void startup_answer(struct bt_host *h, uint16_t op, const uint8_t *ret, u
     if (h->state == BT_FW) switch (h->step) {
     case S_RESET:
         if (st) { fail(h, "the chip refused a reset"); return; }
-        if (h->fw) { h->step = S_MINIDRIVER; sync_cmd(h, C_BCM_MINIDRIVER, 0, 0); }
-        else { h->state = BT_INIT; h->step = 0; setup_next(h); }
+        h->step = S_RESET_PAUSE;                 /* the chip is still resetting: a command now can be lost */
+        h->wait_until = now(h) + RESET_PAUSE;
         return;
     case S_MINIDRIVER:
         if (st) { fail(h, "the chip would not take its firmware"); return; }
@@ -267,8 +269,9 @@ static void startup_answer(struct bt_host *h, uint16_t op, const uint8_t *ret, u
         return;
     case S_RESET2:
         if (st) { fail(h, "the chip refused a reset after its firmware"); return; }
-        h->state = BT_INIT; h->step = 0;
-        setup_next(h);
+        if (h->tries > 1) lg(h, "the new firmware answered the reset (try %u)", (uint32_t)h->tries);
+        h->step = S_RESET2_PAUSE;
+        h->wait_until = now(h) + RESET_PAUSE;
         return;
     }
     /* the set-up after the firmware (step counts on) */
@@ -812,11 +815,23 @@ void bt_rx(struct bt_host *h, const uint8_t *p, unsigned n)
 void bt_poll(struct bt_host *h)
 {
     if (h->state == BT_FAILED || h->state == BT_OFF) return;
+    if (h->pending_op && due(h, h->wait_until) && h->state == BT_FW && h->step == S_RESET2 && h->tries < RESET2_TRIES) {
+        /* the firmware is started but its reset went unanswered: the line may be stuck (bytes held
+           in the UART behind CTS) - the host unsticks it, and the reset goes again */
+        lg(h, "no answer to the reset after the firmware (try %u of %u)", (uint32_t)h->tries, (uint32_t)RESET2_TRIES);
+        if (h->io->kick) h->io->kick(h->io->ctx, h->tries);
+        h->tries++;
+        h->credits = 1;
+        sync_cmd(h, C_RESET, 0, 0);
+        h->wait_until = now(h) + 2000;
+        return;
+    }
     if (h->pending_op && due(h, h->wait_until)) {
         static const char hx[] = "0123456789abcdef";
         char why[64];
         unsigned k = 0;
-        const char *w0 = h->state == BT_FW && h->step == S_RESET ? "the chip does not answer" : "the chip stopped answering";
+        const char *w0 = h->state == BT_FW && h->step == S_RESET ? "the chip does not answer" :
+                         h->state == BT_FW && h->step == S_RESET2 ? "its new firmware does not answer" : "the chip stopped answering";
         for (; w0[k]; k++) why[k] = w0[k];
         const char *w1 = " (command ";
         for (unsigned i = 0; w1[i]; i++) why[k++] = w1[i];
@@ -838,7 +853,12 @@ void bt_poll(struct bt_host *h)
     }
     if (h->state == BT_FW && !h->pending_op) {
         if (h->step == S_MINI_WAIT && due(h, h->wait_until)) { h->step = S_PATCH; h->fwpos = 0; h->fwrec = 0; say(h, "loading its firmware"); lg(h, "firmware: %u bytes", h->fwlen); patch_next(h); }
-        else if (h->step == S_LAUNCH_WAIT && due(h, h->wait_until)) { h->step = S_RESET2; h->credits = 1; sync_cmd(h, C_RESET, 0, 0); }
+        else if (h->step == S_LAUNCH_WAIT && due(h, h->wait_until)) { h->step = S_RESET2; h->tries = 1; h->credits = 1; sync_cmd(h, C_RESET, 0, 0); }
+        else if (h->step == S_RESET_PAUSE && due(h, h->wait_until)) {
+            if (h->fw) { h->step = S_MINIDRIVER; sync_cmd(h, C_BCM_MINIDRIVER, 0, 0); }
+            else { h->state = BT_INIT; h->step = 0; setup_next(h); }
+        }
+        else if (h->step == S_RESET2_PAUSE && due(h, h->wait_until)) { h->state = BT_INIT; h->step = 0; setup_next(h); }
     }
     if (h->state != BT_READY) return;
     if (h->scanning && due(h, h->scan_end)) h->scanning = 0;

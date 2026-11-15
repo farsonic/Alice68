@@ -857,7 +857,10 @@ static void relayout(void)
 {
     UBYTE *w = win;
     APTR rp = *(APTR *)(w + 50);
-    RemoveGList(win, glist_top, -1);                /* ours from there on: the top row and the page */
+    /* the page first: RemoveGList(.., -1) takes a list with everything after it still linked
+       on, and FreeGadgets frees along that chain - the page's gadgets would be freed twice */
+    if (page >= 0 && glist_page[page]) RemoveGList(win, glist_page[page], -1);
+    RemoveGList(win, glist_top, -1);
     FreeGadgets(glist_top); glist_top = 0;
     for (int i = 0; i < 5; i++) { if (glist_page[i]) FreeGadgets(glist_page[i]); glist_page[i] = 0; }
     for (int i = 0; i < G_N; i++) gad[i] = 0;
