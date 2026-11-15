@@ -78,6 +78,12 @@ User-facing docs: README.md. History of where code came from: docs/PROVENANCE.md
   `alice68hdf.device`'s card service (`hdf/cardsvc.[ch]`, unit `CS_UNIT`): runs in the caller's process
   under `db->fsem`, refuses what `fold_busy()` says is in use. Tests: `harness_folders.py ... card [cardro|exfatrw]`,
   `amiga/test/harness_card.py` (fake libraries and card service).
+- Status page: `third_party/Emu68/src/alice/alice_status.[ch]` — a read-only 4 KB page for 68k monitors
+  (`struct alice68_status`, shared with `amiga/status.c` = `Alice68-Status`), mapped by `boards/emu68rom.c` at
+  ROM board + 0x700000 and named in the 68k's device tree as `/alice68` `status`; CPU1 fills it once a second
+  from `alice_net_poll` (seq odd while writing; 0xffffffff = not measured, never guessed). Temperature from the
+  AVS register; clock/voltage/throttled by mailbox only with `status.sensors=mbox` (mailbox answers can be
+  taken by the wrong client). Test: `amiga/test/harness_status.py`.
 - `amiga/monitor.c` — `Alice68-Monitor`: debugging window (tasks, backtraces, the board's log rings,
   the WiFi driver's `pt_wstat` "where"). The board layout is in `alice68_usbpt.h`; it survives a 68k reset.
 - `tools/hdf-test/`, `amiga/test/` — tests. `tools/splash-preview/` — render the splash on a PC.
@@ -117,6 +123,7 @@ python3 amiga/test/harness_showconfig.py amiga/out/Alice68-ShowConfig # boards, 
 python3 amiga/test/harness_alice68net.py amiga/out/alice68net.device # opens of units the kernel does not serve, and close
 python3 amiga/test/harness_card.py amiga/out/Alice68-Card   # the SD card manager against fake libraries and card service
 python3 amiga/test/harness_usblog.py amiga/out/Alice68-USBLog # the log tool: last lines, MATCH, Ctrl-C
+python3 amiga/test/harness_status.py amiga/out/Alice68-Status # the status page tool against a fake devicetree.resource and page
 tools/splash-preview/build.sh > out.ppm  # the splash, drawn by the kernel's own code (W H setup-storage: the setup screen)
 ```
 

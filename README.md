@@ -197,6 +197,7 @@ aga.look=0 aga.scale=1
 | `eth=off` | Keep the kernel off the Ethernet port (for rondoval's `genet.device`) |
 | `net.oui=off` | Keep the Pi's own MAC addresses (otherwise both network units use Commodore's OUI, `00:80:10`) |
 | `net.trace=1` | Log every ICMP (ping) frame and the first dropped frames to the network log (Alice68-Monitor DUMP), kernel and alice68net.device |
+| `status.sensors=mbox` | Also put the ARM clock, core voltage and throttling on the [status page](#status-page-for-monitors) (read through the VideoCore mailbox every 5 s; see there why it is off by default) |
 
 Examples:
 
@@ -377,6 +378,49 @@ The **no-USB kernel** (`kernel8-nousb.img`) has no USB card: the network card's
 kernel side then has CPU1 to itself. With `frf_usb=neptune` in `cmdline.txt` the USB
 card is still there but stays empty: the kernel leaves the USB-A ports to rondoval's
 `xhci.device`.
+
+### Status page for monitors
+
+The kernel keeps a small **status page** that any 68k program can read: what each ARM core
+does (and how busy it is, where that is measured), the SoC's temperature, Emu68's translation
+cache, the network units' counters and the kernel's build. **`Alice68-Status`** (in `C:` after
+`ALICE68:Install`) prints it; `Alice68-Status LOOP` every second until Ctrl-C.
+
+For monitor programs:
+
+- **Where:** `devicetree.resource`, node `/alice68`, property `status` (one 32-bit word: the
+  page's address) and `status-version` (1). The page is a read-only 4 KB page in Emu68's ROM
+  board, there from the start of AmigaOS. Nothing calls into the kernel; writes to it fault.
+- **Layout:** `third_party/Emu68/src/alice/alice_status.h` (`struct alice68_status`, 416
+  bytes, offsets checked at compile time). Every field is a big-endian 32-bit word or a
+  NUL-terminated string. Counters wrap at 32 bits.
+
+  | Offset | Field |
+  |---|---|
+  | `0x000` | `magic` `'A68S'`, `version` 1, `size`, `seq`, `uptime_ms`, `interval_ms`, `flags` |
+  | `0x020` | `build`: the kernel's version, build date and `git:` commit (96 bytes) |
+  | `0x080` | `core[4]`: `role` (1 68k JIT, 2 USB and network, 3 display, 4 chipset), `busy` (hundredths of a percent), `name` (24 bytes) |
+  | `0x100` | `temp_mc` (thousandths of a degree C), `arm_hz`, `core_uv`, `throttled`, `sensors_ms` |
+  | `0x120` | `jit_total`, `jit_free` (bytes), `jit_units` (blocks now), `jit_translations` (since boot), `jit_flushes`, `jit_hits` |
+  | `0x140` | `net[2]` (unit 0 WiFi, unit 1 Ethernet): `kind`, `link`, `rx_pkts`, `tx_pkts`, `rx_bytes`, `tx_bytes`, `rx_drop`, `tx_err` |
+  | `0x180` | `usb_in_bytes`, `usb_out_bytes`, `sd_read_blocks`, `sd_write_blocks` |
+
+- **Reading it:** read `seq`, the fields, then `seq` again. If `seq` is odd (the kernel is
+  writing) or changed, read again. It moves by 2 about once a second; if it stops moving,
+  the kernel's CPU1 loop isn't running it (with `frf_usb=neptune` CPU1 runs other code).
+- **`0xFFFFFFFF` means "not measured here"**, never a guess. Today that is: the busy figure
+  of cores 0, 2 and 3 (the 68k's core has no idle moment the kernel could see; the display
+  and chipset loops have no cheap point to time); JIT flushes and hits (Emu68 doesn't count
+  them); USB bytes; SD blocks (the card is driven from AmigaOS by `brcm-emmc.device`).
+  Core 1's figure is the time its loop spends beyond its shortest, empty turn.
+- **Temperature** comes from the SoC's own sensor register, without the mailbox.
+  **Clock, voltage and throttling** need the VideoCore mailbox, whose answers come back on
+  one channel for everyone: a call by the kernel can take the answer a 68k program (the RTG
+  driver, a monitor) is waiting for, and the other way round. So they are read only with
+  `status.sensors=mbox` in `cmdline.txt` (every 5 s; `flags` bit 0 says so, `sensors_ms`
+  when). **Monitors should read temperature and the rest here rather than calling the
+  mailbox themselves.** `throttled` holds the firmware's bits: 0 under-voltage, 1 clock
+  capped, 2 throttled, 3 soft temperature limit, and 16-19 the same "since boot".
 
 ## USB
 

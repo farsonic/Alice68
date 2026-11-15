@@ -462,6 +462,7 @@ static inline uint32_t mrd(uint32_t a) { return __builtin_bswap32(*(volatile uin
 static inline void mwr(uint32_t a, uint32_t v) { *(volatile uint32_t *)(uintptr_t)a = __builtin_bswap32(v); }
 static uint32_t *mbuf;
 static uint32_t mbox_code;                   /* the answer's code when a call failed (-4) */
+static uint32_t mbox_w0;                     /* the answer's first value word (GET_THROTTLED's bits) */
 static volatile int mbox_busy;               /* the WiFi coroutine is inside mbox_tag (it yields there) */
 static int mbox_tag_(uint32_t tag, uint32_t a, uint32_t b, uint32_t *out);
 static int mbox_tag(uint32_t tag, uint32_t a, uint32_t b, uint32_t *out)
@@ -497,6 +498,7 @@ static int mbox_tag_(uint32_t tag, uint32_t a, uint32_t b, uint32_t *out)
     }
     arm_dcache_invalidate((uintptr_t)mbuf, 64);
     if (out) *out = __builtin_bswap32(mbuf[6]);
+    mbox_w0 = __builtin_bswap32(mbuf[5]);
     uint32_t code = __builtin_bswap32(mbuf[1]);
     if (code != 0x80000000u) { mbox_code = code; return -4; }
     return 0;
@@ -514,6 +516,14 @@ int alice_mbox(uint32_t tag, uint32_t a, uint32_t b, uint32_t *out)
 {
     if (mbox_busy) return -9;
     return mbox_try(tag, a, b, out);
+}
+/* for alice_status.c: both value words of the answer */
+int alice_mbox2(uint32_t tag, uint32_t a, uint32_t b, uint32_t out[2])
+{
+    if (mbox_busy) return -9;
+    int e = mbox_try(tag, a, b, &out[1]);
+    out[0] = mbox_w0;
+    return e;
 }
 static void wl_on(int on) { mbox_try(0x00038041u, 128u + 1u, on ? 1u : 0u, 0); }   /* SET_GPIO_STATE, expander line 1 */
 
@@ -1993,6 +2003,9 @@ static void loop_stats(void)
 void alice_net_poll(void)
 {
     extern void bt_pi_poll(void);
+    extern void alice_status_loop(void), alice_status_poll(void);
+    alice_status_loop();                            /* CPU1's turn, timed for the status page */
+    alice_status_poll();                            /* the status page, about once a second (alice_status.c) */
     bt_pi_poll();                                   /* Bluetooth (src/alice/bt/bt_pi.c): it waits for the board itself */
     if (!anb) return;
     setup_poll();                                   /* the setup screen's changes written yet? */

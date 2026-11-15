@@ -199,13 +199,49 @@ static void build_fdt()
     The board is provided with its own m68k ROM with the driver inside. No ARM-side code is used in this board.
 */
 
+/* Alice68: the kernel's status page (src/alice/alice_status.[ch]), weak so that kernels without
+   it build as before. Its 68k address goes into the device tree the 68k gets, as /alice68
+   "status", before that tree is built. */
+extern void *alice_status_page(void) __attribute__((weak));
+#define ALICE68_STATUS_BOARD_OFF 0x00700000u    /* alice_status.h: past the modules, in the board's 8 MB */
+
 static void map(struct ExpansionBoard *board)
 {
     uint32_t total_length = 0;
     extern int ppc_enable;
     void *rom_modules = 0;
     void *virt_base = (void*)((uintptr_t)board->map_base + 0x1000);
-    
+    void *status = alice_status_page ? alice_status_page() : NULL;
+
+    if (status)
+    {
+        /* room for it past the modules and the tree (a tree of 1 MB would be ten times today's) */
+        uint32_t need = 0x1000 + 0x100000;
+        for (int i=0; roms[i].rom_base; i++)
+            if (ppc_enable || roms[i].rom_base != powerpc_library)
+                need += GetHunkFileSize(roms[i].rom_base);
+        if (need > ALICE68_STATUS_BOARD_OFF)
+        {
+            kprintf("[BOARD] Alice68 status page: no room in the ROM board\n");
+            status = NULL;
+        }
+    }
+    if (status)
+    {
+        of_node_t *a = dt_find_node("/alice68");
+        if (!a)
+        {
+            a = dt_make_node("alice68");
+            dt_add_node(NULL, a);
+        }
+        uint32_t addr = board->map_base + ALICE68_STATUS_BOARD_OFF;
+        uint32_t ver = 1;
+        of_property_t *p = dt_find_property(a, "status");
+        if (p && p->op_length == 4) memcpy(p->op_value, &addr, 4);     /* mapped again after a reset */
+        else dt_add_property(a, "status", &addr, 4);
+        if (!dt_find_property(a, "status-version")) dt_add_property(a, "status-version", &ver, 4);
+    }
+
     build_fdt();
 
     kprintf("[BOARD] Mapping ZIII Emu68 ROM board at address %08x\n", board->map_base);
@@ -228,6 +264,12 @@ static void map(struct ExpansionBoard *board)
     rom_modules = tlsf_malloc_aligned(tlsf, total_length, 4096);
 
     mmu_map(mmu_virt2phys((uintptr_t)rom_modules), board->map_base + 0x1000, total_length, MMU_ACCESS | MMU_ISHARE | MMU_ALLOW_EL0 | MMU_READ_ONLY | MMU_ATTR_CACHED, 0);
+
+    if (status)
+    {
+        mmu_map(mmu_virt2phys((uintptr_t)status), board->map_base + ALICE68_STATUS_BOARD_OFF, 4096, MMU_ACCESS | MMU_ISHARE | MMU_ALLOW_EL0 | MMU_READ_ONLY | MMU_ATTR_CACHED, 0);
+        kprintf("[BOARD] Alice68 status page at %08x\n", board->map_base + ALICE68_STATUS_BOARD_OFF);
+    }
 
     for (int i=0; roms[i].rom_base; i++)
     {

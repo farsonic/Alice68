@@ -378,6 +378,7 @@ if(FRF_VIRTUAL_AGA)
     # Alice68: the network board and the Pi 4's WiFi on CPU1 (src/alice)
     target_sources(Emu68.elf PRIVATE
         ${CMAKE_SOURCE_DIR}/src/alice/alice_net.c
+        ${CMAKE_SOURCE_DIR}/src/alice/alice_status.c
         ${CMAKE_SOURCE_DIR}/src/alice/wifi/sdio.c
         ${CMAKE_SOURCE_DIR}/src/alice/wifi/chip.c
         ${CMAKE_SOURCE_DIR}/src/alice/wifi/fmac.c

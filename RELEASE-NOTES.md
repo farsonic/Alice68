@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **A status page for monitors, and `Alice68-Status`.** The kernel keeps a read-only page
+  any 68k program can read (found in `devicetree.resource` as `/alice68` `status`): the
+  kernel's build, uptime, each ARM core's job and, for CPU1, how busy it is; the SoC's
+  temperature (from its own sensor, no mailbox); Emu68's translation cache; both network
+  units' counters. Values the kernel can't measure honestly are marked as such. The ARM
+  clock, core voltage and throttling come from the VideoCore mailbox, so only with
+  `status.sensors=mbox` in `cmdline.txt`. `Alice68-Status` prints it (`LOOP`: every second).
+  The layout is in README, "Status page for monitors".
 - **Bluetooth LE keyboards that ignore boot mode** (seen with a Keychron V6 Max: paired and
   connected, but no keys). Many keyboards keep sending on their report characteristics after
   Protocol Mode = Boot. The Report Map is now always read; report mode is used whenever it
