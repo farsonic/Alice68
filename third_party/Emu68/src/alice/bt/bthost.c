@@ -77,6 +77,9 @@ void bt_addr_str(const uint8_t a[6], char o[18])
 #define C_SCAN_ENABLE    OP(3, 0x1a)
 #define C_CLASS          OP(3, 0x24)
 #define C_INQUIRY_MODE   OP(3, 0x45)
+#define C_LE_HOST        OP(3, 0x6d)
+#define C_LE_SCAN_PARAM  OP(8, 0x0b)
+#define C_LE_SCAN_ENABLE OP(8, 0x0c)
 #define C_SSP_MODE       OP(3, 0x56)
 #define C_LOCAL_VERSION  OP(4, 0x01)
 #define C_BUFFER_SIZE    OP(4, 0x05)
@@ -219,7 +222,8 @@ static void setup_next(struct bt_host *h)
     case 7: mset(p, 0, 248); mcpy(p, name, sizeof name); sync_cmd(h, C_LOCAL_NAME, p, 248); break;
     case 8: put16(p, 0x2000); sync_cmd(h, C_PAGE_TIMEOUT, p, 2); break;          /* 5.12 s */
     case 9: put16(p, 0x0005); sync_cmd(h, C_LINK_POLICY, p, 2); break;           /* role switch, sniff */
-    case 10: p[0] = 0x02; sync_cmd(h, C_SCAN_ENABLE, p, 1); break;               /* page scan: paired devices reconnect */
+    case 10: p[0] = 1; p[1] = 0; sync_cmd(h, C_LE_HOST, p, 2); break;            /* LE on: the scan also hears LE devices */
+    case 11: p[0] = 0x02; sync_cmd(h, C_SCAN_ENABLE, p, 1); break;               /* page scan: paired devices reconnect */
     default:
         h->pending_op = 0;
         h->state = BT_READY;
@@ -553,7 +557,11 @@ static void open_conn_done(struct bt_host *h, struct bt_conn *c)
 }
 static void found_update(struct bt_host *h, const uint8_t a[6], uint8_t psr, uint32_t cod, uint16_t clk, int8_t rssi, const uint8_t *eir, unsigned eirn)
 {
-    if (!kind_of_cod(cod) && ((cod >> 8) & 0x1f) != 5) return;     /* keyboards, mice and other peripherals only */
+    if (!kind_of_cod(cod) && ((cod >> 8) & 0x1f) != 5) {          /* keyboards, mice and other peripherals only */
+        if (!found_of(h, a) && h->heard_logged < 8) { h->heard_logged++; lg(h, "heard %a, class %x: no keyboard or mouse", a, cod); }
+        h->heard_other++;
+        return;
+    }
     struct bt_found *f = found_of(h, a);
     if (!f) {
         if (h->nfound >= BT_MAXFOUND) return;
@@ -574,6 +582,48 @@ static void found_update(struct bt_host *h, const uint8_t a[6], uint8_t psr, uin
         }
         i += 1 + l;
     }
+}
+/* an LE advertisement: HID ones (service 1812, or a keyboard/mouse appearance) are listed, marked LE */
+static void le_found(struct bt_host *h, const uint8_t a[6], const uint8_t *d, unsigned n, int8_t rssi)
+{
+    char nm[BT_NAME]; nm[0] = 0;
+    unsigned app = 0; int hid = 0;
+    for (unsigned i = 0; i + 1 < n; ) {
+        unsigned l = d[i];
+        if (!l || i + 1 + l > n) break;
+        uint8_t t = d[i + 1];
+        const uint8_t *v = d + i + 2; unsigned vl = l - 1;
+        if (t == 0x08 || t == 0x09) { unsigned k = 0; for (; k < vl && k < BT_NAME - 1; k++) nm[k] = (char)v[k]; nm[k] = 0; }
+        if (t == 0x19 && vl >= 2) app = le16(v);
+        if ((t == 0x02 || t == 0x03) ) for (unsigned k = 0; k + 1 < vl; k += 2) if (le16(v + k) == 0x1812) hid = 1;
+        i += 1 + l;
+    }
+    if (app >= 0x03c0 && app <= 0x03cf) hid = 1;
+    struct bt_found *f = found_of(h, a);
+    if (!hid && !(f && f->le)) {
+        if (h->heard_logged < 8 && nm[0]) { h->heard_logged++; lg(h, "heard LE %a \"%s\": no keyboard or mouse", a, nm); }
+        h->heard_other++;
+        return;
+    }
+    if (f && !f->le) return;                            /* a Classic one already: that is the way in */
+    if (!f) {
+        if (h->nfound >= BT_MAXFOUND) return;
+        f = &h->found[h->nfound++];
+        mset(f, 0, sizeof *f);
+        mcpy(f->addr, a, 6);
+        f->le = 1; f->named = 1;                        /* no name request over LE */
+        f->cod = 5u << 8 | (app == 0x03c1 ? 0x40u : app == 0x03c2 ? 0x80u : 0);
+        lg(h, "found LE %a, appearance %x (Bluetooth LE: not served yet)", a, app);
+    }
+    f->rssi = rssi;
+    if (nm[0]) mcpy(f->name, nm, BT_NAME);
+}
+static void le_scan_stop(struct bt_host *h)
+{
+    if (!h->le_scanning) return;
+    uint8_t p[2] = { 0, 0 };
+    cmd(h, C_LE_SCAN_ENABLE, p, 2);
+    h->le_scanning = 0;
 }
 static void next_name(struct bt_host *h)
 {
@@ -624,7 +674,8 @@ static void event(struct bt_host *h, const uint8_t *e, unsigned n)
         return;
     case 0x01:                                          /* Inquiry Complete */
         h->scanning = 0;
-        lg(h, "scan done: %u found", (uint32_t)h->nfound);
+        le_scan_stop(h);
+        lg(h, "scan done: %u found, %u other devices heard", (uint32_t)h->nfound, h->heard_other);
         next_name(h);
         return;
     case 0x02: case 0x22: {                             /* Inquiry Result (with RSSI): fields in arrays */
@@ -646,6 +697,17 @@ static void event(struct bt_host *h, const uint8_t *e, unsigned n)
     case 0x2f:                                          /* Extended Inquiry Result: one, with EIR */
         if (len < 15) return;
         found_update(h, p + 1, p[7], p[9] | p[10] << 8 | (uint32_t)p[11] << 16, le16(p + 12), (int8_t)p[14], p + 15, len - 15);
+        return;
+    case 0x3e:                                          /* LE Meta: advertising reports (one after another) */
+        if (len >= 2 && p[0] == 0x02) {
+            unsigned m = p[1], i = 2;
+            for (unsigned r = 0; r < m && i + 10 <= len; r++) {
+                unsigned dl = p[i + 8];
+                if (i + 10 + dl > len) break;
+                le_found(h, p + i + 2, p + i + 9, dl, (int8_t)p[i + 9 + dl]);
+                i += 10 + dl;
+            }
+        }
         return;
     case 0x07: {                                        /* Remote Name Request Complete */
         if (len < 7) return;
@@ -896,6 +958,7 @@ void bt_poll(struct bt_host *h)
     }
     if (h->state != BT_READY) return;
     if (h->scanning && due(h, h->scan_end)) h->scanning = 0;
+    if (!h->scanning && h->le_scanning) le_scan_stop(h);
     /* paired devices: call each once after the start (they also call us) */
     if (!h->pairing && !h->scanning && !h->names_pending && !h->calling && h->reconnect_next < h->nkeys && due(h, h->reconnect_at)) {
         struct bt_key *k = &h->keys[h->reconnect_next++];
@@ -909,8 +972,14 @@ int bt_scan(struct bt_host *h)
     if (h->state != BT_READY) return -1;
     if (h->scanning) return 0;
     h->nfound = 0;
-    uint8_t p[5] = { 0x33, 0x8b, 0x9e, 0x08, 0x00 };   /* GIAC, 10.24 s, no limit */
+    h->heard_other = 0; h->heard_logged = 0;
+    uint8_t p[7] = { 0x33, 0x8b, 0x9e, 0x08, 0x00 };   /* GIAC, 10.24 s, no limit */
     cmd(h, C_INQUIRY, p, 5);
+    p[0] = 1; put16(p + 1, 0x0060); put16(p + 3, 0x0030); p[5] = 0; p[6] = 0;   /* active (scan responses carry names), 60 ms / 30 ms */
+    cmd(h, C_LE_SCAN_PARAM, p, 7);
+    p[0] = 1; p[1] = 1;                                /* on, duplicates filtered */
+    cmd(h, C_LE_SCAN_ENABLE, p, 2);
+    h->le_scanning = 1;
     h->scanning = 1;
     h->scan_end = now(h) + 12000;
     say(h, "scanning - put the device in pairing mode");
@@ -919,7 +988,10 @@ int bt_scan(struct bt_host *h)
 int bt_pair(struct bt_host *h, const uint8_t a[6])
 {
     if (h->state != BT_READY) return -1;
+    struct bt_found *lf = found_of(h, a);
+    if (lf && lf->le) { say(h, "Bluetooth LE devices are not supported yet"); lg(h, "%a is a Bluetooth LE device: not supported yet", a); return -2; }
     if (h->scanning) { cmd(h, C_INQUIRY_CANCEL, 0, 0); h->scanning = 0; }
+    le_scan_stop(h);
     struct bt_conn *c = conn_by_addr(h, a);
     mcpy(h->pair_addr, a, 6);
     h->pairing = 1;

@@ -200,6 +200,7 @@ static void startup(int with_fw)
     m = CMD(0x0c13); CHECK(m && !strcmp((const char *)m, "Alice68"), "name Alice68"); cc0(0x0c13);
     CMD(0x0c18); cc0(0x0c18);
     CMD(0x080f); cc0(0x080f);
+    m = CMD(0x0c6d); CHECK(m && m[0] == 1, "LE host support on"); cc0(0x0c6d);
     m = CMD(0x0c1a); CHECK(m && m[0] == 2, "page scan only"); cc0(0x0c1a);
     CHECK(H.state == BT_READY && H.bdaddr[0] == 0xa1 && H.acl_free == 8, "ready: state %d addr %02x buffers %u", H.state, H.bdaddr[0], H.acl_free);
     auto_ans = 1;
@@ -257,6 +258,8 @@ int main(int argc, char **argv)
     CHECK(!bt_scan(&H), "scan");
     p = CMD(0x0401); CHECK(p && p[0] == 0x33 && p[2] == 0x9e && p[3] == 8, "inquiry, GIAC, 10.24 s");
     cstatus(0x0401, 0);
+    p = CMD(0x200b); CHECK(p && p[0] == 1, "an active LE scan beside it"); cc0(0x200b);
+    p = CMD(0x200c); CHECK(p && p[0] == 1, "LE scan on"); cc0(0x200c);
     uint8_t eir[15 + 20]; memset(eir, 0, sizeof eir);
     eir[0] = 1; memcpy(eir + 1, MOUSE, 6); eir[7] = 1; eir[9] = 0x80; eir[10] = 0x25; eir[11] = 0x00; eir[14] = (uint8_t)-50;
     eir[15] = 9; eir[16] = 0x09; memcpy(eir + 17, "BT Mouse", 8);
@@ -265,8 +268,29 @@ int main(int argc, char **argv)
     ev(0x22, ir, 15);                                      /* a keyboard, with RSSI, no name */
     uint8_t other[15]; memcpy(other, ir, 15); memcpy(other + 1, STRANGER, 6); other[9] = 0x0c; other[10] = 0x02; other[11] = 0x5a;   /* a phone */
     ev(0x22, other, 15);
+    CHECK(H.heard_other == 1, "the phone heard, not listed");
+    {                                                      /* LE: a HID keyboard (service 1812, a name), and a beacon */
+        static const uint8_t LEKB[6] = { 0x51, 0x52, 0x53, 0x54, 0x55, 0xd6 };
+        uint8_t le[64] = { 0x02, 2 }; unsigned i = 2;
+        le[i++] = 0; le[i++] = 1; memcpy(le + i, LEKB, 6); i += 6;
+        le[i++] = 13;                                      /* data: 16-bit UUIDs (1812), then the name */
+        le[i++] = 3; le[i++] = 0x03; le[i++] = 0x12; le[i++] = 0x18;
+        le[i++] = 8; le[i++] = 0x09; memcpy(le + i, "Keys LE", 7); i += 7;
+        le[i++] = (uint8_t)-70;
+        le[i++] = 0; le[i++] = 0; memcpy(le + i, STRANGER, 6); i += 6;     /* a beacon: flags only */
+        le[i++] = 3; le[i++] = 2; le[i++] = 0x01; le[i++] = 0x06; le[i++] = (uint8_t)-80;
+        ev(0x3e, le, i);
+        CHECK(H.nfound == 3 && H.found[2].le, "an LE keyboard listed (%d)", H.nfound);
+        struct bt_found *lf = 0;
+        for (int k = 0; k < H.nfound; k++) if (H.found[k].le) lf = &H.found[k];
+        CHECK(lf && !strcmp(lf->name, "Keys LE") && (lf->cod & 0x1f00) == 0x500, "marked LE, named: %s", lf ? lf->name : "-");
+        CHECK(H.heard_other == 2, "the beacon heard, not listed (%u)", H.heard_other);
+        CHECK(bt_pair(&H, LEKB) == -2 && strstr(H.status, "LE"), "pairing an LE device refused: %s", H.status);
+        H.nfound--;                                        /* the rest as before */
+    }
     CHECK(H.nfound == 2 && !strcmp(H.found[0].name, "BT Mouse") && H.found[1].clkoff == 0x1234, "found %d: '%s'", H.nfound, H.found[0].name);
     uint8_t icomp = 0; ev(0x01, &icomp, 1);
+    p = CMD(0x200c); CHECK(p && p[0] == 0, "LE scan off at the end"); cc0(0x200c);
     p = CMD(0x0419); CHECK(p && !memcmp(p, KB2, 6) && p[8] == 0x34 && p[9] == 0x92, "asks the keyboard's name");
     uint8_t rn[7 + 248]; memset(rn, 0, sizeof rn); memcpy(rn + 1, KB2, 6); memcpy(rn + 7, "Slim Keys", 9);
     ev(0x07, rn, sizeof rn);

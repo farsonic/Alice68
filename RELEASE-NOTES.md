@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Bluetooth works on a Pi** with the right firmware file: the Pi 4's chip is a BCM4345C0 and
+  needs `BCM4345C0.hcd` (63,806 bytes); `BCM4345C5.hcd` is for another chip and leaves it dead.
+- **Bluetooth scan: what it hears.** A scan now also listens for Bluetooth LE devices. LE
+  keyboards and mice are listed, marked "(LE)", but cannot be paired yet: only Classic works so
+  far. Most current Microsoft mice and many newer keyboards are LE only. The log names the first
+  devices it heard that are no keyboard or mouse, and the scan's end says how many.
 - **Bluetooth: which chip, which file.** Before loading the firmware the kernel asks the chip's
   ROM what it is (version, LMP subversion, name: the name is the `.hcd` it wants) and logs
   the file it found, its size, record count and last record. A file that does not end with

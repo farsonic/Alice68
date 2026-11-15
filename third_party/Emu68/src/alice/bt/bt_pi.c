@@ -235,7 +235,7 @@ static void board_sync(void)
     for (int i = 0; i < bh.nfound && i < AN_BT_FOUND; i++) {
         volatile struct an_btfound *f = &x->found[i];
         for (int j = 0; j < 6; j++) f->addr[j] = bh.found[i].addr[j];
-        f->cod = bh.found[i].cod; f->rssi = bh.found[i].rssi;
+        f->cod = bh.found[i].cod | (bh.found[i].le ? 0x80000000u : 0); f->rssi = bh.found[i].rssi;
         for (int j = 0; j < 40; j++) { f->name[j] = bh.found[i].name[j]; if (!bh.found[i].name[j]) break; }
     }
 }

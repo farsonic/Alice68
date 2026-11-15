@@ -746,7 +746,9 @@ static void bt_show(void)
         volatile struct an_btfound *f = &x->found[i];
         saddr(&l, f->addr); spad(&l, 19);
         ULONG m2 = (f->cod >> 6) & 3;
-        ss(&l, m2 == 3 ? "keyboard+mouse" : m2 == 1 ? "keyboard" : m2 == 2 ? "mouse" : "device"); spad(&l, 34);
+        ss(&l, m2 == 3 ? "keyboard+mouse" : m2 == 1 ? "keyboard" : m2 == 2 ? "mouse" : "device");
+        if (f->cod & 0x80000000u) ss(&l, " (LE)");             /* Bluetooth LE: listed, not served yet */
+        spad(&l, 34);
         char nm[41]; for (int j = 0; j < 40; j++) { nm[j] = f->name[j]; if (!nm[j]) break; } nm[40] = 0;
         ss(&l, nm[0] ? nm : "(no name yet)");
     }
@@ -1186,6 +1188,7 @@ LONG card_main(const char *args, ULONG arglen)
                 else if (id == G_BPAIR) {
                     volatile struct an_bt *x = btb();
                     if (!x || bt_fsel < 0 || (ULONG)bt_fsel >= x->nfound) say("Pair: Scan, then pick the device in the lower list", 0);
+                    else if (x->found[bt_fsel].cod & 0x80000000u) say("That is a Bluetooth LE device: only Classic Bluetooth keyboards and mice work so far", 0);
                     else { bt_cmd(AN_BT_CMD_PAIR, x->found[bt_fsel].addr); say("Pairing - follow what the line above the note says", 0); }
                 } else if (id == G_BCONN || id == G_BFORGET) {
                     volatile struct an_bt *x = btb();

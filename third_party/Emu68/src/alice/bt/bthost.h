@@ -30,7 +30,7 @@ enum { BT_OFF, BT_FW, BT_INIT, BT_READY, BT_FAILED };
 #define BTK_MOUSE     4u
 
 struct bt_key { uint8_t addr[6]; uint8_t key[16]; uint8_t type; uint32_t flags; char name[BT_NAME]; };
-struct bt_found { uint8_t addr[6]; uint32_t cod; int8_t rssi; uint8_t psr; uint16_t clkoff; char name[BT_NAME]; int named; };
+struct bt_found { uint8_t addr[6]; uint32_t cod; int8_t rssi; uint8_t psr; uint16_t clkoff; char name[BT_NAME]; int named; uint8_t le; };   /* le: a Bluetooth LE device (not served yet) */
 
 struct bt_io {
     void *ctx;
@@ -90,6 +90,8 @@ struct bt_host {
     uint32_t reconnect_at; int reconnect_next;
     uint8_t call_addr[6]; int calling;  /* a Create Connection of ours is out */
     int tries;                          /* resets sent after the firmware's launch */
+    int le_scanning;                    /* an LE scan beside the inquiry: LE devices are named, not served */
+    unsigned heard_other, heard_logged; /* devices a scan heard that are no keyboard or mouse */
 };
 
 /* fw/fwlen: the .hcd file (0: none - the controller's ROM firmware is used) */
