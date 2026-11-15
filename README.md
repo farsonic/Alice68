@@ -511,15 +511,36 @@ new address.)
    [firmware-nonfree](https://github.com/RPi-Distro/firmware-nonfree/tree/bookworm/debian/config/brcm80211)
    repository, branch `bookworm`, under `debian/config/brcm80211/` (`cypress/` and
    `brcm/`), or in `/lib/firmware/cypress/` and `/lib/firmware/brcm/` on a Raspberry Pi
-   OS card (copy what links point to, under these names). Straight onto the card from a
-   Mac or Linux (change the card's path):
+   OS card (copy what links point to, under these names).
+
+   **All of it in one go**, straight onto the card from a Mac or Linux (WiFi and the
+   Bluetooth firmware; change `/Volumes/EMU68` to where your card's FAT partition is):
    ```bash
-   mkdir -p /Volumes/EMU68/WIFI && cd /Volumes/EMU68/WIFI
-   B=https://github.com/RPi-Distro/firmware-nonfree/raw/bookworm/debian/config/brcm80211
-   curl -fLO $B/cypress/cyfmac43455-sdio-standard.bin
-   curl -fLO $B/cypress/cyfmac43455-sdio.clm_blob
-   curl -fLO $B/brcm/brcmfmac43455-sdio.txt
+   mkdir -p /Volumes/EMU68/WIFI && cd /Volumes/EMU68/WIFI && \
+   curl -fL --remote-name-all \
+     https://raw.githubusercontent.com/RPi-Distro/firmware-nonfree/bookworm/debian/config/brcm80211/cypress/cyfmac43455-sdio-standard.bin \
+     https://raw.githubusercontent.com/RPi-Distro/firmware-nonfree/bookworm/debian/config/brcm80211/cypress/cyfmac43455-sdio.clm_blob \
+     https://raw.githubusercontent.com/RPi-Distro/firmware-nonfree/bookworm/debian/config/brcm80211/brcm/brcmfmac43455-sdio.txt \
+     https://raw.githubusercontent.com/RPi-Distro/bluez-firmware/master/broadcom/BCM4345C0.hcd && \
+   ls -l
    ```
+   That is for a Pi 4 Model B. You should see four files: 609,309, 2,676, 2,074 and 63,806
+   bytes. On Windows, make the `WIFI` folder on the card, open PowerShell in it and run the
+   `curl` part as one line, with `curl.exe` for `curl` and without the `\` line ends.
+
+   For a Compute Module 4, take the 43456 files instead of the first three (the same
+   repository, all under `brcm/`):
+   ```bash
+   curl -fL --remote-name-all \
+     https://raw.githubusercontent.com/RPi-Distro/firmware-nonfree/bookworm/debian/config/brcm80211/brcm/brcmfmac43456-sdio.bin \
+     https://raw.githubusercontent.com/RPi-Distro/firmware-nonfree/bookworm/debian/config/brcm80211/brcm/brcmfmac43456-sdio.clm_blob \
+     https://raw.githubusercontent.com/RPi-Distro/firmware-nonfree/bookworm/debian/config/brcm80211/brcm/brcmfmac43456-sdio.txt
+   ```
+   Put only the Bluetooth file your board's chip wants in `WIFI`: `BCM4345C0.hcd` on a
+   Pi 4 Model B; `BCM4345C5.hcd` (same place, `.../broadcom/BCM4345C5.hcd`) on a Pi 400.
+   The wrong one loads but leaves Bluetooth dead (the kernel's log names the chip it
+   found: `chip ROM name: ...`). macOS adds `._` files next to them; they are ignored.
+
    At boot `alice68hdf.device` reads them and hands them to the kernel, which starts the
    chip straight away: the splash's status strip shows **WIFI** and what it is doing.
 2. **The network**, either in `cmdline.txt` (it then joins at boot, before AmigaOS):
@@ -612,7 +633,8 @@ Energy (LE) ones (many newer mice and slim keyboards). Keyboards include
 Ctrl-Amiga-Amiga; mice include the wheel, for `Alice68-Wheel`. LE support is new and has
 only been tested on a PC against a scripted device so far.
 
-1. **The firmware.** Copy `BCM4345C0.hcd` into the `WIFI` folder on the SD card. It's in
+1. **The firmware.** Copy `BCM4345C0.hcd` into the `WIFI` folder on the SD card (the
+   one-line download under [WiFi](#wifi) fetches it with the WiFi files). It's in
    the Raspberry Pi OS package `bluez-firmware`, as
    `/lib/firmware/brcm/BCM4345C0.hcd` on a Pi; a Pi 400 uses `BCM4345C5.hcd`. Like the
    WiFi firmware, it isn't ours to ship. `alice68hdf.device` hands it to the kernel
