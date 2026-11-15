@@ -191,8 +191,8 @@ aga.look=0 aga.scale=1
 | `wifi.ssid="NAME"` `wifi.psk="PASSWORD"` | Join this WiFi network at boot (see [WiFi](#wifi-new-not-yet-tested-on-a-pi)) |
 | `wifi.country=GB` | Your country: the WiFi channels allowed |
 | `wifi=off` | Leave the WiFi chip off |
-| `bt=off` | Leave Bluetooth off (see [Bluetooth](#bluetooth-keyboards-and-mice-new-not-yet-tested-on-a-pi)) |
-| `bt.dev=ADDRESS:KEY:KIND` | A paired Bluetooth device (Alice68-Card writes these) |
+| `bt=off` | Leave Bluetooth off (see [Bluetooth](#bluetooth-keyboards-and-mice-new)) |
+| `bt.dev=ADDRESS:KEY:KIND[:...]` | A paired Bluetooth device (Alice68-Card writes these) |
 | `eth=on` | Start the kernel's Ethernet at boot (it also starts when a stack opens `alice68net.device` unit 1) |
 | `eth=off` | Keep the kernel off the Ethernet port (for rondoval's `genet.device`) |
 | `net.oui=off` | Keep the Pi's own MAC addresses (otherwise both network units use Commodore's OUI, `00:80:10`) |
@@ -275,7 +275,7 @@ it.
 | Card | The card's partitions: type, file system, label, size, free space (**Count free space**). Which of them is Alice68's FAT partition, the exFAT volume, Emu68's own Amiga disk. Whether AmigaOS may write the exFAT partition. The hardfiles and CD images mounted from the card. |
 | Files | Browse the FAT partition and the exFAT partition: folders first, sizes, `in use` for anything that can't be changed now. Filter to hardfiles, CD images, Kickstart ROMs or WiFi firmware. **Open folder** (or double-click), **Parent**, **New folder**, **Rename to name**, **Delete...** (it asks first). **Boot from it** makes a hardfile the boot drive (`hdf.boot=`), **Use as Kickstart** makes a ROM the Kickstart (`initramfs` in `config.txt`). |
 | Settings | The options of `cmdline.txt`, the same ones the [setup screen](#setup) offers (both use one table, `src/raspi/alice_opts.c`), and the Kickstart ROM. Each shows what it does underneath when you pick it. **Back to the card's** drops your changes. |
-| Bluetooth | The kernel's Bluetooth: its state, the paired devices (**Connect now**, **Forget...**), **Scan** and **Pair**, the passkey to type, and its last log lines. Pairings are written to `cmdline.txt` at once. See [Bluetooth](#bluetooth-keyboards-and-mice-new-not-yet-tested-on-a-pi). |
+| Bluetooth | The kernel's Bluetooth: its state, the paired devices (**Connect now**, **Forget...**), **Scan** and **Pair**, the passkey to type, and its last log lines. Pairings are written to `cmdline.txt` at once. See [Bluetooth](#bluetooth-keyboards-and-mice-new). |
 | Text files | `config.txt` line by line: pick a line to change it, **Add**, **Delete**. `cmdline.txt` as it will be saved; type into it to change it directly, and the Settings page follows. |
 
 The window can be resized: lists grow with it, and the buttons stay sized to their labels.
@@ -604,12 +604,13 @@ monitor's last task table.
 Not supported: WEP, WPA-Enterprise, hidden networks only by name (they are tried when
 not seen in a scan), access-point mode.
 
-## Bluetooth keyboards and mice (new, not yet tested on a Pi)
+## Bluetooth keyboards and mice (new)
 
-The Pi 4's WiFi chip also does Bluetooth, and the kernel now drives it: Classic
-Bluetooth keyboards and mice work on the Amiga like USB ones. Keyboards include
-Ctrl-Amiga-Amiga; mice include the wheel, for `Alice68-Wheel`. Bluetooth Low Energy
-devices (many newer mice and slim keyboards) aren't supported yet.
+The Pi 4's WiFi chip also does Bluetooth, and the kernel now drives it: Bluetooth
+keyboards and mice work on the Amiga like USB ones, Classic ones and Bluetooth Low
+Energy (LE) ones (many newer mice and slim keyboards). Keyboards include
+Ctrl-Amiga-Amiga; mice include the wheel, for `Alice68-Wheel`. LE support is new and has
+only been tested on a PC against a scripted device so far.
 
 1. **The firmware.** Copy `BCM4345C0.hcd` into the `WIFI` folder on the SD card. It's in
    the Raspberry Pi OS package `bluez-firmware`, as
@@ -622,8 +623,10 @@ devices (many newer mice and slim keyboards) aren't supported yet.
    - A keyboard: type the six digits shown on the Bluetooth keyboard, then Enter.
    - A mouse: it pairs by itself.
    - Old devices that ask for a PIN get `0000`.
-3. **After that,** paired devices are kept in `cmdline.txt` (`bt.dev=ADDRESS:KEY:KIND`;
-   Alice68-Card writes it at once). They reconnect by themselves at every boot once
+   - LE devices are marked "(LE)" in the list and pair the same way. A device that
+     insists on LE Secure Connections pairing can't pair yet: the page says so.
+3. **After that,** paired devices are kept in `cmdline.txt` (`bt.dev=ADDRESS:KEY:KIND`,
+   with `:EDIV:RAND:TYPE[:IRK]` after it for an LE device; Alice68-Card writes it at once). They reconnect by themselves at every boot once
    AmigaOS is starting, usually when you press a key or move the mouse. **Connect now**
    calls one, **Forget...** removes it.
 
@@ -634,9 +637,12 @@ How it works: the chip's Bluetooth half is on the Pi's UART0 (GPIO 30-33, with f
 control), with BT_ON on the firmware's GPIO expander. CPU1 runs a small Classic
 Bluetooth host (`src/alice/bt/bthost.c`) next to the WiFi driver. It covers HCI with
 the Broadcom firmware download, Secure Simple Pairing (we display a passkey for
-keyboards, Just Works for mice) and legacy PIN, L2CAP, and HID in boot protocol. It's
-written from the Bluetooth Core and HID specifications, and `tools/bt-test` checks it
-on a PC against a scripted controller. The USB-less kernel (`kernel8-nousb.img`)
+keyboards, Just Works for mice) and legacy PIN, L2CAP, and HID in boot protocol. For LE
+(`btle.c`): LE connections, SMP legacy pairing (the AES done by the controller's LE
+Encrypt), bonding, GATT discovery of the HID service, boot or report protocol, and
+reconnection through the controller's filter accept list and resolving list. It's
+written from the Bluetooth Core, HID, and HID over GATT specifications, and
+`tools/bt-test` checks it on a PC against a scripted controller and LE devices. The USB-less kernel (`kernel8-nousb.img`)
 doesn't pass Bluetooth keyboards on yet.
 
 ## Hardfiles (`.hdf`) on the SD card

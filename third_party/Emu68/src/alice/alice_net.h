@@ -81,7 +81,8 @@ struct an_setup {
    cmd_addr and cmd, then cmd_seq + 1; the kernel answers with cmd_done = cmd_seq. */
 #define AN_BT_KEYS   6
 #define AN_BT_FOUND  12
-struct an_btkey { unsigned char addr[8]; unsigned char key[16]; unsigned int type, flags; char name[40]; };   /* 72 */
+struct an_btkey { unsigned char addr[8]; unsigned char key[16]; unsigned int type, flags; char name[40]; };   /* 72; LE: addr[6] address type, addr[7] 1 = irk given */
+struct an_btle { unsigned char rand[8]; unsigned int ediv; unsigned char irk[16]; };                         /* 28: the LE part of keys[i] */
 struct an_btfound { unsigned char addr[8]; unsigned int cod; int rssi; char name[40]; };                    /* 56 */
 struct an_bt {
     unsigned int state;             /* AN_BT_* */
@@ -94,6 +95,7 @@ struct an_bt {
     unsigned char bdaddr[8];
     struct an_btkey keys[AN_BT_KEYS];
     struct an_btfound found[AN_BT_FOUND];
+    struct an_btle le[AN_BT_KEYS];   /* for keys[i] with AN_BTK_LE (key = its LTK) */
 };
 #define AN_BT_OFF       0u          /* bt=off, or not started */
 #define AN_BT_NOFW      1u          /* waiting for AmigaOS to hand over the firmware */
@@ -103,6 +105,7 @@ struct an_bt {
 #define AN_BTK_CONNECTED 1u
 #define AN_BTK_KEYBOARD  2u
 #define AN_BTK_MOUSE     4u
+#define AN_BTK_LE        8u          /* a Bluetooth LE device */
 #define AN_BT_CMD_SCAN    1u
 #define AN_BT_CMD_PAIR    2u
 #define AN_BT_CMD_FORGET  3u

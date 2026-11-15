@@ -11,9 +11,17 @@
  *   Pairing: Secure Simple Pairing (we display a passkey for keyboards, Just
  *   Works for mice) and legacy PIN 0000; link keys kept by the caller.
  *
- * Written from the Bluetooth Core Specification (HCI, L2CAP, SSP), the HID
- * profile specification, and Linux's btbcm/hci_bcm for the Broadcom vendor
- * commands. No structs over wire data: every field byte by byte.
+ *   LE (btle.c, included by bthost.c): HID over GATT - LE connections, SMP
+ *   legacy pairing (Just Works for mice, a passkey we show for keyboards; the
+ *   controller's LE Encrypt does the AES), bonding with the LTK, GATT
+ *   discovery of the HID service, boot protocol (report mode from the Report
+ *   Map when a device has no boot reports), reconnects by the controller's
+ *   filter accept list (and resolving list, for devices with an IRK).
+ *
+ * Written from the Bluetooth Core Specification (HCI, L2CAP, SSP, GAP, ATT,
+ * GATT, SMP), the HID profile and HID over GATT / HID Service specifications,
+ * and Linux's btbcm/hci_bcm for the Broadcom vendor commands. No structs over
+ * wire data: every field byte by byte.
  */
 #ifndef ALICE68_BTHOST_H
 #define ALICE68_BTHOST_H
@@ -28,9 +36,14 @@ enum { BT_OFF, BT_FW, BT_INIT, BT_READY, BT_FAILED };
 #define BTK_CONNECTED 1u
 #define BTK_KEYBOARD  2u
 #define BTK_MOUSE     4u
+#define BTK_LE        8u                /* a Bluetooth LE device: key = its LTK, with ediv and rand */
 
-struct bt_key { uint8_t addr[6]; uint8_t key[16]; uint8_t type; uint32_t flags; char name[BT_NAME]; };
-struct bt_found { uint8_t addr[6]; uint32_t cod; int8_t rssi; uint8_t psr; uint16_t clkoff; char name[BT_NAME]; int named; uint8_t le; };   /* le: a Bluetooth LE device (not served yet) */
+struct bt_key {
+    uint8_t addr[6]; uint8_t key[16]; uint8_t type; uint32_t flags; char name[BT_NAME];
+    /* LE: addr is the identity address; addr_type 0 public, 1 random */
+    uint8_t addr_type; uint16_t ediv; uint8_t rand[8]; uint8_t irk[16]; uint8_t has_irk;
+};
+struct bt_found { uint8_t addr[6]; uint32_t cod; int8_t rssi; uint8_t psr; uint16_t clkoff; char name[BT_NAME]; int named; uint8_t le, addr_type; };   /* le: a Bluetooth LE device; addr_type as advertised */
 
 struct bt_io {
     void *ctx;
@@ -45,6 +58,29 @@ struct bt_io {
 };
 
 struct bt_l2ch { uint16_t psm, lcid, rcid; uint8_t state, conf; };
+/* an LE link: pairing (SMP) and the HID service as GATT found it */
+#define BT_LE_CHARS 16
+#define BT_LE_REPORTS 8
+struct bt_kbmap { uint8_t id, ok; uint16_t mod_pos, keys_pos; uint8_t nkeys; };   /* a report-mode keyboard report */
+struct bt_le {
+    uint8_t addr_type, rat, ra[6];       /* identity type; the address (and type) the link was made with, for c1 */
+    uint8_t rekey;                       /* encrypting with the stored LTK */
+    /* SMP */
+    uint8_t smp, mitm, passkey_method, rdist, got;
+    uint8_t preq[7], pres[7], tk[16], mrand[16], srand[16], sconf[16], conf[16], ltk[16], rand[8], irk[16], idaddr[7];
+    uint16_t ediv; uint8_t have_sconf, have_srand, keysize;
+    uint32_t smp_until;
+    /* GATT */
+    uint8_t g, gi, att_busy;
+    uint16_t svc_s, svc_e, cursor, mtu;
+    uint16_t chr_vh[BT_LE_CHARS], chr_uuid[BT_LE_CHARS], chr_cccd[BT_LE_CHARS], chr_ref[BT_LE_CHARS]; uint8_t nchr;
+    uint8_t rep_id[BT_LE_CHARS], rep_type[BT_LE_CHARS];
+    uint16_t pm, kb_in, ms_in, map;      /* value handles (0: none) */
+    uint8_t boot;                        /* boot protocol in use */
+    uint8_t mouse_ok; uint8_t hmouse[40];   /* struct hid_mouse (btle.c), opaque here */
+    struct bt_kbmap kbm;
+    uint8_t lastbtn;
+};
 struct bt_conn {
     int used;
     uint16_t handle;
@@ -57,6 +93,8 @@ struct bt_conn {
     uint8_t acl[700];                   /* an L2CAP frame being put together */
     unsigned acl_n, acl_want;
     uint8_t lastkb[8];
+    int le;                             /* an LE link (fixed channels: ATT 4, SMP 6, LE signalling 5) */
+    struct bt_le l;
 };
 
 #define BT_CMDQ 24
@@ -74,7 +112,8 @@ struct bt_host {
     uint16_t pending_op;                /* the command whose answer we wait for in the start-up, 0 none */
     uint8_t cmdq[BT_CMDQ][260]; uint16_t cmdq_len[BT_CMDQ]; unsigned cq_head, cq_tail;
     uint16_t acl_mtu, acl_free;
-    uint8_t aclq[BT_ACLQ][260]; uint16_t aclq_len[BT_ACLQ]; unsigned aq_head, aq_tail;
+    uint8_t aclq[BT_ACLQ][260]; uint16_t aclq_len[BT_ACLQ]; uint8_t aclq_le[BT_ACLQ]; unsigned aq_head, aq_tail;
+    uint16_t le_mtu, le_free;           /* the controller's LE buffers (0: LE shares acl_free) */
     /* the H4 receiver */
     uint8_t rx[1100]; unsigned rx_n, rx_need; int rx_type;
     /* devices */
@@ -93,6 +132,13 @@ struct bt_host {
     int le_scanning;                    /* an LE scan beside the inquiry: LE devices are named, not served */
     unsigned heard_other, heard_logged; /* devices a scan heard that are no keyboard or mouse */
     unsigned scan_ir, scan_eir, scan_le; /* inquiry results, extended ones, LE reports in this scan (all, before any filter) */
+    /* LE */
+    int le_init;                        /* an LE Create Connection is out: 1 to one device, 2 the accept list */
+    uint32_t le_init_until;             /* 1: give up then; 0: not again before then */
+    int le_cancelling;                  /* an LE Create Connection Cancel is out */
+    int le_lists_dirty;                 /* the accept/resolving lists must be written again */
+    int aes_busy; uint16_t aes_handle;  /* an LE Encrypt / LE Rand of SMP's is out, for that link */
+    uint8_t rmap[512]; unsigned rmap_n; /* a Report Map being read (one link at a time) */
 };
 
 /* fw/fwlen: the .hcd file (0: none - the controller's ROM firmware is used) */
@@ -101,6 +147,9 @@ void bt_rx(struct bt_host *h, const uint8_t *p, unsigned n);       /* bytes from
 void bt_poll(struct bt_host *h);                                   /* timers; call often */
 /* a paired device known from before (cmdline.txt), before or after bt_init */
 int  bt_add_key(struct bt_host *h, const uint8_t addr[6], const uint8_t key[16], uint8_t type, uint32_t kind);
+/* an LE one: identity address and type, LTK, EDIV, Rand, IRK (0: none) */
+int  bt_add_le_key(struct bt_host *h, const uint8_t addr[6], uint8_t addr_type, const uint8_t ltk[16], uint16_t ediv,
+                   const uint8_t rand[8], const uint8_t *irk, uint32_t kind);
 int  bt_scan(struct bt_host *h);                                   /* ~10 s inquiry: found[] fills */
 int  bt_pair(struct bt_host *h, const uint8_t addr[6]);
 int  bt_connect(struct bt_host *h, const uint8_t addr[6]);         /* a paired device, now */

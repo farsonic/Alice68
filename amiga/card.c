@@ -415,8 +415,8 @@ static void child_path(char *out, const char *name)
 }
 
 /* ---- Settings: cmdline.txt and the Kickstart ROM -------------------------------------- */
-static char cmd_file[1100];                          /* cmdline.txt as on the card */
-static char cmd_base[1100];                          /* what the options apply to (the file, or the raw line typed) */
+static char cmd_file[1600];                          /* cmdline.txt as on the card */
+static char cmd_base[1600];                          /* what the options apply to (the file, or the raw line typed) */
 static char cmd_out[1200];                           /* what Save writes */
 static struct opt_vals ov;
 static char edits[1024];
@@ -747,7 +747,7 @@ static void bt_show(void)
         saddr(&l, f->addr); spad(&l, 19);
         ULONG m2 = (f->cod >> 6) & 3;
         ss(&l, m2 == 3 ? "keyboard+mouse" : m2 == 1 ? "keyboard" : m2 == 2 ? "mouse" : "device");
-        if (f->cod & 0x80000000u) ss(&l, " (LE)");             /* Bluetooth LE: listed, not served yet */
+        if (f->cod & 0x80000000u) ss(&l, " (LE)");             /* Bluetooth LE */
         spad(&l, 34);
         char nm[41]; for (int j = 0; j < 40; j++) { nm[j] = f->name[j]; if (!nm[j]) break; } nm[40] = 0;
         ss(&l, nm[0] ? nm : "(no name yet)");
@@ -776,7 +776,7 @@ static void bt_save_keys(void)
 {
     volatile struct an_bt *x = btb();
     if (!x) return;
-    static char ed[700];
+    static char ed[1000];                            /* six LE devices with IRKs: about 700 */
     struct sb b = { ed, 0, sizeof ed };
     static const char hx[] = "0123456789abcdef";
     ss(&b, "-bt.dev\n");
@@ -786,10 +786,17 @@ static void bt_save_keys(void)
         for (int j = 5; j >= 0; j--) { sc(&b, hx[k->addr[j] >> 4]); sc(&b, hx[k->addr[j] & 15]); }
         sc(&b, ':');
         for (int j = 0; j < 16; j++) { sc(&b, hx[k->key[j] >> 4]); sc(&b, hx[k->key[j] & 15]); }
-        sc(&b, ':'); sc(&b, (char)('0' + ((k->flags >> 1) & 3)));
+        sc(&b, ':'); sc(&b, hx[((k->flags >> 1) & 3) | (k->flags & AN_BTK_LE ? 4 : 0)]);
+        if (k->flags & AN_BTK_LE) {                  /* :EDIV:RAND:T[:IRK] */
+            volatile struct an_btle *e = &x->le[i];
+            sc(&b, ':'); for (int s = 12; s >= 0; s -= 4) sc(&b, hx[(e->ediv >> s) & 15]);
+            sc(&b, ':'); for (int j = 0; j < 8; j++) { sc(&b, hx[e->rand[j] >> 4]); sc(&b, hx[e->rand[j] & 15]); }
+            sc(&b, ':'); sc(&b, (char)('0' + (k->addr[6] & 1)));
+            if (k->addr[7]) { sc(&b, ':'); for (int j = 0; j < 16; j++) { sc(&b, hx[e->irk[j] >> 4]); sc(&b, hx[e->irk[j] & 15]); } }
+        }
         sc(&b, '\n');
     }
-    static char t[1200];
+    static char t[1600];
     if (cmd_apply(cmd_file, ed, t, sizeof t) < 0) { say("Bluetooth: cmdline.txt would be too long to keep the pairing", 0); return; }
     int e = write_text("cmdline.txt", t, slen(t));
     if (e) { say("Bluetooth: the pairing could not be kept in cmdline.txt: ", cs_err(e)); return; }
@@ -1188,7 +1195,6 @@ LONG card_main(const char *args, ULONG arglen)
                 else if (id == G_BPAIR) {
                     volatile struct an_bt *x = btb();
                     if (!x || bt_fsel < 0 || (ULONG)bt_fsel >= x->nfound) say("Pair: Scan, then pick the device in the lower list", 0);
-                    else if (x->found[bt_fsel].cod & 0x80000000u) say("That is a Bluetooth LE device: only Classic Bluetooth keyboards and mice work so far", 0);
                     else { bt_cmd(AN_BT_CMD_PAIR, x->found[bt_fsel].addr); say("Pairing - follow what the line above the note says", 0); }
                 } else if (id == G_BCONN || id == G_BFORGET) {
                     volatile struct an_bt *x = btb();

@@ -2,12 +2,21 @@
 
 ## Unreleased
 
+- **Bluetooth LE keyboards and mice** (HID over GATT; tested on the PC only so far). Scan
+  lists LE devices marked "(LE)" and **Pair** now pairs them: legacy LE pairing, Just Works
+  for mice, and for keyboards a six-digit passkey to type on the keyboard. The controller does
+  the AES. The device's key (LTK, and its IRK if it has one) is kept in `cmdline.txt`
+  (`bt.dev=ADDRESS:LTK:KIND:EDIV:RAND:TYPE[:IRK]`, KIND + 4 for LE; older kernels skip
+  such entries). Bonded LE devices reconnect by themselves: the controller's filter accept
+  list connects whichever of them advertises. Boot protocol where the device has it, else
+  report mode from its Report Map (keyboard and mouse reports, the wheel too). Not yet: LE
+  Secure Connections pairing (a device that insists on it is named in the log and on the
+  Bluetooth page), devices whose reports are neither boot nor plain keyboard/mouse.
 - **Bluetooth works on a Pi** with the right firmware file: the Pi 4's chip is a BCM4345C0 and
   needs `BCM4345C0.hcd` (63,806 bytes); `BCM4345C5.hcd` is for another chip and leaves it dead.
 - **Bluetooth scan: what it hears.** A scan now also listens for Bluetooth LE devices. LE
-  keyboards and mice are listed, marked "(LE)", but cannot be paired yet: only Classic works so
-  far. Most current Microsoft mice and many newer keyboards are LE only. The log names the first
-  devices it heard that are no keyboard or mouse, and the scan's end says how many. It also
+  keyboards and mice are listed, marked "(LE)" (most current Microsoft mice and many newer
+  keyboards are LE only). The log names the first devices it heard that are no keyboard or mouse, and the scan's end says how many. It also
   counts every inquiry result and LE report the chip passed up, before any filter, says when
   the inquiry is running, and logs a refused LE scan command, so an empty list shows whether
   the radio heard anything at all.
