@@ -42,6 +42,11 @@ sub netcheck.c netcheck_main
 sub showconfig.c showconfig_main
 sub monitor.c monitor_main
 sub wheel.c wheel_main
+# CARD and BT: cardcmd.c on cardcore.c (also in Alice68Prefs), cmdedit.c and the options table
+for s in cardcmd.c cardcore.c hdf/cmdedit.c ../third_party/Emu68/src/raspi/alice_opts.c; do $CC $CFLAGS -c "$s" -o "out/cc_$(basename "$s").o"; done
+$LD -r -o out/sub_card.o out/cc_cardcmd.c.o out/cc_cardcore.c.o out/cc_cmdedit.c.o out/cc_alice_opts.c.o
+m68k-linux-gnu-objcopy --keep-global-symbol=card_main --keep-global-symbol=bt_main out/sub_card.o
+subs+=(out/sub_card.o)
 $LD -T link.ld --emit-relocs -o out/Alice68.elf "${subs[@]}"
 python3 -I elf2hunk.py out/Alice68.elf out/Alice68
 build Alice68-NetworkGT netprefs_start.S netprefs.c lvoy.S wifi/lvox.S lvo.S

@@ -7,6 +7,8 @@
  *   Alice68 LOG [ALL] [LINES=n] [MATCH=text] [FOLLOW]   the kernel's and the drivers' logs
  *   Alice68 JOYTEST [ONCE] [MOUSEPORT]    the joystick port as games read it
  *   Alice68 WIFI [START|SCAN|JOIN ...|RECONNECT|DISCONNECT|LOG|OFF]   the kernel's WiFi
+ *   Alice68 CARD [INFO|LIST|...|SET|BOOT|KICKSTART|CONFIG|RESTART]   the SD card, cmdline.txt, config.txt
+ *   Alice68 BT [LIST|SCAN|PAIR|CONNECT|FORGET|KEEP]   the kernel's Bluetooth
  *   Alice68 HDF                           the hardfiles, folders and CD images
  *   Alice68 NETCHECK ...                  checks a network driver (SANA-II / netdev)
  *   Alice68 SHOWCONFIG ...                boards, memory and Alice68's cards
@@ -32,12 +34,16 @@ LONG netcheck_main(const char *a, ULONG n);
 LONG showconfig_main(const char *a, ULONG n);
 LONG monitor_main(const char *a, ULONG n);
 LONG wheel_main(const char *a, ULONG n);
+LONG card_main(const char *a, ULONG n);
+LONG bt_main(const char *a, ULONG n);
 
 static const struct { const char *name; LONG (*fn)(const char *, ULONG); const char *what; } cmds[] = {
     { "STATUS",     status_main,     "[LOOP]  the kernel's status page: cores, temperature, JIT, network" },
     { "LOG",        usblog_main,     "[ALL] [LINES=n] [MATCH=text] [FOLLOW]  the kernel's and drivers' logs" },
     { "JOYTEST",    joytest_main,    "[ONCE] [MOUSEPORT]  the joystick port as games read it, live" },
     { "WIFI",       wifitool_main,   "[START|SCAN|JOIN \"name\" \"pass\" [CC]|RECONNECT|DISCONNECT|LOG|OFF]" },
+    { "CARD",       card_main,       "[INFO|LIST|DELETE|RENAME|MKDIR|OPTIONS|SET|BOOT|KICKSTART|CONFIG|RESTART]" },
+    { "BT",         bt_main,         "[LIST|SCAN|PAIR addr|CONNECT addr|FORGET addr|KEEP]  Bluetooth" },
     { "HDF",        hdfinfo_main,    "the hardfiles, folders and CD images on the SD card" },
     { "NETCHECK",   netcheck_main,   "[device] [unit] [TEST]  checks a network driver" },
     { "SHOWCONFIG", showconfig_main, "[SYS] [MEM] [BOARDS] [CARDS] [LIBS] [LOG] [ALL]" },

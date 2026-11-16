@@ -17,7 +17,7 @@ nm = subprocess.run(['m68k-linux-gnu-nm', hunk + '.elf'], capture_output=True, t
 mains = {l.split()[2]: int(l.split()[0], 16) for l in nm.splitlines() if l.endswith('_main') and ' T ' in l and not l.endswith(' alice68_main')}
 SUBS = {'STATUS': 'status_main', 'LOG': 'usblog_main', 'JOYTEST': 'joytest_main', 'WIFI': 'wifitool_main',
         'HDF': 'hdfinfo_main', 'NETCHECK': 'netcheck_main', 'SHOWCONFIG': 'showconfig_main',
-        'MONITOR': 'monitor_main', 'WHEEL': 'wheel_main'}
+        'MONITOR': 'monitor_main', 'WHEEL': 'wheel_main', 'CARD': 'card_main', 'BT': 'bt_main'}
 for s, f in SUBS.items():
     if f not in mains: fails.append('no %s in the binary' % f)
 
