@@ -1,5 +1,24 @@
 # Alice68 release notes
 
+## Unreleased
+
+- **Bluetooth game pads as Amiga joysticks** (tested on the PC only so far). A paired pad
+  plays in the joystick port (a second one in the mouse port): D-pad and left stick as the
+  directions, the bottom face button as fire, the right and left ones as fire 2 and 3.
+  Classic pads have no boot protocol, so the kernel asks the pad for its HID descriptor
+  over SDP (a new SDP client, the answer may come in parts) and decodes its reports from
+  it; LE pads give theirs in the Report Map. One parser (`alice_pad.c`) reads sticks of
+  any size, signed or not, hats of any range and up to 16 buttons, so a D-pad works sent
+  as a hat or as X/Y. Button layouts known by name: Xbox (A B X), PlayStation (Cross
+  Circle Square); others buttons 1 2 3. `bt.pad.buttons=F,F2,F3` and `bt.pad.jump=N` in
+  `cmdline.txt` change them. Pads are kept in `bt.dev=` with kind 8 (older kernels ignore
+  it); Alice68-Card lists them as "game pad". The log names the layout found once per
+  connection, to tell a pad's mode. Tests: `tools/hid-test` (standard pad, Xbox BLE,
+  DualShock 4, Switch Pro / D-input report 0x3F, a joystick, a D-pad-only pad sending axes
+  or a hat, a receiver with a pad behind a keyboard and mouse), `tools/bt-test` (a Classic
+  pad over SDP with a continuation, an LE pad, two pads on two ports, letting go).
+  Needs a Pi: real pads, the joystick in games.
+
 ## 0.6.0 — Bluetooth, the SD card from AmigaOS, exFAT, a setup screen
 
 Download: `Alice68-0.6.0-Pi4.zip` from the

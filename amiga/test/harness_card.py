@@ -287,6 +287,9 @@ def bt_paired():
     mem.w32(BT + 24, 2); mem.w_block(BT + 200, bytes([0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 1, 1])); mem.w_block(BT + 208, bytes(range(0x20, 0x30)))
     mem.w32(BT + 224, 0); mem.w32(BT + 228, 8 | 4 | 1); mem.w_block(BT + 232, b'LE Mouse\0')
     mem.w_block(BT + 1260, bytes(range(1, 9))); mem.w32(BT + 1268, 0x1234); mem.w_block(BT + 1272, bytes(range(0x40, 0x50)))
+    # a Classic game pad: keys[2] (flags AN_BTK_PAD | connected)
+    mem.w32(BT + 24, 3); mem.w_block(BT + 272, bytes([0x31, 0x32, 0x33, 0x34, 0x35, 0x36])); mem.w_block(BT + 280, bytes(range(0x30, 0x40)))
+    mem.w32(BT + 296, 4); mem.w32(BT + 300, 16 | 1); mem.w_block(BT + 304, b'EOS Mini\0')
     mem.w32(BT + 40, mem.r32(BT + 36))                  # the kernel took the command
 def wait2(o, p):
     st['step'] += 1
@@ -378,6 +381,8 @@ if 'btkept' in checks:
     chk(b'bt.dev=161514131211:000102030405060708090a0b0c0d0e0f:1' in c, 'pairing kept in cmdline.txt: %r' % c)
     chk(b'bt.dev=262524232221:202122232425262728292a2b2c2d2e2f:6:1234:0102030405060708:1:404142434445464748494a4b4c4d4e4f' in c, 'LE pairing kept in cmdline.txt: %r' % c)
     chk(any('Slim Keys' in x and 'connected' in x for x in checks['btkept'][3].get(G['BPAIRED'], [])), 'paired list %s' % checks['btkept'][3].get(G['BPAIRED']))
+    chk(b'bt.dev=363534333231:303132333435363738393a3b3c3d3e3f:8' in c, 'game pad kept in cmdline.txt with kind 8: %r' % c)
+    chk(any('EOS Mini' in x and 'game pad' in x for x in checks['btkept'][3].get(G['BPAIRED'], [])), 'the pad shown as a game pad: %s' % checks['btkept'][3].get(G['BPAIRED']))
 chk(mem.r32(BOARD + 44) == 0x52455354, 'restart not asked on the board (%x)' % mem.r32(BOARD + 44))
 chk(st.get('closed'), 'window not closed')
 chk(not opened, 'the device left open')

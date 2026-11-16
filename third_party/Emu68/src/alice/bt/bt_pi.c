@@ -29,6 +29,8 @@ extern const char *alice_bootargs(void);
 extern void frf_post_bt(const char *text, int col);
 extern void frf_native_usb_keyboard_boot_report(const uint8_t report[8]) __attribute__((weak));
 extern void aga_virtual_mouse_update(int dx, int dy, unsigned buttons);
+extern void aga_virtual_joy_set(int port, uint16_t joydat, int fire);
+extern void aga_virtual_pad_buttons(int port, uint32_t buttons);
 extern void pt_mouse_extra(int wheel, int pan, unsigned buttons) __attribute__((weak));
 
 #define PERI      0xf2000000u
@@ -161,10 +163,21 @@ static void io_mouse(void *c, int dx, int dy, int w, unsigned b)
     if (pt_mouse_extra) pt_mouse_extra(w, 0, b);
 }
 static void io_keys(void *c) { (void)c; }
-static const struct bt_io bio = { 0, io_send, io_baud, io_ms, io_log, io_kb, io_mouse, io_keys, io_kick };
+/* a game pad on an Amiga port: JOYxDAT's two counters as a joystick sets them (right: bit 1,
+   down: bit 1 ^ bit 0; left: bit 9, up: bit 9 ^ bit 8), the fire button on CIA-A, buttons 2
+   and 3 on pins 9 and 5 (aga_glue.c: those two on the joystick port only) */
+static void io_pad(void *c, int port, unsigned dirs, unsigned fires)
+{
+    (void)c;
+    int l = (dirs & PAD_LEFT) != 0, r = (dirs & PAD_RIGHT) != 0, u = (dirs & PAD_UP) != 0, d = (dirs & PAD_DOWN) != 0;
+    uint16_t joy = (uint16_t)((l ? 0x0200u : 0) | ((l ^ u) ? 0x0100u : 0) | (r ? 0x0002u : 0) | ((r ^ d) ? 0x0001u : 0));
+    aga_virtual_joy_set(port, joy, (int)(fires & 1u));
+    aga_virtual_pad_buttons(port, fires & 7u);
+}
+static const struct bt_io bio = { 0, io_send, io_baud, io_ms, io_log, io_kb, io_mouse, io_keys, io_kick, io_pad };
 
 /* ---- cmdline.txt: bt=off, bt.dev=ADDR:KEY:KIND -----------------------------------------
-   KIND: a hex digit, 1 keyboard + 2 mouse + 4 LE. An LE device goes on with
+   KIND: a hex digit, 1 keyboard + 2 mouse + 4 LE + 8 game pad. An LE device goes on with
    :EDIV:RAND:T[:IRK] - EDIV 4 hex digits (the number), RAND 16 hex digits (its
    bytes in order), T the address type (0 public, 1 random), IRK 32 hex digits.
    KEY is then its LTK. Older kernels read the first three fields only. */
@@ -182,6 +195,8 @@ static int word(const char *s, const char *w)
 }
 int bt_pi_wanted(void) { return !word(alice_bootargs(), "bt=off"); }
 static int hexv(char c) { return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1; }
+/* KIND's bits: 1 keyboard, 2 mouse, 4 LE, 8 game pad (older kernels ignore 8) */
+static uint32_t kind_flags(uint32_t kind) { return (kind << 1 & (BTK_KEYBOARD | BTK_MOUSE)) | (kind & 8 ? BTK_PAD : 0); }
 static void load_keys(void)
 {
     const char *s = alice_bootargs();
@@ -210,11 +225,36 @@ static void load_keys(void)
                 has_irk = 1;
                 for (int i = 0; i < 16 && has_irk; i++) { int h = hexv((char)r[25 + 2 * i]), l = hexv((char)r[26 + 2 * i]); if (h < 0 || l < 0) has_irk = 0; else irk[i] = (uint8_t)(h << 4 | l); }
             }
-            bt_add_le_key(&bh, a, (uint8_t)t, k, (uint16_t)ediv, rand, has_irk ? irk : 0, kind << 1 & (BTK_KEYBOARD | BTK_MOUSE));
+            bt_add_le_key(&bh, a, (uint8_t)t, k, (uint16_t)ediv, rand, has_irk ? irk : 0, kind_flags(kind));
             continue;
         }
-        bt_add_key(&bh, a, k, 4, kind << 1 & (BTK_KEYBOARD | BTK_MOUSE));
+        bt_add_key(&bh, a, k, 4, kind_flags(kind));
     }
+    /* game pads' buttons: bt.pad.buttons=F,F2,F3 (the pad's button numbers for fire, fire 2,
+       fire 3) and bt.pad.jump=N (a button that also pushes Up) */
+    unsigned b[4] = { 0, 0, 0, 0 };
+    int any = 0;
+    for (const char *p = s; *p; p++) {
+        if (p != s && p[-1] != ' ') continue;
+        const char *v = 0; int which = -1;
+        const char *w1 = "bt.pad.buttons=", *w2 = "bt.pad.jump=";
+        unsigned i = 0;
+        while (w1[i] && p[i] == w1[i]) i++;
+        if (!w1[i]) { v = p + i; which = 0; }
+        i = 0;
+        while (w2[i] && p[i] == w2[i]) i++;
+        if (!w2[i]) { v = p + i; which = 3; }
+        if (!v) continue;
+        for (int n = which; n < (which ? 4 : 3) && *v && *v != ' '; n++) {
+            unsigned x = 0;
+            while (*v >= '0' && *v <= '9') x = x * 10 + (unsigned)(*v++ - '0');
+            b[n] = x;
+            any = 1;
+            if (*v == ',') v++;
+            else break;
+        }
+    }
+    if (any) bt_pad_config(&bh, b[0], b[1], b[2], b[3]);
 }
 
 /* ---- the board: what Alice68-Card sees and asks ---------------------------------------- */

@@ -26,6 +26,7 @@
 #ifndef ALICE68_BTHOST_H
 #define ALICE68_BTHOST_H
 #include <stdint.h>
+#include "../../frf_usb/xhci/alice_pad.h"
 
 #define BT_MAXKEY    6                  /* paired devices */
 #define BT_MAXFOUND  12                 /* scan results */
@@ -37,6 +38,7 @@ enum { BT_OFF, BT_FW, BT_INIT, BT_READY, BT_FAILED };
 #define BTK_KEYBOARD  2u
 #define BTK_MOUSE     4u
 #define BTK_LE        8u                /* a Bluetooth LE device: key = its LTK, with ediv and rand */
+#define BTK_PAD       16u               /* a game pad or joystick: its reports go to the Amiga's joystick ports */
 
 struct bt_key {
     uint8_t addr[6]; uint8_t key[16]; uint8_t type; uint32_t flags; char name[BT_NAME];
@@ -55,6 +57,10 @@ struct bt_io {
     void (*mouse)(void *ctx, int dx, int dy, int wheel, unsigned buttons);
     void (*keys)(void *ctx);                                      /* the paired list changed: save it */
     void (*kick)(void *ctx, int attempt);                         /* the reset after the firmware went unanswered: unstick the line (may be 0) */
+    /* a game pad on an Amiga port (1 the joystick port, 0 the mouse port): dirs PAD_UP/DOWN/LEFT/RIGHT
+       (alice_pad.h), fires bit 0 fire (button 1), bit 1 button 2 (pin 9), bit 2 button 3 (pin 5);
+       0, 0 when it lets go (may be 0) */
+    void (*pad)(void *ctx, int port, unsigned dirs, unsigned fires);
 };
 
 struct bt_l2ch { uint16_t psm, lcid, rcid; uint8_t state, conf; };
@@ -91,12 +97,21 @@ struct bt_conn {
     int authed, encrypted, pairing, hid_up;
     uint8_t remote_io;                  /* from IO Capability Response, 0xff unknown */
     uint8_t sig_id;
-    struct bt_l2ch ch[3];               /* HID control, HID interrupt, SDP */
+    struct bt_l2ch ch[4];               /* HID control, HID interrupt, SDP (the device's questions), SDP (ours) */
     uint8_t acl[700];                   /* an L2CAP frame being put together */
     unsigned acl_n, acl_want;
     uint8_t lastkb[8];
     int le;                             /* an LE link (fixed channels: ATT 4, SMP 6, LE signalling 5) */
     struct bt_le l;
+    /* a game pad: its layout (from SDP's HID descriptor, or LE's Report Map) and its Amiga port */
+    uint32_t cod;                       /* Class of Device, when known (Classic) */
+    uint8_t is_pad;                     /* a pad by its class, its key, or its descriptor */
+    uint8_t boot_sent;                  /* SET_PROTOCOL boot went to it (Classic) */
+    uint8_t sdp;                        /* our SDP question: 0 not asked, 1 asked, 2 answered or given up */
+    uint8_t pad_at;                     /* its Amiga port + 1, 0: none */
+    uint32_t sdp_t0;
+    unsigned pad_dirs, pad_fires;       /* as last sent */
+    struct hid_pad pad;
 };
 
 #define BT_CMDQ 24
@@ -141,6 +156,12 @@ struct bt_host {
     int le_lists_dirty;                 /* the accept/resolving lists must be written again */
     int aes_busy; uint16_t aes_handle;  /* an LE Encrypt / LE Rand of SMP's is out, for that link */
     uint8_t rmap[1024]; unsigned rmap_n; /* a Report Map being read (one link at a time) */
+    /* game pads */
+    uint8_t sdp_buf[1024]; unsigned sdp_n; uint16_t sdp_tid; /* an SDP answer being put together (one link at a time) */
+    uint8_t sdp_cont[17];               /* its continuation state */
+    uint8_t req_addr[6]; uint32_t req_cod;   /* the last Connection Request's device and class */
+    uint8_t pad_cfg[4];                 /* bt_pad_config: buttons (1-based) for fire, fire 2, fire 3, jump; 0 = the pad's usual */
+    int pad_cfg_set;
 };
 
 /* fw/fwlen: the .hcd file (0: none - the controller's ROM firmware is used) */
@@ -156,6 +177,9 @@ int  bt_scan(struct bt_host *h);                                   /* ~10 s inqu
 int  bt_pair(struct bt_host *h, const uint8_t addr[6]);
 int  bt_connect(struct bt_host *h, const uint8_t addr[6]);         /* a paired device, now */
 int  bt_forget(struct bt_host *h, const uint8_t addr[6]);
+/* game pads' buttons (1-based; 0 = as the pad's kind has them: the bottom face button fires,
+   the right one is fire 2, the left one fire 3; jump 0 = none): from cmdline.txt bt.pad.* */
+void bt_pad_config(struct bt_host *h, unsigned fire, unsigned fire2, unsigned fire3, unsigned jump);
 /* "AA:BB:CC:DD:EE:FF" (addr as the controller gives it: least significant byte first) */
 void bt_addr_str(const uint8_t addr[6], char out[18]);
 #endif

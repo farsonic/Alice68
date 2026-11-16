@@ -2,6 +2,10 @@
  * Alice68 kernel Bluetooth: the host - see bthost.h. */
 #include <stdarg.h>
 #include "bthost.h"
+/* game pads' report layouts (shared with a USB driver, kept apart here by name) */
+#define hid_pad_parse  bt_hid_pad_parse
+#define hid_pad_decode bt_hid_pad_decode
+#include "../../frf_usb/xhci/alice_pad.c"
 
 /* ---- small helpers (no C library) -------------------------------------------- */
 static void mcpy(void *d, const void *s, unsigned n) { uint8_t *a = d; const uint8_t *b = s; while (n--) *a++ = *b++; }
@@ -168,8 +172,8 @@ static struct bt_found *found_of(struct bt_host *h, const uint8_t a[6])
 static uint32_t kind_of_cod(uint32_t cod)
 {
     if (((cod >> 8) & 0x1f) != 5) return 0;          /* not a peripheral */
-    uint32_t m = (cod >> 6) & 3;
-    return (m & 1 ? BTK_KEYBOARD : 0) | (m & 2 ? BTK_MOUSE : 0);
+    uint32_t m = (cod >> 6) & 3, sub = (cod >> 2) & 0xf;     /* sub: 1 joystick, 2 game pad */
+    return (m & 1 ? BTK_KEYBOARD : 0) | (m & 2 ? BTK_MOUSE : 0) | (sub == 1 || sub == 2 ? BTK_PAD : 0);
 }
 int bt_add_key(struct bt_host *h, const uint8_t a[6], const uint8_t key[16], uint8_t type, uint32_t kind)
 {
@@ -182,7 +186,7 @@ int bt_add_key(struct bt_host *h, const uint8_t a[6], const uint8_t key[16], uin
     }
     mcpy(k->key, key, 16);
     k->type = type;
-    k->flags = (k->flags & BTK_CONNECTED) | (kind & (BTK_KEYBOARD | BTK_MOUSE));
+    k->flags = (k->flags & BTK_CONNECTED) | (kind & (BTK_KEYBOARD | BTK_MOUSE | BTK_PAD));
     return 0;
 }
 static void keys_changed(struct bt_host *h) { h->keys_gen++; if (h->io->keys) h->io->keys(h->io->ctx); }
@@ -201,6 +205,85 @@ static void set_connected(struct bt_host *h, const uint8_t a[6], int on)
 {
     struct bt_key *k = key_of(h, a);
     if (k) k->flags = on ? k->flags | BTK_CONNECTED : k->flags & ~BTK_CONNECTED;
+}
+
+/* ---- game pads on the Amiga's joystick ports ----------------------------------------
+   The first pad plays in port 1 (the joystick port), a second one in port 0 (the mouse
+   port, which a mouse also moves). Directions: the D-pad and the left stick together.
+   Buttons: the bottom face button fires, the right one is fire 2 (pin 9), the left one
+   fire 3 (pin 5) - which HID buttons those are depends on the pad (by its name), or on
+   bt.pad.* in cmdline.txt (bt_pad_config). A jump button, if chosen, also pushes Up. */
+void bt_pad_config(struct bt_host *h, unsigned fire, unsigned fire2, unsigned fire3, unsigned jump)
+{
+    h->pad_cfg[0] = (uint8_t)(fire <= 16 ? fire : 0);
+    h->pad_cfg[1] = (uint8_t)(fire2 <= 16 ? fire2 : 0);
+    h->pad_cfg[2] = (uint8_t)(fire3 <= 16 ? fire3 : 0);
+    h->pad_cfg[3] = (uint8_t)(jump <= 16 ? jump : 0);
+    h->pad_cfg_set = 1;
+}
+static int has(const char *s, const char *w)
+{
+    for (; s && *s; s++) {
+        unsigned i = 0;
+        while (w[i] && s[i] == w[i]) i++;
+        if (!w[i]) return 1;
+    }
+    return 0;
+}
+/* the HID buttons (1-based) for fire, fire 2, fire 3 on this pad, by its name */
+static void pad_buttons_of(struct bt_host *h, struct bt_conn *c, uint8_t b[4])
+{
+    struct bt_key *k = key_of(h, c->addr);
+    struct bt_found *f = found_of(h, c->addr);
+    const char *n = k && k->name[0] ? k->name : f ? f->name : "";
+    b[0] = 1; b[1] = 2; b[2] = 3; b[3] = 0;          /* most pads: south, east, west (Switch Pro: B A Y) */
+    if (has(n, "Xbox")) { b[0] = 1; b[1] = 2; b[2] = 4; }                  /* A B X */
+    else if (has(n, "Wireless Controller") || has(n, "DualSense")) { b[0] = 2; b[1] = 3; b[2] = 1; }   /* Cross Circle Square */
+    if (h->pad_cfg_set)
+        for (int i = 0; i < 4; i++) if (h->pad_cfg[i] || i == 3) b[i] = h->pad_cfg[i];
+}
+static void pad_send(struct bt_host *h, struct bt_conn *c, unsigned dirs, unsigned fires)
+{
+    if (!c->pad_at || (dirs == c->pad_dirs && fires == c->pad_fires)) return;
+    c->pad_dirs = dirs; c->pad_fires = fires;
+    if (h->io->pad) h->io->pad(h->io->ctx, c->pad_at - 1, dirs, fires);
+}
+static void pad_state(struct bt_host *h, struct bt_conn *c, const struct pad_state *s)
+{
+    if (!c->pad_at) {                                   /* its port: 1 first, then 0 */
+        int used1 = 0, used0 = 0;
+        for (int i = 0; i < BT_MAXCONN; i++) if (h->conn[i].used && &h->conn[i] != c) {
+            used1 |= h->conn[i].pad_at == 2; used0 |= h->conn[i].pad_at == 1;
+        }
+        if (!used1) c->pad_at = 2;
+        else if (!used0) c->pad_at = 1;
+        else return;                                    /* two pads play already */
+        c->pad_dirs = c->pad_fires = 0;
+        lg(h, "%a: game pad in the %s port", c->addr, c->pad_at == 2 ? "joystick" : "mouse");
+    }
+    uint8_t b[4];
+    pad_buttons_of(h, c, b);
+    unsigned fires = 0, dirs = s->dirs;
+    for (int i = 0; i < 3; i++) if (b[i] && (s->buttons >> (b[i] - 1) & 1)) fires |= 1u << i;
+    if (b[3] && (s->buttons >> (b[3] - 1) & 1)) dirs = (dirs & ~PAD_DOWN) | PAD_UP;
+    pad_send(h, c, dirs, fires);
+}
+static void pad_release(struct bt_host *h, struct bt_conn *c)
+{
+    if (!c->pad_at) return;
+    pad_send(h, c, 0, 0);                               /* nothing stays pushed */
+    c->pad_at = 0;
+}
+/* the pad's layout is known (Classic: SDP; LE: its Report Map) */
+static void pad_found(struct bt_host *h, struct bt_conn *c)
+{
+    struct bt_key *k = key_of(h, c->addr);
+    c->is_pad = 1;
+    if (k && !(k->flags & BTK_PAD)) { k->flags |= BTK_PAD; keys_changed(h); }
+    /* once per connection, what its layout has: a photo of the log tells which mode a pad is in */
+    lg(h, "%a: game pad: report %u, X/Y %u bits%s, hat %s, %u buttons", c->addr, (uint32_t)c->pad.id,
+       (uint32_t)c->pad.x.size, c->pad.x.sgn ? " signed" : "", c->pad.hat.size ? "yes" : "no", (uint32_t)c->pad.nbtn);
+    say(h, "game pad connected");
 }
 
 /* ---- the start-up --------------------------------------------------------------- */
@@ -378,7 +461,7 @@ static void sig(struct bt_host *h, struct bt_conn *c, uint8_t code, uint8_t id, 
 }
 static struct bt_l2ch *ch_by_lcid(struct bt_conn *c, uint16_t lcid)
 {
-    for (int i = 0; i < 3; i++) if (c->ch[i].state != CH_FREE && c->ch[i].lcid == lcid) return &c->ch[i];
+    for (int i = 0; i < 4; i++) if (c->ch[i].state != CH_FREE && c->ch[i].lcid == lcid) return &c->ch[i];
     return 0;
 }
 static int ch_slot(uint16_t psm) { return psm == PSM_HIDCTL ? 0 : psm == PSM_HIDINT ? 1 : 2; }
@@ -400,12 +483,114 @@ static void ch_open_out(struct bt_host *h, struct bt_conn *c, uint16_t psm)
     put16(d, psm); put16(d + 2, ch->lcid);
     sig(h, c, 0x02, ++c->sig_id, d, 4);
 }
+/* ---- SDP, our question: a HID device's report descriptor ----------------------------
+   A game pad has no boot protocol: its reports are laid out as its HID descriptor says,
+   which the device keeps in its SDP record (HID service 0x1124, attribute 0x0206
+   HIDDescriptorList). One question at a time, on a channel of our own (ch[3]). */
+static uint16_t be16(const uint8_t *p) { return (uint16_t)(p[0] << 8 | p[1]); }
+static void sdp_req(struct bt_host *h, struct bt_conn *c)
+{
+    uint8_t r[40];
+    unsigned k = 5, cl = h->sdp_cont[0] > 16 ? 0 : h->sdp_cont[0];
+    static const uint8_t q[] = { 0x35, 0x03, 0x19, 0x11, 0x24,      /* services: HID */
+                                 0x02, 0x80,                        /* at most 640 bytes an answer */
+                                 0x35, 0x03, 0x09, 0x02, 0x06 };    /* attribute: HIDDescriptorList */
+    r[0] = 0x06; h->sdp_tid++; r[1] = (uint8_t)(h->sdp_tid >> 8); r[2] = (uint8_t)h->sdp_tid;
+    mcpy(r + k, q, sizeof q); k += sizeof q;
+    r[k++] = (uint8_t)cl; mcpy(r + k, h->sdp_cont + 1, cl); k += cl;
+    r[3] = (uint8_t)((k - 5) >> 8); r[4] = (uint8_t)(k - 5);
+    l2_send(h, c, c->ch[3].rcid, r, k);
+}
+static void sdp_close(struct bt_host *h, struct bt_conn *c)
+{
+    struct bt_l2ch *ch = &c->ch[3];
+    if (ch->state != CH_FREE && ch->rcid) { uint8_t d[4]; put16(d, ch->rcid); put16(d + 2, ch->lcid); sig(h, c, 0x06, ++c->sig_id, d, 4); }
+    ch->state = CH_FREE;
+}
+static void sdp_try(struct bt_host *h);
+static void sdp_ask(struct bt_host *h, struct bt_conn *c)
+{
+    if (c->sdp || c->le) return;
+    for (int i = 0; i < BT_MAXCONN; i++) if (h->conn[i].used && h->conn[i].sdp == 1) return;   /* one at a time: sdp_try asks later */
+    c->sdp = 1; c->sdp_t0 = now(h);
+    h->sdp_n = 0; h->sdp_cont[0] = 0;
+    struct bt_l2ch *ch = &c->ch[3];
+    mset(ch, 0, sizeof *ch);
+    ch->psm = PSM_SDP; ch->lcid = h->next_cid++; ch->state = CH_WAIT_CONN;
+    uint8_t d[4];
+    put16(d, PSM_SDP); put16(d + 2, ch->lcid);
+    sig(h, c, 0x02, ++c->sig_id, d, 4);
+    lg(h, "%a: asking for its HID descriptor (SDP)", c->addr);
+}
+static void sdp_try(struct bt_host *h)                  /* pads still waiting for their question */
+{
+    for (int i = 0; i < BT_MAXCONN; i++) {
+        struct bt_conn *c = &h->conn[i];
+        if (c->used && !c->le && c->hid_up && c->is_pad && !c->pad.ok && !c->sdp) { sdp_ask(h, c); return; }
+    }
+}
+/* the descriptor in an SDP answer: after attribute 0x0206, the first 0x22 (report) entry's text */
+static int sdp_descriptor(const uint8_t *b, unsigned n, const uint8_t **d, unsigned *dl)
+{
+    for (unsigned i = 0; i + 3 <= n; i++) {
+        if (b[i] != 0x09 || b[i + 1] != 0x02 || b[i + 2] != 0x06) continue;
+        for (unsigned j = i + 3; j + 3 <= n && j < i + 24; j++) {
+            if (b[j] != 0x08 || b[j + 1] != 0x22) continue;
+            unsigned t = j + 2, len, hl;
+            if (b[t] == 0x25) { len = b[t + 1]; hl = 2; }
+            else if (b[t] == 0x26 && t + 3 <= n) { len = be16(b + t + 1); hl = 3; }
+            else if (b[t] == 0x27 && t + 5 <= n) { len = (unsigned)b[t + 3] << 8 | b[t + 4]; hl = 5; }
+            else return 0;
+            if (t + hl + len > n) return 0;
+            *d = b + t + hl; *dl = len;
+            return 1;
+        }
+    }
+    return 0;
+}
+static void sdp_done(struct bt_host *h, struct bt_conn *c, const char *why)
+{
+    c->sdp = 2;
+    sdp_close(h, c);
+    if (why) lg(h, "%a: SDP: %s", c->addr, why);
+    sdp_try(h);
+}
+static void sdp_client_in(struct bt_host *h, struct bt_conn *c, const uint8_t *p, unsigned n)
+{
+    if (c->sdp != 1) return;
+    if (n < 7 || p[0] != 0x07) { sdp_done(h, c, "the device refused the question"); return; }
+    unsigned cnt = be16(p + 5);
+    if (7 + cnt + 1 > n) { sdp_done(h, c, "an answer cut short"); return; }
+    if (h->sdp_n + cnt > sizeof h->sdp_buf) cnt = sizeof h->sdp_buf - h->sdp_n;
+    mcpy(h->sdp_buf + h->sdp_n, p + 7, cnt); h->sdp_n += cnt;
+    unsigned cl = p[7 + be16(p + 5)];
+    if (cl && cl <= 16 && 8 + be16(p + 5) + cl <= n && h->sdp_n < sizeof h->sdp_buf) {   /* more to come */
+        h->sdp_cont[0] = (uint8_t)cl; mcpy(h->sdp_cont + 1, p + 8 + be16(p + 5), cl);
+        sdp_req(h, c);
+        return;
+    }
+    const uint8_t *d; unsigned dl;
+    if (!sdp_descriptor(h->sdp_buf, h->sdp_n, &d, &dl)) { sdp_done(h, c, "no HID descriptor in its record"); return; }
+    if (!bt_hid_pad_parse(d, (int)dl, &c->pad)) { lg(h, "%a: its HID descriptor (%u bytes) has no game pad", c->addr, dl); sdp_done(h, c, 0); return; }
+    pad_found(h, c);
+    if (c->boot_sent) { uint8_t pr = 0x71; l2_send(h, c, c->ch[0].rcid, &pr, 1); c->boot_sent = 0; }   /* SET_PROTOCOL: report again */
+    sdp_done(h, c, 0);
+}
+
 static void hid_check(struct bt_host *h, struct bt_conn *c)
 {
     if (c->hid_up || c->ch[0].state != CH_OPEN || c->ch[1].state != CH_OPEN) return;
     c->hid_up = 1;
+    if (c->is_pad) {                                    /* a pad: report protocol (its default), its layout from SDP */
+        set_connected(h, c->addr, 1);
+        lg(h, "%a connected (HID, game pad)", c->addr);
+        say(h, "game pad connected");
+        sdp_ask(h, c);
+        return;
+    }
     uint8_t p = 0x70;                                   /* SET_PROTOCOL: boot */
     l2_send(h, c, c->ch[0].rcid, &p, 1);
+    c->boot_sent = 1;
     set_connected(h, c->addr, 1);
     struct bt_key *k = key_of(h, c->addr);
     lg(h, "%a connected (HID, boot protocol)", c->addr);
@@ -415,6 +600,7 @@ static void ch_opened(struct bt_host *h, struct bt_conn *c, struct bt_l2ch *ch)
 {
     if ((ch->conf & (CONF_OURS | CONF_THEIRS)) != (CONF_OURS | CONF_THEIRS)) return;
     ch->state = CH_OPEN;
+    if (ch == &c->ch[3]) { sdp_req(h, c); return; }     /* our SDP question's channel */
     if (ch->psm == PSM_HIDCTL && c->out && c->ch[1].state == CH_FREE) ch_open_out(h, c, PSM_HIDINT);
     hid_check(h, c);
 }
@@ -436,6 +622,13 @@ static void hid_in(struct bt_host *h, struct bt_conn *c, const uint8_t *p, unsig
 {
     if (n < 2 || p[0] != 0xa1) return;                  /* DATA | Input */
     struct bt_key *k = key_of(h, c->addr);
+    if (c->pad.ok) {                                    /* a game pad: its own layout */
+        struct pad_state s;
+        if (bt_hid_pad_decode(&c->pad, p + 1, (int)n - 1, -1, &s)) pad_state(h, c, &s);
+        return;
+    }
+    if (c->is_pad) return;                              /* its layout not known yet */
+    if (p[1] != 0x01 && p[1] != 0x02) { sdp_ask(h, c); return; }   /* no boot report: perhaps a pad - ask what it is */
     if (p[1] == 0x01 && n >= 10) {                      /* boot keyboard */
         if (k) k->flags |= BTK_KEYBOARD;
         mcpy(c->lastkb, p + 2, 8);
@@ -535,6 +728,7 @@ static void l2_in(struct bt_host *h, struct bt_conn *c, const uint8_t *f, unsign
     if (cid == 0x0001) { sig_in(h, c, f + 4, len); return; }
     struct bt_l2ch *ch = ch_by_lcid(c, cid);
     if (!ch || ch->state != CH_OPEN) return;
+    if (ch == &c->ch[3]) { sdp_client_in(h, c, f + 4, len); return; }
     if (ch->psm == PSM_HIDINT) hid_in(h, c, f + 4, len);
     else if (ch->psm == PSM_HIDCTL) { if (len && f[4] == 0x15) lg(h, "%a unplugged itself", c->addr); }   /* VIRTUAL_CABLE_UNPLUG */
     else if (ch->psm == PSM_SDP) sdp_in(h, c, ch, f + 4, len);
@@ -637,7 +831,7 @@ static void le_found(struct bt_host *h, const uint8_t a[6], uint8_t atype, const
         mcpy(f->addr, a, 6);
         f->le = 1; f->named = 1;                        /* no name request over LE */
         f->addr_type = atype & 1;
-        f->cod = 5u << 8 | (app == 0x03c1 ? 0x40u : app == 0x03c2 ? 0x80u : 0);
+        f->cod = 5u << 8 | (app == 0x03c1 ? 0x40u : app == 0x03c2 ? 0x80u : app == 0x03c3 ? 1u << 2 : app == 0x03c4 ? 2u << 2 : 0);   /* + joystick, game pad */
         lg(h, "found LE %a (address type %u), appearance %x", a, (uint32_t)atype, app);
     }
     f->rssi = rssi;
@@ -755,6 +949,7 @@ static void event(struct bt_host *h, const uint8_t *e, unsigned n)
         if (len < 10) return;
         const uint8_t *a = p;
         int known = key_of(h, a) || (h->pairing && !mcmp(h->pair_addr, a, 6));
+        mcpy(h->req_addr, a, 6); h->req_cod = (uint32_t)p[6] | (uint32_t)p[7] << 8 | (uint32_t)p[8] << 16;
         uint8_t r[7];
         mcpy(r, a, 6);
         if (known && p[9] == 1) { r[6] = 0x00; cmd(h, C_ACCEPT_CONN, r, 7); lg(h, "%a connects", a); }   /* we become master */
@@ -778,6 +973,12 @@ static void event(struct bt_host *h, const uint8_t *e, unsigned n)
         c->used = 1;
         c->handle = le16(p + 1) & 0x0fff;
         mcpy(c->addr, p + 3, 6);
+        {                                               /* a game pad? by its class (asked, or found) or its key */
+            struct bt_found *f = found_of(h, c->addr);
+            struct bt_key *k = key_of(h, c->addr);
+            c->cod = !mcmp(h->req_addr, c->addr, 6) ? h->req_cod : f ? f->cod : 0;
+            c->is_pad = (uint8_t)((kind_of_cod(c->cod) & BTK_PAD) || (k && (k->flags & BTK_PAD)));
+        }
         c->remote_io = 0xff;
         c->out = ours;
         c->pairing = h->pairing && !mcmp(h->pair_addr, c->addr, 6);
@@ -798,6 +999,7 @@ static void event(struct bt_host *h, const uint8_t *e, unsigned n)
         int held = 0;
         for (int i = 0; i < 8; i++) held |= c->lastkb[i];
         if (held && h->io->keyboard) h->io->keyboard(h->io->ctx, up);    /* nothing stays pressed */
+        pad_release(h, c);                              /* nor on the joystick port */
         set_connected(h, c->addr, 0);
         if (c->pairing && h->pairing) { h->pairing = 0; say(h, "pairing did not finish"); }
         else say(h, "disconnected");
@@ -991,6 +1193,8 @@ void bt_poll(struct bt_host *h)
         else if (h->step == S_RESET2_PAUSE && due(h, h->wait_until)) { h->state = BT_INIT; h->step = 0; setup_next(h); }
     }
     if (h->state != BT_READY) return;
+    for (int i = 0; i < BT_MAXCONN; i++)                /* an SDP question with no answer: give up on it */
+        if (h->conn[i].used && h->conn[i].sdp == 1 && (int32_t)(now(h) - h->conn[i].sdp_t0) > 5000) sdp_done(h, &h->conn[i], "no answer in 5 s");
     if (h->scanning && due(h, h->scan_end)) {
         h->scanning = 0;
         lg(h, "scan timed out without Inquiry Complete: %u inquiry, %u extended, %u LE reports", h->scan_ir, h->scan_eir, h->scan_le);

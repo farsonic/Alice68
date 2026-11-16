@@ -83,7 +83,7 @@ int bt_add_le_key(struct bt_host *h, const uint8_t a[6], uint8_t addr_type, cons
     mcpy(k->rand, rand, 8);
     k->has_irk = irk != 0;
     if (irk) mcpy(k->irk, irk, 16); else mset(k->irk, 0, 16);
-    k->flags = (k->flags & BTK_CONNECTED) | BTK_LE | (kind & (BTK_KEYBOARD | BTK_MOUSE));
+    k->flags = (k->flags & BTK_CONNECTED) | BTK_LE | (kind & (BTK_KEYBOARD | BTK_MOUSE | BTK_PAD));
     h->le_lists_dirty = 1;
     return 0;
 }
@@ -499,6 +499,7 @@ static void gatt_start(struct bt_host *h, struct bt_conn *c)
     l->nlog = 0;
     l->g = G_MTU; l->nchr = 0; l->pm = l->kb_in = l->ms_in = l->map = 0; l->boot = 0; l->mouse_ok = 0;
     mset(&l->kbm, 0, sizeof l->kbm);
+    c->pad.ok = 0;
     l->mtu = 23;
     uint8_t d[3] = { 0x02, 0, 0 }; put16(d + 1, 247);     /* Exchange MTU */
     att_send(h, c, d, 3);
@@ -509,11 +510,13 @@ static void gatt_up(struct bt_host *h, struct bt_conn *c)
     l->g = G_UP;
     c->hid_up = 1;
     struct bt_key *k = key_of(h, c->addr);
-    uint32_t kind = (l->kb_in || l->kbm.ok ? BTK_KEYBOARD : 0) | (l->ms_in || l->mouse_ok ? BTK_MOUSE : 0);
-    if (k && (k->flags & (BTK_KEYBOARD | BTK_MOUSE)) != kind && kind) { k->flags = (k->flags & ~(BTK_KEYBOARD | BTK_MOUSE)) | kind; keys_changed(h); }
+    uint32_t kind = (l->kb_in || l->kbm.ok ? BTK_KEYBOARD : 0) | (l->ms_in || l->mouse_ok ? BTK_MOUSE : 0) | (c->pad.ok ? BTK_PAD : 0);
+    if (k && (k->flags & (BTK_KEYBOARD | BTK_MOUSE | BTK_PAD)) != kind && kind) { k->flags = (k->flags & ~(BTK_KEYBOARD | BTK_MOUSE | BTK_PAD)) | kind; keys_changed(h); }
     set_connected(h, c->addr, 1);
-    lg(h, "%a connected (LE HID, %s protocol%s%s)", c->addr, l->boot ? "boot" : "report", kind & BTK_KEYBOARD ? ", keyboard" : "", kind & BTK_MOUSE ? ", mouse" : "");
-    say(h, kind & BTK_KEYBOARD ? "keyboard connected" : kind & BTK_MOUSE ? "mouse connected" : "device connected (no keyboard or mouse reports found)");
+    lg(h, "%a connected (LE HID, %s protocol%s%s%s)", c->addr, l->boot ? "boot" : "report", kind & BTK_KEYBOARD ? ", keyboard" : "",
+       kind & BTK_MOUSE ? ", mouse" : "", kind & BTK_PAD ? ", game pad" : "");
+    say(h, kind & BTK_PAD ? "game pad connected" : kind & BTK_KEYBOARD ? "keyboard connected" : kind & BTK_MOUSE ? "mouse connected" :
+        "device connected (no keyboard, mouse or pad reports found)");
 }
 /* after the characteristics and descriptors: boot or report mode */
 static void gatt_choose(struct bt_host *h, struct bt_conn *c)
@@ -534,7 +537,7 @@ static void gatt_choose(struct bt_host *h, struct bt_conn *c)
 static void gatt_mode(struct bt_host *h, struct bt_conn *c)
 {
     struct bt_le *l = &c->l;
-    l->boot = !(l->kbm.ok || l->mouse_ok) && (l->kb_in || l->ms_in) && l->pm;
+    l->boot = !(l->kbm.ok || l->mouse_ok || c->pad.ok) && (l->kb_in || l->ms_in) && l->pm;
     if (!l->boot && !l->pm) l->kb_in = l->ms_in = 0;          /* boot reports only mean something in boot mode */
     if (l->pm) { uint8_t d[4] = { 0x52, 0, 0, (uint8_t)(l->boot ? 0 : 1) }; put16(d + 1, l->pm); att_send(h, c, d, 4); }   /* Write Command: Protocol Mode */
     l->g = G_CCCD; l->gi = 0;
@@ -562,6 +565,7 @@ static void gatt_map_done(struct bt_host *h, struct bt_conn *c)
     lg(h, "%a: Report Map %u bytes: %s%s", c->addr, h->rmap_n, l->kbm.ok ? "keyboard " : "", l->mouse_ok ? "mouse" : "");
     for (unsigned q = 0; q < l->kbm.n; q++)
         if (l->kbm.r[q].nkeys || l->kbm.r[q].bm_n) lg(h, "%a: keyboard report %u: %s", c->addr, l->kbm.r[q].id, l->kbm.r[q].bm_n ? "key bitmap (NKRO)" : "key array");
+    if (bt_hid_pad_parse(h->rmap, (int)h->rmap_n, &c->pad)) pad_found(h, c);   /* a game pad */
     gatt_mode(h, c);
 }
 static int wants_notify(struct bt_le *l, int i)
@@ -688,6 +692,10 @@ static void le_notify(struct bt_host *h, struct bt_conn *c, uint16_t hd, const u
     for (; i < l->nchr && !(l->chr_vh[i] == hd && l->chr_uuid[i] == U_REPORT); i++) ;
     if (i == l->nchr) return;
     uint8_t id = l->rep_id[i];
+    if (c->pad.ok) {                                 /* a game pad's report (the ID came apart, in its Report Reference) */
+        struct pad_state s;
+        if (bt_hid_pad_decode(&c->pad, v, (int)n, id, &s)) { pad_state(h, c, &s); return; }
+    }
     const struct bt_kbrep *kr = 0;
     for (unsigned q = 0; q < l->kbm.n; q++) if (l->kbm.r[q].id == id && (l->kbm.r[q].nkeys || l->kbm.r[q].bm_n)) kr = &l->kbm.r[q];
     if (kr) {

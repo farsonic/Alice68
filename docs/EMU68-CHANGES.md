@@ -2,7 +2,7 @@
 
 Alice68's kernel is [Emu68](https://github.com/michalsc/Emu68) by Michal Schulz (MPL-2.0), at upstream commit `0ba3a89` (1.1.0-beta.1), changed in four layers. This page lists every Emu68 file that is not as it is upstream, who changed it and why. Emu68's files keep their MPL-2.0 headers and the changes to them are MPL-2.0; new files say their own licence.
 
-Made by `tools/emu68-changes.py` from git, at Alice68 `710d7b6`. To see any change itself:
+Made by `tools/emu68-changes.py` from git, at Alice68 `81029d7`. To see any change itself:
 
 - AGA-PiStorm's layer: `arm/emu68-aga.patch` (its patch against Emu68 `0ba3a89`, as released);
 - the other layers: `git diff 2b56a31 HEAD -- third_party/Emu68/<file>`, or `git log 2b56a31..HEAD -- third_party/Emu68/<file>` for each commit.
@@ -81,7 +81,7 @@ Lines per layer (added / removed), from each commit; a file changed by AGA-PiSto
 | `src/frf_usb/xhci/` | 5 | 2137 | Alice68 | Alice68's xHCI (VL805) driver for the Pi 4's USB-A ports, the Neptune pass-through (the USB card) and the virtual eject |
 | `src/raspi/alice_opts*` | 2 | 245 | Alice68 | Alice68's cmdline.txt options, shared by the setup screen and Alice68-Card |
 | `src/raspi/alice_setup*` | 2 | 596 | Alice68 | Alice68's setup screen (Del or F2 before AmigaOS starts) |
-| `src/raspi/alice_splash*` | 2 | 771 | Alice68 | Alice68's boot splash |
+| `src/raspi/alice_splash*` | 2 | 772 | Alice68 | Alice68's boot splash |
 | `scripts/` | 8 | 163 | FRF (EMU68AGA Bare Metal) | FRF's build and test scripts, and its joystick map |
 | `src/boards/frf_z3ram.c` | 1 | 87 | FRF (EMU68AGA Bare Metal) | FRF's Zorro III RAM board |
 | `src/frf_net/` | 6 | 472 | FRF (EMU68AGA Bare Metal) | FRF's network bridge board and SDIO probe (built only with `FRF_NET_Z2_BRIDGE` / `FRF_WIFI_SD1_ENUM`, both off in Alice68) |

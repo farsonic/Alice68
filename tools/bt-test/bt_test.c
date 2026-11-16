@@ -34,7 +34,13 @@ static void io_mouse(void *c, int dx, int dy, int w, unsigned b) { (void)c; mdx 
 static void io_keys(void *c) { (void)c; nkeys_cb++; }
 static int kicks, last_kick;
 static void io_kick(void *c, int a) { (void)c; kicks++; last_kick = a; }
-static const struct bt_io io = { 0, io_send, io_baud, io_ms, io_log, io_kb, io_mouse, io_keys, io_kick };
+static int npad, pad_port[8]; static unsigned pad_dirs[8], pad_fires[8];   /* the last 8 pad calls, newest at npad-1 */
+static void io_pad(void *c, int port, unsigned dirs, unsigned fires)
+{
+    (void)c;
+    pad_port[npad % 8] = port; pad_dirs[npad % 8] = dirs; pad_fires[npad % 8] = fires; npad++;
+}
+static const struct bt_io io = { 0, io_send, io_baud, io_ms, io_log, io_kb, io_mouse, io_keys, io_kick, io_pad };
 static struct bt_host H;
 
 static void reset_sent(void) { nsent = rd = 0; }
@@ -784,6 +790,168 @@ int main(int argc, char **argv)
         CHECK(nkb == nk4 + 1 && kb[0] == 0x02 && kb[2] == 0x04 && kb[3] == 0x05 && !kb[4], "an NKRO report as a boot one (%02x %02x %02x)", kb[0], kb[2], kb[3]);
         uint8_t dis4[4] = { 0, 0x50, 0, 0x13 }; ev(0x05, dis4, 4);
         CHECK(!kb[0] && !kb[2], "NKRO keyboard gone: keys let go");
+    }
+
+    /* PAD 1: a paired Classic game pad calls us - laid out as the Fantech EOS Mini in its
+       Android/D-input mode: the D-pad as X/Y 0..255 (centre 0x7f/0x80), no hat, 12 buttons, no
+       report ID. No SET_PROTOCOL boot; its HID descriptor by SDP (the answer in two parts, with a
+       continuation state); its reports to the joystick port; the jump button; let go on disconnect */
+    static const uint8_t PADA[6] = { 0x91, 0x92, 0x93, 0x94, 0x95, 0x96 };
+    uint16_t padlint = 0;
+    {
+        static const uint8_t eos[] = {
+            0x05, 0x01, 0x09, 0x05, 0xa1, 0x01,
+            0x15, 0x00, 0x26, 0xff, 0x00, 0x75, 0x08, 0x95, 0x02, 0x09, 0x30, 0x09, 0x31, 0x81, 0x02,
+            0x05, 0x09, 0x19, 0x01, 0x29, 0x0c, 0x15, 0x00, 0x25, 0x01, 0x75, 0x01, 0x95, 0x0c, 0x81, 0x02,
+            0x75, 0x04, 0x95, 0x01, 0x81, 0x03,
+            0xc0 };
+        drain();
+        CHECK(!bt_add_key(&H, PADA, KEY, 4, BTK_PAD), "a paired pad");
+        reset_sent();
+        uint8_t pq[10]; memcpy(pq, PADA, 6); pq[6] = 0x08; pq[7] = 0x25; pq[8] = 0x00; pq[9] = 1;   /* class: peripheral, game pad */
+        ev(0x04, pq, 10);
+        p = CMD(0x0409); CHECK(p && !memcmp(p, PADA, 6), "the pad accepted");
+        uint8_t pok[11] = { 0, 0x48, 0x00 }; memcpy(pok + 3, PADA, 6); pok[9] = 1;
+        ev(0x03, pok, 11);
+        p = CMD(0x0411);
+        ev(0x17, PADA, 6);
+        p = CMD(0x040b); CHECK(p && !memcmp(p, PADA, 6), "its link key given");
+        uint8_t pac[3] = { 0, 0x48, 0 }; ev(0x06, pac, 3);
+        p = CMD(0x0413);
+        uint8_t penc[4] = { 0, 0x48, 0, 1 }; ev(0x08, penc, 4);
+        uint16_t pctl;
+        device_opens(0x48, 0x11, 0x0080, &pctl);
+        device_opens(0x48, 0x13, 0x0081, &padlint);
+        uint8_t id;
+        const uint8_t *s = SIG(0x02, &id);                      /* no SET_PROTOCOL: our SDP channel */
+        CHECK(s && (s[0] | s[1] << 8) == 0x0001, "a pad: we open SDP, not SET_PROTOCOL boot");
+        uint16_t slcid = s ? (uint16_t)(s[2] | s[3] << 8) : 0;
+        uint8_t d[8] = { 0x82, 0x00, (uint8_t)slcid, (uint8_t)(slcid >> 8), 0, 0, 0, 0 };
+        sig_in(0x48, 0x03, id, d, 8);
+        s = SIG(0x04, &id); CHECK(s && (s[0] | s[1] << 8) == 0x0082, "our configuration for the SDP channel");
+        uint8_t cr6[6] = { (uint8_t)slcid, (uint8_t)(slcid >> 8), 0, 0, 0, 0 };
+        sig_in(0x48, 0x05, id, cr6, 6);
+        uint8_t cq4[4] = { (uint8_t)slcid, (uint8_t)(slcid >> 8), 0, 0 };
+        sig_in(0x48, 0x04, 9, cq4, 4);
+        s = SIG(0x05, &id);
+        uint16_t cid; unsigned n;
+        const uint8_t *f = ACL(&cid, &n);
+        CHECK(f && cid == 0x0082 && f[0] == 0x06 && n >= 18 && f[n - 1] == 0, "SDP: ServiceSearchAttribute, HID, 0x0206 (cid %x n %u)", cid, n);
+        /* its record: DES { DES { 0x0206 DES { DES { 0x22, text: the descriptor } } } } */
+        uint8_t at[160]; unsigned k = 0, dl = sizeof eos;
+        at[k++] = 0x35; at[k++] = (uint8_t)(dl + 15);
+        at[k++] = 0x35; at[k++] = (uint8_t)(dl + 13);
+        at[k++] = 0x09; at[k++] = 0x02; at[k++] = 0x06;
+        at[k++] = 0x35; at[k++] = (uint8_t)(dl + 6);
+        at[k++] = 0x35; at[k++] = (uint8_t)(dl + 4);
+        at[k++] = 0x08; at[k++] = 0x22; at[k++] = 0x25; at[k++] = (uint8_t)dl;
+        memcpy(at + k, eos, dl); k += dl;
+        unsigned half = k / 2;
+        uint8_t r[120]; unsigned m = 0;
+        r[m++] = 0x07; r[m++] = f ? f[1] : 0; r[m++] = f ? f[2] : 0; m += 2;
+        r[m++] = (uint8_t)(half >> 8); r[m++] = (uint8_t)half; memcpy(r + m, at, half); m += half;
+        r[m++] = 2; r[m++] = 0xab; r[m++] = 0xcd;               /* more to come */
+        r[3] = (uint8_t)((m - 5) >> 8); r[4] = (uint8_t)(m - 5);
+        acl_in(0x48, slcid, r, m, 1);
+        f = ACL(&cid, &n);
+        CHECK(f && f[0] == 0x06 && n >= 3 && f[n - 3] == 2 && f[n - 2] == 0xab && f[n - 1] == 0xcd, "SDP: asked again with the continuation state");
+        m = 0;
+        r[m++] = 0x07; r[m++] = f ? f[1] : 0; r[m++] = f ? f[2] : 0; m += 2;
+        r[m++] = (uint8_t)((k - half) >> 8); r[m++] = (uint8_t)(k - half); memcpy(r + m, at + half, k - half); m += k - half;
+        r[m++] = 0;
+        r[3] = (uint8_t)((m - 5) >> 8); r[4] = (uint8_t)(m - 5);
+        int np0 = npad;
+        uint8_t early[5] = { 0xa1, 0x00, 0x80, 0x01, 0x00 };
+        acl_in(0x48, padlint, early, 5, 0);
+        CHECK(npad == np0, "a report before the layout is known: dropped");
+        acl_in(0x48, slcid, r, m, 0);
+        s = SIG(0x06, &id); CHECK(s && (s[0] | s[1] << 8) == 0x0082, "the SDP channel closed");
+        CHECK(strstr(H.status, "game pad connected") && H.conn[0].used, "status: %s", H.status);
+        struct bt_key *pk = 0;
+        for (int i = 0; i < H.nkeys; i++) if (!memcmp(H.keys[i].addr, PADA, 6)) pk = &H.keys[i];
+        CHECK(pk && (pk->flags & BTK_PAD) && (pk->flags & BTK_CONNECTED), "the pad's key: a pad, connected");
+        uint8_t rep[5] = { 0xa1, 0x00, 0x7f, 0x01, 0x00 };      /* D-pad left (X 0), button 1 */
+        acl_in(0x48, padlint, rep, 5, 0);
+        CHECK(npad == np0 + 1 && pad_port[(npad - 1) % 8] == 1 && pad_dirs[(npad - 1) % 8] == PAD_LEFT && pad_fires[(npad - 1) % 8] == 1,
+              "left + fire on the joystick port (%d: port %d dirs %x fires %x)", npad - np0, pad_port[(npad - 1) % 8], pad_dirs[(npad - 1) % 8], pad_fires[(npad - 1) % 8]);
+        acl_in(0x48, padlint, rep, 5, 0);
+        CHECK(npad == np0 + 1, "the same state again: nothing new to send");
+        uint8_t rep2[5] = { 0xa1, 0x80, 0xff, 0x06, 0x00 };     /* down, buttons 2 and 3 */
+        acl_in(0x48, padlint, rep2, 5, 0);
+        CHECK(pad_dirs[(npad - 1) % 8] == PAD_DOWN && pad_fires[(npad - 1) % 8] == 6, "down, fire 2 and fire 3 (%x %x)", pad_dirs[(npad - 1) % 8], pad_fires[(npad - 1) % 8]);
+        bt_pad_config(&H, 0, 0, 0, 4);                          /* button 4 jumps */
+        uint8_t rep3[5] = { 0xa1, 0x80, 0xff, 0x08, 0x00 };     /* down held, button 4 */
+        acl_in(0x48, padlint, rep3, 5, 0);
+        CHECK(pad_dirs[(npad - 1) % 8] == PAD_UP && pad_fires[(npad - 1) % 8] == 0, "the jump button pushes up, not down (%x)", pad_dirs[(npad - 1) % 8]);
+        bt_pad_config(&H, 3, 1, 2, 0);                          /* buttons swapped by cmdline.txt */
+        uint8_t rep4[5] = { 0xa1, 0x80, 0x80, 0x04, 0x00 };     /* button 3 */
+        acl_in(0x48, padlint, rep4, 5, 0);
+        CHECK(pad_dirs[(npad - 1) % 8] == 0 && pad_fires[(npad - 1) % 8] == 1, "bt.pad.buttons: button 3 fires (%x)", pad_fires[(npad - 1) % 8]);
+        bt_pad_config(&H, 0, 0, 0, 0);
+    }
+
+    /* PAD 2: an LE game pad (the Xbox Wireless Controller's layout) pairs while the Classic one
+       plays: its Report Map, report mode, notifications; it gets the mouse port; both let go */
+    {
+        static const uint8_t LEPAD[6] = { 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xc6 };
+        static const uint8_t xmap[] = {
+            0x05, 0x01, 0x09, 0x05, 0xa1, 0x01, 0x85, 0x01,
+            0x09, 0x30, 0x09, 0x31, 0x15, 0x00, 0x27, 0xff, 0xff, 0x00, 0x00, 0x95, 0x02, 0x75, 0x10, 0x81, 0x02,
+            0x05, 0x01, 0x09, 0x39, 0x15, 0x01, 0x25, 0x08, 0x75, 0x04, 0x95, 0x01, 0x81, 0x42,
+            0x75, 0x04, 0x95, 0x01, 0x81, 0x03,
+            0x05, 0x09, 0x19, 0x01, 0x29, 0x0f, 0x15, 0x00, 0x25, 0x01, 0x75, 0x01, 0x95, 0x0f, 0x81, 0x02,
+            0x75, 0x01, 0x95, 0x01, 0x81, 0x03,
+            0xc0 };
+        clock_ms += 600; bt_poll(&H);
+        drain();
+        CHECK(!bt_scan(&H), "scan");
+        drain();
+        le_adv(LEPAD, 0, 0x03c4, 1, "Xbox Wireless Controller");
+        CHECK(!bt_pair(&H, LEPAD), "pair the LE pad");
+        drain();
+        le_conn(0x0058, 0, LEPAD);
+        uint8_t stk5[16];
+        le_pair_device(0x0058, LEPAD, 0, 0x03, 0x01, 0x01, 0, stk5);
+        le_give_keys(0x0058, LEPAD, 0, 0);
+        q = LEACL(4, &ln); uint8_t m5[3] = { 0x03, 23, 0 }; att_in(0x0058, m5, 3);
+        q = LEACL(4, &ln); uint8_t sv5[5] = { 0x07, 0x50, 0, 0x70, 0 }; att_in(0x0058, sv5, 5);
+        q = LEACL(4, &ln);
+        uint8_t c5[16] = { 0x09, 7, 0x51, 0, 0x12, 0x52, 0, 0x4d, 0x2a,  0x55, 0, 0x02, 0x56, 0, 0x4b, 0x2a };
+        att_in(0x0058, c5, 16);
+        q = LEACL(4, &ln); uint8_t e6[5] = { 0x01, 0x08, 0x56, 0, 0x0a }; att_in(0x0058, e6, 5);
+        q = LEACL(4, &ln); CHECK(q && q[0] == 0x04, "descriptors");
+        uint8_t d5[10] = { 0x05, 1, 0x53, 0, 0x02, 0x29,  0x54, 0, 0x08, 0x29 };
+        att_in(0x0058, d5, 10);
+        q = LEACL(4, &ln); uint8_t e7[5] = { 0x01, 0x04, 0x55, 0, 0x0a }; att_in(0x0058, e7, 5);
+        q = LEACL(4, &ln); CHECK(q && q[0] == 0x0a && q[1] == 0x54, "its report reference");
+        uint8_t rr5[3] = { 0x0b, 1, 1 }; att_in(0x0058, rr5, 3);
+        q = LEACL(4, &ln); CHECK(q && q[0] == 0x0a && q[1] == 0x56, "read the Report Map");
+        unsigned at5 = 0;
+        while (q && (q[0] == 0x0a || q[0] == 0x0c)) {
+            unsigned k = sizeof xmap - at5 > 22 ? 22 : sizeof xmap - at5;
+            uint8_t r[23]; r[0] = q[0] == 0x0a ? 0x0b : 0x0d; memcpy(r + 1, xmap + at5, k); at5 += k;
+            att_in(0x0058, r, k + 1);
+            q = LEACL(4, &ln);
+        }
+        CHECK(q && ln == 5 && q[0] == 0x12 && q[1] == 0x53, "report notifications on");
+        uint8_t w5 = 0x13; att_in(0x0058, &w5, 1);
+        CHECK(strstr(H.status, "game pad connected"), "LE pad connected: %s", H.status);
+        int np0 = npad;
+        /* X centre, Y centre, hat 3 (right), buttons A (1) and X (4) */
+        uint8_t nt[3 + 7] = { 0x1b, 0x52, 0, 0x00, 0x80, 0x00, 0x80, 0x03, 0x09, 0x00 };
+        att_in(0x0058, nt, sizeof nt);
+        CHECK(npad == np0 + 1 && pad_port[(npad - 1) % 8] == 0 && pad_dirs[(npad - 1) % 8] == PAD_RIGHT && pad_fires[(npad - 1) % 8] == 5,
+              "the second pad in the mouse port: right, A fires, X is fire 3 (port %d dirs %x fires %x)",
+              pad_port[(npad - 1) % 8], pad_dirs[(npad - 1) % 8], pad_fires[(npad - 1) % 8]);
+        uint8_t dis5[4] = { 0, 0x58, 0, 0x13 }; ev(0x05, dis5, 4);
+        CHECK(npad == np0 + 2 && pad_port[(npad - 1) % 8] == 0 && !pad_dirs[(npad - 1) % 8] && !pad_fires[(npad - 1) % 8], "LE pad gone: the mouse port let go");
+        uint8_t rep[5] = { 0xa1, 0xff, 0x80, 0x01, 0x00 };     /* the Classic pad: right, fire */
+        acl_in(0x48, padlint, rep, 5, 0);
+        CHECK(pad_port[(npad - 1) % 8] == 1 && pad_dirs[(npad - 1) % 8] == PAD_RIGHT, "the Classic pad still on the joystick port");
+        uint8_t dis6[4] = { 0, 0x48, 0, 0x13 }; ev(0x05, dis6, 4);
+        CHECK(pad_port[(npad - 1) % 8] == 1 && !pad_dirs[(npad - 1) % 8] && !pad_fires[(npad - 1) % 8], "Classic pad gone: the joystick port let go");
+        for (int i = 0; i < H.nkeys; i++) if (!memcmp(H.keys[i].addr, PADA, 6)) bt_forget(&H, PADA);
+        drain();
     }
 
     /* LE 3: a device that wants Secure Connections stops the pairing */

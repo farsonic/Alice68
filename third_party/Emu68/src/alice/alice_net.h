@@ -106,6 +106,7 @@ struct an_bt {
 #define AN_BTK_KEYBOARD  2u
 #define AN_BTK_MOUSE     4u
 #define AN_BTK_LE        8u          /* a Bluetooth LE device */
+#define AN_BTK_PAD      16u          /* a game pad or joystick (the Amiga's joystick ports) */
 #define AN_BT_CMD_SCAN    1u
 #define AN_BT_CMD_PAIR    2u
 #define AN_BT_CMD_FORGET  3u

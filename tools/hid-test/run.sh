@@ -5,5 +5,5 @@ set -e
 cd "$(dirname "$0")"
 X=../../third_party/Emu68/src/frf_usb/xhci
 out=${TMPDIR:-/tmp}/alice68-hid-test
-cc -std=gnu11 -O1 -Wall -Wextra -Werror -fsanitize=address,undefined -I$X -o "$out" hid_test.c $X/alice_hid.c
+cc -std=gnu11 -O1 -Wall -Wextra -Werror -fsanitize=address,undefined -I$X -o "$out" hid_test.c $X/alice_hid.c $X/alice_pad.c
 "$out"

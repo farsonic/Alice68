@@ -701,12 +701,44 @@ only been tested on a PC against a scripted device so far.
    - LE devices are marked "(LE)" in the list and pair the same way. A device that
      insists on LE Secure Connections pairing can't pair yet: the page says so.
 3. **After that,** paired devices are kept in `cmdline.txt` (`bt.dev=ADDRESS:KEY:KIND`,
+   KIND a hex digit: 1 keyboard + 2 mouse + 4 LE + 8 game pad,
    with `:EDIV:RAND:TYPE[:IRK]` after it for an LE device; Alice68-Card writes it at once). They reconnect by themselves at every boot once
    AmigaOS is starting, usually when you press a key or move the mouse. **Connect now**
    calls one, **Forget...** removes it.
 
 The splash's status bar shows a BLUETOOTH cell, and the SYSTEM log has `BT` lines.
 `bt=off` in `cmdline.txt` (or Settings → Bluetooth) leaves the chip off.
+
+### Bluetooth game pads as Amiga joysticks (new, not yet tried on a Pi)
+
+A Bluetooth game pad or joystick plays in the Amiga's **joystick port**, as a joystick
+does: games and Workbench programs see directions and fire buttons, nothing to install.
+Classic pads (most cheap pads, DualShock 4, Switch Pro, 8BitDo) and LE ones (Xbox
+Wireless Controller, newer pads) both work. Pair it like a mouse: pairing mode on the
+pad, **Scan**, pick it ("game pad" in the list), **Pair**; no code to type.
+
+- **What goes where:** the D-pad and the left stick (past 40 % of its way) are the four
+  directions, together. The bottom face button fires (fire 1), the right one is fire 2
+  (pin 9), the left one fire 3 (pin 5): A/B/X on an Xbox pad, Cross/Circle/Square on a
+  PlayStation pad, B/A/Y on a Switch pad, buttons 1/2/3 on others.
+- **Two pads:** the first plays in the joystick port, a second in the **mouse port** (the
+  mouse moves the same port's counters, so leave it still; fire 2 and 3 work in the
+  joystick port only).
+- **Other buttons:** `bt.pad.buttons=F,F2,F3` in `cmdline.txt` names the pad's buttons
+  (their HID numbers, 1-16) for fire, fire 2 and fire 3, and `bt.pad.jump=N` makes a button
+  push Up as well (for games that jump with Up). Turn a pad's buttons into numbers by
+  pressing them with `Alice68-USBLog MATCH=[BT]` open: the first reports are logged.
+- **Which mode:** pads with several modes (picked with a button held at power-on) should
+  be paired in their **Android / D-input** mode first; a Switch mode (it pretends to be a
+  Switch Pro controller, report `0x3F`) works too. The **Fantech EOS Mini**: Android/D-input.
+  The log says once, at each connection, what it found: `game pad: report N, X/Y n bits,
+  hat yes/no, n buttons` - a photo of that line tells which mode a pad is in.
+- **How:** a pad has no boot protocol, so the kernel reads its HID report descriptor
+  (Classic: from its SDP record; LE: its Report Map) and decodes its reports from that
+  (`frf_usb/xhci/alice_pad.c`, tested in `tools/hid-test` against several pads' layouts;
+  the Bluetooth side in `tools/bt-test`). Not done: the CD32 pad's extra buttons (the
+  standalone machine has no CD32 shift register), analogue values, rumble, a DualShock 4's
+  extended report (its basic one is enough), a Switch Pro in its full mode.
 
 How it works: the chip's Bluetooth half is on the Pi's UART0 (GPIO 30-33, with flow
 control), with BT_ON on the firmware's GPIO expander. CPU1 runs a small Classic

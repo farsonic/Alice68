@@ -61,6 +61,11 @@ User-facing docs: README.md. History of where code came from: docs/PROVENANCE.md
 - Ctrl-Amiga-Amiga: `frf_native_keyboard.c` spots Ctrl + both GUI keys; `frf_xhci_pt.c` sets
   `pt_hdr.reset_req` = 1; `alice68hdf.device`'s vertical blank server (`hdf_vbl`) sets 2 and calls
   `ColdReboot()`; not taken in 2 s: the Pi reboots (`aga_reboot`). Ctrl+LShift+F11: the Pi reboots.
+- Bluetooth game pads: `frf_usb/xhci/alice_pad.[ch]` (host-independent HID gamepad/joystick descriptor parser and
+  report decoder, `tools/hid-test`; `bthost.c` #includes it as `bt_hid_pad_*`); Classic pads' descriptor from an SDP
+  client in `bthost.c` (`sdp_ask`, our own channel `ch[3]`), LE pads' from the Report Map; `pad_state()` maps to
+  `io->pad(port, dirs, fires)` (first pad port 1, second port 0; per-name button profiles, `bt.pad.buttons=`/`bt.pad.jump=`),
+  `bt_pi.c` turns it into `aga_virtual_joy_set`/`aga_virtual_pad_buttons`; `BTK_PAD` = 16, `bt.dev=` KIND bit 8.
 - `third_party/Emu68/src/alice/bt/` — Bluetooth (Classic HID, and LE HID over GATT in `btle.c`, which `bthost.c` #includes:
   LE connect, SMP legacy pairing with the controller's LE Encrypt as AES, bonding (LTK/EDIV/Rand/IRK), GATT HID service,
   boot or report mode (Report Map: keyboard by `kb_parse`, mouse by `alice_hid.c` included under `bt_` names), reconnect

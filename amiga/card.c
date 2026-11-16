@@ -732,7 +732,8 @@ static void bt_show(void)
         struct sb l = { t, 0, 80 };
         volatile struct an_btkey *k = &x->keys[i];
         saddr(&l, k->addr); spad(&l, 19);
-        ss(&l, k->flags & AN_BTK_KEYBOARD ? (k->flags & AN_BTK_MOUSE ? "keyboard+mouse" : "keyboard") : k->flags & AN_BTK_MOUSE ? "mouse" : "device");
+        ss(&l, k->flags & AN_BTK_PAD ? "game pad" : k->flags & AN_BTK_KEYBOARD ? (k->flags & AN_BTK_MOUSE ? "keyboard+mouse" : "keyboard") :
+               k->flags & AN_BTK_MOUSE ? "mouse" : "device");
         spad(&l, 34);
         char nm[41]; for (int j = 0; j < 40; j++) { nm[j] = k->name[j]; if (!nm[j]) break; } nm[40] = 0;
         ss(&l, nm); spad(&l, 50);
@@ -745,8 +746,8 @@ static void bt_show(void)
         struct sb l = { t, 0, 80 };
         volatile struct an_btfound *f = &x->found[i];
         saddr(&l, f->addr); spad(&l, 19);
-        ULONG m2 = (f->cod >> 6) & 3;
-        ss(&l, m2 == 3 ? "keyboard+mouse" : m2 == 1 ? "keyboard" : m2 == 2 ? "mouse" : "device");
+        ULONG m2 = (f->cod >> 6) & 3, sub = (f->cod >> 2) & 15;         /* sub: 1 joystick, 2 game pad */
+        ss(&l, sub == 2 ? "game pad" : sub == 1 ? "joystick" : m2 == 3 ? "keyboard+mouse" : m2 == 1 ? "keyboard" : m2 == 2 ? "mouse" : "device");
         if (f->cod & 0x80000000u) ss(&l, " (LE)");             /* Bluetooth LE */
         spad(&l, 34);
         char nm[41]; for (int j = 0; j < 40; j++) { nm[j] = f->name[j]; if (!nm[j]) break; } nm[40] = 0;
@@ -755,7 +756,7 @@ static void bt_show(void)
     lv_end(&lv_bf, G_BFOUND);
     b = (struct sb){ bkey, 0, sizeof bkey };
     if (x->passkey_shown) { ss(&b, "Type "); char d[7]; ULONG v = x->passkey; for (int i = 5; i >= 0; i--) { d[i] = (char)('0' + v % 10); v /= 10; } d[6] = 0; ss(&b, d); ss(&b, " on the Bluetooth keyboard, then Enter"); }
-    else if (x->scanning) ss(&b, "Scanning for 10 seconds: put the keyboard or mouse in pairing mode now");
+    else if (x->scanning) ss(&b, "Scanning for 10 seconds: put the keyboard, mouse or pad in pairing mode now");
     else if (x->pairing) ss(&b, "Pairing...");
     textset(G_BKEY, bkey);
     textset(G_BNOTE, "Paired devices are kept in cmdline.txt (bt.dev=...) and reconnect by themselves once AmigaOS starts.");
@@ -786,7 +787,7 @@ static void bt_save_keys(void)
         for (int j = 5; j >= 0; j--) { sc(&b, hx[k->addr[j] >> 4]); sc(&b, hx[k->addr[j] & 15]); }
         sc(&b, ':');
         for (int j = 0; j < 16; j++) { sc(&b, hx[k->key[j] >> 4]); sc(&b, hx[k->key[j] & 15]); }
-        sc(&b, ':'); sc(&b, hx[((k->flags >> 1) & 3) | (k->flags & AN_BTK_LE ? 4 : 0)]);
+        sc(&b, ':'); sc(&b, hx[((k->flags >> 1) & 3) | (k->flags & AN_BTK_LE ? 4 : 0) | (k->flags & AN_BTK_PAD ? 8 : 0)]);
         if (k->flags & AN_BTK_LE) {                  /* :EDIV:RAND:T[:IRK] */
             volatile struct an_btle *e = &x->le[i];
             sc(&b, ':'); for (int s = 12; s >= 0; s -= 4) sc(&b, hx[(e->ediv >> s) & 15]);
