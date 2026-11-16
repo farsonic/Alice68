@@ -1,6 +1,49 @@
 # Alice68 release notes
 
-## Unreleased
+## 0.6.0 — Bluetooth, the SD card from AmigaOS, exFAT, a setup screen
+
+Download: `Alice68-0.6.0-Pi4.zip` from the
+[v0.6.0 release](https://github.com/farsonic/Alice68/releases). Unzip it and copy
+everything in it to the root of the SD card's FAT partition: the card must already have
+the Raspberry Pi firmware (`start4.elf`, `fixup4.dat`, `bcm2711-rpi-4-b.dtb`) and your
+Kickstart (`Alice68-READ-ME-FIRST.txt` in the zip lists them). The source is
+`Alice68-0.6.0-src.zip`. Riptide 0.38 is in `ALICE68/Riptide`, as in 0.5.0.
+
+**Upgrading from 0.5.0:** keep your own `config.txt`, `cmdline.txt` and `floppy.txt` (copy the
+rest), then run `ALICE68:Install` again for the new tools. **WiFi users: replace
+`WIFI/cyfmac43455-sdio-standard.bin` with version 7.45.241** (637,406 bytes; README, WiFi,
+has a one-line download). The newer 7.45.265 can't join WPA networks with Alice68.
+**Bluetooth:** add `BCM4345C0.hcd` to the `WIFI` folder (the same download line).
+
+### Highlights
+
+- **Bluetooth keyboards and mice**, Classic and Bluetooth LE, paired from AmigaOS with
+  `Alice68-Card`'s Bluetooth page, remembered in `cmdline.txt`, reconnecting by themselves.
+  Tested on a Pi with a Microsoft Bluetooth Ergonomic Mouse (LE); an LE keyboard paired, and
+  a fix for keyboards that ignore boot mode (Keychron V6 Max) is in this release.
+- **`Alice68-Card`**: the SD card from AmigaOS: partitions, files, `cmdline.txt` settings,
+  `config.txt`, Kickstart choice, Bluetooth, and Restart Pi. Resizable, passwords hidden.
+- **exFAT partitions**: hardfiles and CD images with no 4 GB limit, the partition as an Amiga
+  volume (read-only, or read-write with `alice68.exfat=rw`), booting from it, and a
+  validator that repairs a volume left dirty by a power cut.
+- **Folders keep Amiga attributes** in FS-UAE/Amiberry-compatible `.uaem` sidecars.
+- **A setup screen** before AmigaOS starts (Del or F2) to change `cmdline.txt`'s options,
+  and a quieter, tidier splash.
+- **Ctrl-Amiga-Amiga** resets the Amiga (the Pi restarts if AmigaOS has hung).
+- **A status page for monitors** (`Alice68-Status`): build, cores, temperature, JIT and
+  network counters, read-only, through `devicetree.resource`.
+- **Fixes:** boot hung with long hardfile names; the kernel's mailbox calls failed on Pis with
+  more than 1 GB (WiFi restart and Bluetooth never worked); `Alice68-USBLog` could lock up
+  the Shell; `Alice68-Network`'s list of networks (columns, all networks shown) and its
+  WiFi symbol.
+
+**Tested where:** everything was built and tested on a PC and a 68k emulator (the test
+suites in the repository, listed in CLAUDE.md). On a Pi so far: boot, hardfiles,
+Ctrl-Amiga-Amiga, the setup screen's reboot, Bluetooth start-up, scanning, and an LE mouse.
+Still to confirm on a Pi: WiFi joining with the 7.45.241 firmware, LE keyboards after the fix,
+Classic Bluetooth devices, the status page, exFAT booting.
+
+### All changes
 
 - **WiFi firmware: 7.45.241, not 7.45.265.** The firmware Raspberry Pi ships now (7.45.265,
   their `bookworm` files) has no WPA handshake of its own, which Alice68 needs: WiFi stopped at
@@ -40,7 +83,8 @@
   needs `BCM4345C0.hcd` (63,806 bytes); `BCM4345C5.hcd` is for another chip and leaves it dead.
 - **Bluetooth scan: what it hears.** A scan now also listens for Bluetooth LE devices. LE
   keyboards and mice are listed, marked "(LE)" (most current Microsoft mice and many newer
-  keyboards are LE only). The log names the first devices it heard that are no keyboard or mouse, and the scan's end says how many. It also
+  keyboards are LE only). The log names the first devices it heard that are no keyboard or
+  mouse, and the scan's end says how many. It also
   counts every inquiry result and LE report the chip passed up, before any filter, says when
   the inquiry is running, and logs a refused LE scan command, so an empty list shows whether
   the radio heard anything at all.
