@@ -461,6 +461,18 @@ int main(int argc, char **argv)
     const uint8_t *f = ACL(&cid, &n);
     CHECK(f && cid == 0x0050 && n == 1 && f[0] == 0x70, "SET_PROTOCOL boot on the control channel (cid %x n %u)", cid, n);
     CHECK(H.keys[0].flags & BTK_CONNECTED, "the keyboard shows connected");
+    {                                                      /* a device asking for ERTM (older Xbox pads): refused, basic mode offered */
+        uint8_t cr[15] = { (uint8_t)lctl, (uint8_t)(lctl >> 8), 0, 0, 0x04, 9, 3, 0, 0, 0, 0, 0, 0, 0, 0 };
+        uint8_t sid;
+        sig_in(0x40, 0x04, 21, cr, 15);
+        const uint8_t *rr = SIG(0x05, &sid);
+        CHECK(rr && sid == 21 && (rr[4] | rr[5] << 8) == 1 && rr[6] == 0x04 && rr[8] == 0, "ERTM asked: unacceptable, basic mode offered");
+        uint8_t cb[4] = { (uint8_t)lctl, (uint8_t)(lctl >> 8), 0, 0 };
+        sig_in(0x40, 0x04, 22, cb, 4);
+        rr = SIG(0x05, &sid);
+        CHECK(rr && sid == 22 && !(rr[4] | rr[5] << 8), "then basic mode accepted");
+        reset_sent();
+    }
     uint8_t rep[10] = { 0xa1, 0x01, 0x02, 0x00, 0x04, 0, 0, 0, 0, 0 };    /* Shift + a */
     acl_in(0x40, lint, rep, 10, 1);
     CHECK(nkb == 1 && kb[0] == 0x02 && kb[2] == 0x04, "keyboard report through (%d)", nkb);

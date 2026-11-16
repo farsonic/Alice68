@@ -20,6 +20,7 @@ FILES = [                      # (built file in OUT_DIR, place in the system)
     ('Alice68-NetCheck', 'C'),
     ('Alice68-ShowConfig', 'C'),
     ('Alice68-Status', 'C'),
+    ('Alice68-JoyTest', 'C'),
     ('Alice68-WiFi', 'C'),
     ('Alice68-Network', 'C'),
     ('Alice68-NetworkGT', 'C'),

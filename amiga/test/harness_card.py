@@ -235,7 +235,7 @@ for off in (-342, -306): lvo(GFX, off, lambda o, p: None)
 G = dict(TAB0=1, TAB1=2, TAB2=3, TAB3=4, SAVE=5, RESTART=6, STATUS=7, CARD=8, PARTS=9, EXFAT=10, USED=11, FREE=12, VOL=13, FILTER=14,
          PARENT=15, PATH=16, FILES=17, OPEN=18, BOOT=19, KICK=20, DELETE=21, RENAME=22, MKDIR=23, NAME=24, FINFO=25, KS=26, REVERT=27,
          HELP0=28, LINES=31, LINE=32, ADDL=33, DELL=34, CMD=35, TNOTE=36, TAB4=37, BSTAT=38, BPAIRED=39, BFOUND=40, BSCAN=41, BPAIR=42,
-         BCONN=43, BFORGET=44, BKEY=45, BNOTE=46, BLOG=47, OPT0=48)
+         BCONN=43, BFORGET=44, BKEY=45, BNOTE=46, BLOG=47, BPHDR=48, BFHDR=49, OPT0=50)
 UP, CLOSE = 0x40, 0x200
 def typ(gid, s): mem.w_block(gstr[gid], s.encode('latin1') + b'\0')
 def ev(gid, code=0, cls=UP): return lambda: script.append((cls, code, gid))

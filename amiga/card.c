@@ -203,6 +203,7 @@ enum {
     G_LINES, G_LINE, G_ADDL, G_DELL, G_CMD, G_TNOTE,
     /* Bluetooth */
     G_TAB4, G_BSTAT, G_BPAIRED, G_BFOUND, G_BSCAN, G_BPAIR, G_BCONN, G_BFORGET, G_BKEY, G_BNOTE, G_BLOG,
+    G_BPHDR, G_BFHDR,                                /* the two Bluetooth lists' column headings */
     G_OPT0                                           /* G_OPT0 + i: option i (alice_opts.c) */
 };
 #define G_N (G_OPT0 + OPT_MAX)
@@ -697,7 +698,39 @@ static void bt_log_show(void)
     for (int k = 0; k < nl; k++) { char *t = lv_add(&lv_bl); scpy(t, ln[k], 80); }
     lv_end(&lv_bl, G_BLOG);
 }
-static char bstat[120], bkey[120];
+static char bstat[120], bkey[120], bphdr[84], bfhdr[84];
+/* the Bluetooth lists' columns, from the lists' width in characters: Name, Kind, Radio,
+   Status (or Signal), Address - the last ones left out first when the window is narrow */
+struct btcols { unsigned name, kind, radio, status, addr, total; };
+static void bt_cols(struct btcols *c)
+{
+    int bb = (int)slen("Connect now") * 8 + 20 + 24, bl = W - 8 - bb - 16;
+    int chars = (bl - 24) / 8;
+    if (chars > 79) chars = 79;
+    c->kind = 15; c->radio = 8; c->status = 14; c->addr = 18;
+    int fixed = (int)(c->kind + c->radio + c->status + c->addr);
+    if (chars - fixed < 14) { c->addr = 0; fixed -= 18; }
+    if (chars - fixed < 14) { c->radio = 0; fixed -= 8; }
+    int nm = chars - fixed;
+    c->name = nm < 10 ? 10 : nm > 30 ? 30 : (unsigned)nm;
+    c->total = (unsigned)chars;
+}
+/* s cut to w - 1 characters (".." when cut), then padded to the column */
+static void scol(struct sb *b, const char *s, unsigned w)
+{
+    unsigned start = b->n, n = slen(s);
+    if (!w) return;
+    if (n > w - 1) { for (unsigned i = 0; i + 3 < w; i++) sc(b, s[i]); ss(b, ".."); }
+    else ss(b, s);
+    spad(b, start + w);
+}
+static void bt_headers(const struct btcols *c)
+{
+    struct sb h = { bphdr, 0, sizeof bphdr };
+    scol(&h, "Paired: name", c->name); scol(&h, "Kind", c->kind); scol(&h, "Radio", c->radio); scol(&h, "Status", c->status); scol(&h, "Address", c->addr);
+    h = (struct sb){ bfhdr, 0, sizeof bfhdr };
+    scol(&h, "Found: name", c->name); scol(&h, "Kind", c->kind); scol(&h, "Radio", c->radio); scol(&h, "Signal", c->status); scol(&h, "Address", c->addr);
+}
 static volatile struct an_bt *btb(void) { return nb ? (volatile struct an_bt *)(nb + AN_OFF_BT) : 0; }
 static void saddr(struct sb *b, const volatile unsigned char *a)
 {
@@ -726,18 +759,24 @@ static void bt_show(void)
     m[64] = 0;
     if (m[0] && x->state != 1) { ss(&b, ": "); ss(&b, m); }
     textset(G_BSTAT, bstat);
+    struct btcols c;
+    bt_cols(&c);
+    bt_headers(&c);
+    textset(G_BPHDR, bphdr);
+    textset(G_BFHDR, bfhdr);
     lv_begin(&lv_bp, G_BPAIRED);
     for (ULONG i = 0; i < x->nkeys && i < AN_BT_KEYS; i++) {
         char *t = lv_add(&lv_bp);
         struct sb l = { t, 0, 80 };
         volatile struct an_btkey *k = &x->keys[i];
-        saddr(&l, k->addr); spad(&l, 19);
-        ss(&l, k->flags & AN_BTK_PAD ? "game pad" : k->flags & AN_BTK_KEYBOARD ? (k->flags & AN_BTK_MOUSE ? "keyboard+mouse" : "keyboard") :
-               k->flags & AN_BTK_MOUSE ? "mouse" : "device");
-        spad(&l, 34);
         char nm[41]; for (int j = 0; j < 40; j++) { nm[j] = k->name[j]; if (!nm[j]) break; } nm[40] = 0;
-        ss(&l, nm); spad(&l, 50);
-        if (k->flags & AN_BTK_CONNECTED) ss(&l, "connected");
+        char ad[20]; struct sb a = { ad, 0, sizeof ad }; saddr(&a, k->addr);
+        scol(&l, nm[0] ? nm : "(no name)", c.name);
+        scol(&l, k->flags & AN_BTK_PAD ? "game pad" : k->flags & AN_BTK_KEYBOARD ? (k->flags & AN_BTK_MOUSE ? "keyboard+mouse" : "keyboard") :
+                 k->flags & AN_BTK_MOUSE ? "mouse" : "device", c.kind);
+        scol(&l, k->flags & AN_BTK_LE ? "LE" : "Classic", c.radio);
+        scol(&l, k->flags & AN_BTK_CONNECTED ? "connected" : "not connected", c.status);
+        scol(&l, ad, c.addr);
     }
     lv_end(&lv_bp, G_BPAIRED);
     lv_begin(&lv_bf, G_BFOUND);
@@ -745,13 +784,16 @@ static void bt_show(void)
         char *t = lv_add(&lv_bf);
         struct sb l = { t, 0, 80 };
         volatile struct an_btfound *f = &x->found[i];
-        saddr(&l, f->addr); spad(&l, 19);
-        ULONG m2 = (f->cod >> 6) & 3, sub = (f->cod >> 2) & 15;         /* sub: 1 joystick, 2 game pad */
-        ss(&l, sub == 2 ? "game pad" : sub == 1 ? "joystick" : m2 == 3 ? "keyboard+mouse" : m2 == 1 ? "keyboard" : m2 == 2 ? "mouse" : "device");
-        if (f->cod & 0x80000000u) ss(&l, " (LE)");             /* Bluetooth LE */
-        spad(&l, 34);
         char nm[41]; for (int j = 0; j < 40; j++) { nm[j] = f->name[j]; if (!nm[j]) break; } nm[40] = 0;
-        ss(&l, nm[0] ? nm : "(no name yet)");
+        char ad[20]; struct sb a = { ad, 0, sizeof ad }; saddr(&a, f->addr);
+        ULONG m2 = (f->cod >> 6) & 3, sub = (f->cod >> 2) & 15;         /* sub: 1 joystick, 2 game pad */
+        scol(&l, nm[0] ? nm : "(no name yet)", c.name);
+        scol(&l, sub == 2 ? "game pad" : sub == 1 ? "joystick" : m2 == 3 ? "keyboard+mouse" : m2 == 1 ? "keyboard" : m2 == 2 ? "mouse" : "device", c.kind);
+        scol(&l, f->cod & 0x80000000u ? "LE" : "Classic", c.radio);
+        char sg[16]; struct sb q = { sg, 0, sizeof sg };
+        if (f->rssi < 0) { sc(&q, '-'); sd(&q, (ULONG)(-f->rssi)); ss(&q, " dBm"); } else ss(&q, "-");
+        scol(&l, sg, c.status);
+        scol(&l, ad, c.addr);
     }
     lv_end(&lv_bf, G_BFOUND);
     b = (struct sb){ bkey, 0, sizeof bkey };
@@ -997,13 +1039,15 @@ static int make_gadgets(void)
 
     /* Bluetooth: paired above, found below, the buttons beside them */
     g = CreateContext(&glist_page[4]);
-    int bb = bw_("Connect now") + 24, bx = W - 8 - bb, bl = bx - 16, bh = (PB - PY - 74 - 50) / 2;
+    int bb = bw_("Connect now") + 24, bx = W - 8 - bb, bl = bx - 16, bh = (PB - PY - 74 - 50 - 22) / 2;
     if (bh < 28) bh = 28;
     g = mk(g, 4, TEXT_KIND, G_BSTAT, 8, PY + 4, W - 16, 12, 0, 0, txt);
-    g = mk(g, 4, LISTVIEW_KIND, G_BPAIRED, 8, PY + 20, bl, bh, 0, 0, sel);
-    g = mk(g, 4, BUTTON_KIND, G_BCONN, bx, PY + 20, bb, 14, "Connect now", PLACETEXT_IN, 0);
-    g = mk(g, 4, BUTTON_KIND, G_BFORGET, bx, PY + 36, bb, 14, "Forget...", PLACETEXT_IN, 0);
-    int fy = PY + 26 + bh;
+    g = mk(g, 4, TEXT_KIND, G_BPHDR, 12, PY + 19, bl - 4, 10, 0, 0, 0);          /* the column headings */
+    g = mk(g, 4, LISTVIEW_KIND, G_BPAIRED, 8, PY + 30, bl, bh, 0, 0, sel);
+    g = mk(g, 4, BUTTON_KIND, G_BCONN, bx, PY + 30, bb, 14, "Connect now", PLACETEXT_IN, 0);
+    g = mk(g, 4, BUTTON_KIND, G_BFORGET, bx, PY + 46, bb, 14, "Forget...", PLACETEXT_IN, 0);
+    int fy = PY + 36 + bh + 11;
+    g = mk(g, 4, TEXT_KIND, G_BFHDR, 12, fy - 11, bl - 4, 10, 0, 0, 0);
     g = mk(g, 4, LISTVIEW_KIND, G_BFOUND, 8, fy, bl, bh, 0, 0, sel);
     g = mk(g, 4, BUTTON_KIND, G_BSCAN, bx, fy, bb, 14, "Scan", PLACETEXT_IN, 0);
     g = mk(g, 4, BUTTON_KIND, G_BPAIR, bx, fy + 16, bb, 14, "Pair", PLACETEXT_IN, 0);

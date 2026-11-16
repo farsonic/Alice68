@@ -733,6 +733,11 @@ pad, **Scan**, pick it ("game pad" in the list), **Pair**; no code to type.
   Switch Pro controller, report `0x3F`) works too. The **Fantech EOS Mini**: Android/D-input.
   The log says once, at each connection, what it found: `game pad: report N, X/Y n bits,
   hat yes/no, n buttons` - a photo of that line tells which mode a pad is in.
+- **Testing it:** `Alice68-JoyTest` (in `C:` after `ALICE68:Install`) prints, live, what a
+  game reads from both ports: the directions, fire, fire 2 and fire 3, a line per change,
+  Ctrl-C to stop (`ONCE`: just now). It reads the same chip registers games do, so what
+  moves there moves in games. For a game: WHDLoad games run from Workbench (on a hardfile
+  or a folder), or boot an ADF with `floppy.txt` (see [floppy.txt](#floppytxt-kickstart-and-adf)).
 - **How:** a pad has no boot protocol, so the kernel reads its HID report descriptor
   (Classic: from its SDP record; LE: its Report Map) and decodes its reports from that
   (`frf_usb/xhci/alice_pad.c`, tested in `tools/hid-test` against several pads' layouts;

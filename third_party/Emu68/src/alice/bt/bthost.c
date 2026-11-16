@@ -673,10 +673,21 @@ static void sig_in(struct bt_host *h, struct bt_conn *c, const uint8_t *p, unsig
             conf_req(h, c, ch);
             break;
         }
-        case 0x04: {                                    /* Configure Request: we take any options */
+        case 0x04: {                                    /* Configure Request: any options but another mode */
             if (len < 4) break;
             struct bt_l2ch *ch = ch_by_lcid(c, le16(d));
             if (!ch) { put16(r, 2); put16(r + 2, le16(d)); put16(r + 4, 0); sig(h, c, 0x01, id, r, 6); break; }
+            int other_mode = 0;                         /* Retransmission and Flow Control (0x04): only basic mode here */
+            for (unsigned o = 4; o + 2 <= len; o += 2u + d[o + 1])
+                if ((d[o] & 0x7f) == 0x04 && d[o + 1] >= 1 && o + 3 <= len && d[o + 2] != 0) other_mode = d[o + 2];
+            if (other_mode) {                           /* "unacceptable parameters", with the mode we take: basic */
+                uint8_t u[17];
+                put16(u, ch->rcid); put16(u + 2, 0); put16(u + 4, 1);
+                u[6] = 0x04; u[7] = 9; mset(u + 8, 0, 9);
+                sig(h, c, 0x05, id, u, 17);
+                lg(h, "%a: channel %x asked for L2CAP mode %u: answered basic mode", c->addr, ch->psm, (uint32_t)other_mode);
+                break;
+            }
             put16(r, ch->rcid); put16(r + 2, 0); put16(r + 4, 0);
             sig(h, c, 0x05, id, r, 6);
             if (le16(d + 2) & 1) break;                 /* more to come */

@@ -11,6 +11,7 @@ card from a PC.
   C/Alice68-NetCheck     what the network driver reports
   C/Alice68-ShowConfig   ShowConfig and more: boards, Alice68's cards, memory
   C/Alice68-Status       the ARM side now: cores, temperature, JIT, network (LOOP)
+  C/Alice68-JoyTest      the joystick ports as games read them, live (ONCE)
   C/Alice68-WiFi         WiFi from the Shell
   C/Alice68-Network      the network settings window (MUI)
   C/Alice68-NetworkGT    the same without MUI (GadTools)

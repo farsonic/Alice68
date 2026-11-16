@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **`Alice68-JoyTest`:** the two joystick ports as games read them (JOYxDAT, CIA-A, POTGOR),
+  live in a Shell: directions, fire, fire 2 and fire 3, a line per change; `ONCE` for just now.
+  For trying a Bluetooth or USB pad without a game. Tested on the 68k emulator
+  (`amiga/test/harness_joytest.py`).
+- **Bluetooth: a device asking for an L2CAP mode other than basic** (enhanced retransmission:
+  older Xbox One controllers over Classic Bluetooth do) is now answered "unacceptable,
+  basic mode", as the specification says, instead of being accepted and then not spoken.
+  Seen on a Pi: an Xbox Wireless Controller paired and connected, then dropped while its
+  descriptor was asked for; this is the likely cause (to confirm on the Pi).
+- **Alice68-Card's Bluetooth page:** both lists have column headings and real columns: name,
+  kind, Classic or LE, status (paired) or signal (found), address. The columns fit the
+  window's width; the least important go first when it is narrow.
 - **Bluetooth game pads as Amiga joysticks** (tested on the PC only so far). A paired pad
   plays in the joystick port (a second one in the mouse port): D-pad and left stick as the
   directions, the bottom face button as fire, the right and left ones as fire 2 and 3.

@@ -129,6 +129,7 @@ python3 amiga/test/harness_alice68net.py amiga/out/alice68net.device # opens of 
 python3 amiga/test/harness_card.py amiga/out/Alice68-Card   # the SD card manager against fake libraries and card service
 python3 amiga/test/harness_usblog.py amiga/out/Alice68-USBLog # the log tool: last lines, MATCH, Ctrl-C
 python3 amiga/test/harness_status.py amiga/out/Alice68-Status # the status page tool against a fake devicetree.resource and page
+python3 amiga/test/harness_joytest.py amiga/out/Alice68-JoyTest # the joystick ports as games read them, faked in 16 MB of RAM
 tools/splash-preview/build.sh > out.ppm  # the splash, drawn by the kernel's own code (W H setup-storage: the setup screen)
 ```
 
