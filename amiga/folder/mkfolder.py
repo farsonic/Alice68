@@ -15,23 +15,20 @@ import os, shutil, sys
 out = sys.argv[1]
 here = os.path.dirname(os.path.abspath(__file__))
 FILES = [                      # (built file in OUT_DIR, place in the system)
-    ('Alice68-HDF', 'C'),
-    ('Alice68-USBLog', 'C'),
-    ('Alice68-NetCheck', 'C'),
-    ('Alice68-ShowConfig', 'C'),
-    ('Alice68-Status', 'C'),
-    ('Alice68-JoyTest', 'C'),
-    ('Alice68-WiFi', 'C'),
+    ('Alice68', 'C'),                          # the Shell command: Alice68 STATUS, LOG, WIFI, ...
     ('Alice68-Network', 'C'),
     ('Alice68-NetworkGT', 'C'),
     ('Alice68-Card', 'C'),
-    ('Alice68-Monitor', 'C'),
-    ('Alice68-Wheel', 'C'),
-    ('Alice68-Wheel', 'WBStartup'),            # the mouse wheel, started with Workbench
-    ('Alice68-Wheel.info', 'WBStartup'),
+    ('Alice68Wheel', 'WBStartup'),             # the mouse wheel, started with Workbench: its icon runs C:Alice68
+    ('Alice68Wheel.info', 'WBStartup'),
     ('alice68-usb.device', 'DEVS/USBHardware'),
     ('alice68net.device', 'DEVS'),
 ]
+# the separate tools of Alice68 0.6 and before, now subcommands of C:Alice68 (or pages of
+# Alice68Prefs): Install takes them away, Uninstall puts back what they had replaced
+OLD = ['C/Alice68-HDF', 'C/Alice68-USBLog', 'C/Alice68-NetCheck', 'C/Alice68-ShowConfig', 'C/Alice68-Status',
+       'C/Alice68-JoyTest', 'C/Alice68-WiFi', 'C/Alice68-Monitor', 'C/Alice68-Wheel',
+       'WBStartup/Alice68-Wheel', 'WBStartup/Alice68-Wheel.info']
 DATE = '07.11.2026'
 VER = '1.1'
 folder = os.path.join(out, 'ALICE68')
@@ -39,11 +36,15 @@ shutil.rmtree(folder, ignore_errors=True)
 sys.dont_write_bytecode = True             # keep the source tree clean
 sys.path.insert(0, here)
 import mkinfo
-# Alice68-Wheel's icon for WBStartup: a tool Workbench starts and does not wait for
+# the mouse wheel in WBStartup: a project whose default tool is C:Alice68 (started from
+# Workbench, it is the wheel helper), not waited for
 wheel_tt = ('DONOTWAIT',)
-data = mkinfo.write_icon(os.path.join(out, 'Alice68-Wheel.info'), mkinfo.WBTOOL, mkinfo.icon_wheel(), None, wheel_tt, 4096)
+with open(os.path.join(out, 'Alice68Wheel'), 'w', newline='\n') as f:
+    f.write("Alice68's mouse wheel helper: this icon starts C:Alice68, which, started from Workbench,\n"
+            "turns a USB or Bluetooth mouse's wheel into NewMouse events. In a Shell: Alice68 WHEEL\n")
+data = mkinfo.write_icon(os.path.join(out, 'Alice68Wheel.info'), mkinfo.WBPROJECT, mkinfo.icon_wheel(), 'C:Alice68', wheel_tt, 4096)
 k, pic, t, tt, st = mkinfo.read_icon(data)
-if (k, tuple(tt), st) != (mkinfo.WBTOOL, wheel_tt, 4096) or pic.p != mkinfo.icon_wheel().p: sys.exit('Alice68-Wheel.info does not read back')
+if (k, t, tuple(tt), st) != (mkinfo.WBPROJECT, 'C:Alice68', wheel_tt, 4096) or pic.p != mkinfo.icon_wheel().p: sys.exit('Alice68Wheel.info does not read back')
 for name, place in FILES:
     os.makedirs(os.path.join(folder, place), exist_ok=True)
     shutil.copyfile(os.path.join(out, name), os.path.join(folder, place, name))
@@ -95,6 +96,8 @@ for name, place in FILES:
         '  Echo "  %s"' % f,
         'EndIf',
     ]
+for f in OLD:                  # the old separate tools: gone (their backups stay for Uninstall)
+    inst += ['If EXISTS "%s%s"' % (T, f), '  Delete "%s%s" QUIET' % (T, f), '  Echo "  %s: removed (now part of C:Alice68 or Alice68Prefs)"' % f, 'EndIf']
 inst += ['Echo "Done. What was there before is in %s"' % B[:-1],
          'Echo "Reboot so that the new devices are loaded."']
 
@@ -123,6 +126,19 @@ for name, place in FILES:
         '  EndIf',
         'EndIf',
     ]
+for f in OLD:                  # an older install's tools: what they had replaced back, else gone
+    place = f.rsplit('/', 1)[0]
+    uninst += [
+        'If EXISTS "%s%s"' % (B, f),
+        '  Copy "%s%s" "%s%s/" CLONE QUIET' % (B, f, T, place),
+        '  Delete "%s%s" QUIET' % (B, f),
+        'Else',
+        '  If EXISTS "%s%s.none"' % (B, f),
+        '    Delete "%s%s" QUIET' % (T, f),
+        '    Delete "%s%s.none" QUIET' % (B, f),
+        '  EndIf',
+        'EndIf',
+    ]
 for p in sorted(dirs, key=lambda p: -p.count('/')):
     uninst.append('Delete >NIL: "%s%s" QUIET' % (B, p))
 uninst += ['Delete >NIL: "%s" QUIET' % B[:-1], 'Echo "Done. Reboot to finish."']
@@ -145,7 +161,7 @@ ins = [
     '  (abort %s))' % q("ALICE68: is not mounted.\n\nIs the folder ALICE68 on the SD card's\nFAT partition, next to kernel8.img?\n(and no alice68.folders=off in config.txt)"),
     '(welcome "Alice68 %s: the Amiga files")' % VER,
     '(message %s (all))' % q("This copies Alice68's Amiga files from\nALICE68: into your system:\n\n"
-                              "nine tools into C:,\nAlice68-Wheel into WBStartup too\n(the USB mouse's scroll wheel),\nalice68net.device into DEVS:,\nalice68-usb.device into DEVS:USBHardware.\n\n"
+                              "the Alice68 command into C:,\nthe mouse wheel into WBStartup\n(Alice68Wheel),\nalice68net.device into DEVS:,\nalice68-usb.device into DEVS:USBHardware.\n\n"
                               "What they replace is kept in\nAlice68-Backup, and Uninstall puts it back."),
     '(set #dest (askdir (prompt "Install into which system?") (help @askdir-help) (default @default-dest)))',
     '(set #bak (tackon #dest "Alice68-Backup"))',
@@ -165,6 +181,8 @@ for i, (name, place) in enumerate(FILES):
         '(copyfiles (source %s) (dest (tackon #dest %s)) (nogauge) (optional "force"))' % (q('ALICE68:' + f), q(place)),
         '(complete %d)' % ((i + 1) * 100 // len(FILES)),
     ]
+for f in OLD:
+    ins.append('(if (= 1 (exists (tackon #dest %s) (noreq))) (delete (tackon #dest %s) (optional "force")))' % (q(f), q(f)))
 ins.append('(exit %s #bak %s)' % (q("Alice68's files are installed.\nWhat was there before is in\n"), q("\n\nReboot so that the new devices\nare loaded.")))
 
 unins = [
@@ -189,6 +207,16 @@ for i, (name, place) in enumerate(FILES):
         '    ((delete (tackon #dest %s) (optional "force"))' % q(f),
         '     (delete (tackon #bak %s) (optional "force")))))' % q(f + '.none'),
         '(complete %d)' % ((i + 1) * 100 // len(FILES)),
+    ]
+for f in OLD:
+    place = f.rsplit('/', 1)[0]
+    unins += [
+        '(if (= 1 (exists (tackon #bak %s) (noreq)))' % q(f),
+        '  ((copyfiles (source (tackon #bak %s)) (dest (tackon #dest %s)) (nogauge) (optional "force"))' % (q(f), q(place)),
+        '   (delete (tackon #bak %s) (optional "force")))' % q(f),
+        '  (if (= 1 (exists (tackon #bak %s) (noreq)))' % q(f + '.none'),
+        '    ((delete (tackon #dest %s) (optional "force"))' % q(f),
+        '     (delete (tackon #bak %s) (optional "force")))))' % q(f + '.none'),
     ]
 for p in sorted(dirs, key=lambda p: -p.count('/')):
     unins.append('(run (cat "Delete >NIL: \\"" (tackon #bak %s) "\\""))' % q(p))

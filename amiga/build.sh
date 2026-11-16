@@ -19,18 +19,31 @@ build() {   # name, sources...
     python3 -I elf2hunk.py "out/$name.elf" "out/$name"
 }
 build alice68-usb.device device_start.S alice68-usb.c lvo.S
-build Alice68-USBLog usblog_start.S usblog.c lvo.S
-build Alice68-Wheel wheel_start.S wheel.c lvo.S
 python3 -I folder/mkdiskicons.py out            # the volumes' Disk.info, for alice68hdf.device
 build alice68hdf.device hdf/hdf_start.S hdf/alice68hdf.c hdf/folders.c hdf/isos.c hdf/hdf_core.c hdf/fatfs.c hdf/iso9660.c hdf/exfat.c hdf/uaem.c hdf/cmdedit.c hdf/cardsvc.c out/disk_icons.c lvo.S
-build Alice68-HDF hdf/hdfinfo_start.S hdf/hdfinfo.c lvo.S
-build Alice68-NetCheck netcheck_start.S netcheck.c lvo.S
-build Alice68-ShowConfig showconfig_start.S showconfig.c lvo.S
-build Alice68-Status status_start.S status.c lvo.S
-build Alice68-JoyTest joytest_start.S joytest.c lvo.S
 build alice68net.device device_start.S net/alice68net.c wifi/lvox.S lvo.S
-build Alice68-WiFi wifi/wifitool_start.S wifi/wifitool.c wifi/lvox.S lvo.S
-build Alice68-Monitor monitor_start.S monitor.c wifi/lvox.S lvo.S
+# C:Alice68: the Shell command, one program with subcommands (alice68.c). Each subcommand is the
+# tool it was (Alice68-Status, Alice68-USBLog, ...): compiled alone, then all its symbols made
+# local but its main, so their own memcpy, dos, out ... do not meet.
+sub() {   # source, main
+    local o=out/sub_$(basename "$1").o
+    $CC $CFLAGS -c "$1" -o "$o"
+    m68k-linux-gnu-objcopy --keep-global-symbol="$2" "$o"
+    subs+=("$o")
+}
+subs=()
+for s in alice68_start.S alice68.c lvo.S wifi/lvox.S; do $CC $CFLAGS -c "$s" -o "out/a68_$(basename "$s").o"; subs+=("out/a68_$(basename "$s").o"); done
+sub status.c status_main
+sub usblog.c usblog_main
+sub joytest.c joytest_main
+sub wifi/wifitool.c wifitool_main
+sub hdf/hdfinfo.c hdfinfo_main
+sub netcheck.c netcheck_main
+sub showconfig.c showconfig_main
+sub monitor.c monitor_main
+sub wheel.c wheel_main
+$LD -T link.ld --emit-relocs -o out/Alice68.elf "${subs[@]}"
+python3 -I elf2hunk.py out/Alice68.elf out/Alice68
 build Alice68-NetworkGT netprefs_start.S netprefs.c lvoy.S wifi/lvox.S lvo.S
 build Alice68-Card card_start.S card.c hdf/cmdedit.c ../third_party/Emu68/src/raspi/alice_opts.c lvoy.S wifi/lvox.S lvo.S
 # Alice68-Network: the MUI window, built as Riptide's RiptidePrefs is (amiga/netgui/Makefile)

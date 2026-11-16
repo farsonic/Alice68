@@ -1,12 +1,12 @@
 /* SPDX-License-Identifier: GPL-2.0-only
  *
- * Alice68-Status - the kernel's status page (third_party/Emu68/src/alice/alice_status.h) in a
+ * Alice68 STATUS - the kernel's status page (third_party/Emu68/src/alice/alice_status.h) in a
  * Shell: the kernel's build, uptime, what each ARM core does and how busy it is where that is
  * measured, the SoC's temperature (and clock, voltage, throttling with status.sensors=mbox),
  * Emu68's translation cache and the network units' counters.
  *
- *   Alice68-Status          once
- *   Alice68-Status LOOP     every second, until Ctrl-C
+ *   Alice68 STATUS          once
+ *   Alice68 STATUS LOOP     every second, until Ctrl-C
  *
  * It finds the page through devicetree.resource (/alice68 "status") and only reads it.
  */
@@ -14,7 +14,7 @@
 #include "../third_party/Emu68/src/alice/alice_status.h"
 
 #define VERSION_STR "1.0 (15.11.2026)"
-static const char vers[] __attribute__((used)) = "$VER: Alice68-Status " VERSION_STR;
+static const char vers[] __attribute__((used)) = "Alice68 STATUS " VERSION_STR;
 
 void *memcpy(void *d, const void *s, unsigned long n) { UBYTE *a = d; const UBYTE *b = s; while (n--) *a++ = *b++; return d; }
 void *memset(void *d, int c, unsigned long n) { UBYTE *a = d; while (n--) *a++ = (UBYTE)c; return d; }
@@ -138,9 +138,9 @@ LONG status_main(const char *args, ULONG arglen)
         APTR key = DT_OpenKey("/alice68");
         if (key) { addr = dt_u32(key, "status"); ver = dt_u32(key, "status-version"); DT_CloseKey(key); }
     }
-    if (!addr) { puts_("Alice68-Status: no status page (no /alice68 \"status\" in devicetree.resource: an older kernel?)\n"); CloseLibrary(dos); return 10; }
+    if (!addr) { puts_("Alice68 STATUS: no status page (no /alice68 \"status\" in devicetree.resource: an older kernel?)\n"); CloseLibrary(dos); return 10; }
     volatile const struct alice68_status *s = (volatile const struct alice68_status *)addr;
-    if (s->magic != ALICE68_STATUS_MAGIC) { puts_("Alice68-Status: the page at $"); hex(addr); puts_(" is not a status page\n"); CloseLibrary(dos); return 10; }
+    if (s->magic != ALICE68_STATUS_MAGIC) { puts_("Alice68 STATUS: the page at $"); hex(addr); puts_(" is not a status page\n"); CloseLibrary(dos); return 10; }
     puts_("Status page at $"); hex(addr); puts_(", version "); dec(s->version);
     if (ver != s->version) { puts_(" (the device tree says "); dec(ver); puts_(")"); }
     puts_("\n");

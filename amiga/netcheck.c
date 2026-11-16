@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: GPL-2.0-only
- * Alice68-NetCheck - what a SANA-II network driver (genet.device by default) says
+ * Alice68 NETCHECK - what a SANA-II network driver (genet.device by default) says
  * about itself, as text in a Shell: no ReAction classes needed, so it runs on any
  * AmigaOS from 3.1 on.
  *
- *   Alice68-NetCheck [DEVICE <name>] [UNIT <n>] [WATCH] [TEST]
+ *   Alice68 NETCHECK [DEVICE <name>] [UNIT <n>] [WATCH] [TEST]
  *
  * It opens the driver (by name first, which finds the one a TCP/IP stack has
  * loaded, then from DEVS:Networks/), asks the standard SANA-II questions -
@@ -142,11 +142,11 @@ LONG netcheck_main(const char *args, ULONG arglen)
         else if (str_eq_ci(w, "TEST")) test = 1;
         else if (str_eq_ci(w, "UNIT") && nextword(&p, w, sizeof w)) { unit = 0; for (char *c = w; *c >= '0' && *c <= '9'; c++) unit = unit * 10 + (ULONG)(*c - '0'); }
         else if (str_eq_ci(w, "DEVICE") && nextword(&p, w, sizeof w)) { memcpy(devname, w, sizeof devname); explicit_dev = 1; }
-        else if (w[0] == '?') { puts_("Alice68-NetCheck [DEVICE <name>] [UNIT <n>] [WATCH] [TEST]\n"); CloseLibrary(dos); return 0; }
+        else if (w[0] == '?') { puts_("Alice68 NETCHECK [DEVICE <name>] [UNIT <n>] [WATCH] [TEST]\n"); CloseLibrary(dos); return 0; }
         else { memcpy(devname, w, sizeof devname); explicit_dev = 1; }
     }
 
-    puts_("Alice68-NetCheck 1.6\n");
+    puts_("Alice68 NETCHECK 1.6\n");
     APTR port = CreateMsgPort();
     struct IOSana2Req *io = port ? CreateIORequest(port, sizeof *io) : 0;
     struct SSHdr *ss = AllocMem_(sizeof(struct SSHdr) + MAXREC * sizeof(struct SSRec));
@@ -258,7 +258,7 @@ LONG netcheck_main(const char *args, ULONG arglen)
     }
     if (test && configured) {
         /* three broadcast frames: each one ends with a transmit-done interrupt */
-        static UBYTE frame[46] = "Alice68-NetCheck test frame - please ignore";
+        static UBYTE frame[46] = "Alice68 NETCHECK test frame - please ignore";
         puts_("Test:      sending 3 broadcast test frames... ");
         int sent = 0, lasterr = 0;
         for (int i = 0; i < 3; i++) {
@@ -320,13 +320,13 @@ LONG netcheck_main(const char *args, ULONG arglen)
             puts_("\nWhat it means:\n");
             if (copies > 1)
                 puts_("  These numbers may belong to a copy of genet.device no stack uses (see above):\n"
-                      "  reboot, start your TCP/IP stack first, then run Alice68-NetCheck again.\n");
+                      "  reboot, start your TCP/IP stack first, then run Alice68 NETCHECK again.\n");
             else if (irq == ~0u || hwrx == ~0u)
                 puts_("  This driver does not report interrupt and hardware counters (genet.device 3.x does).\n");
             else if (!configured)
                 puts_("  The interface is not up yet, so the driver has not switched its interrupts on and\n"
                       "  these counters say nothing about Alice68. Bring it up in your TCP/IP stack\n"
-                      "  (genet.device, unit 0), or run Alice68-NetCheck TEST to bring it up here and check\n"
+                      "  (genet.device, unit 0), or run Alice68 NETCHECK TEST to bring it up here and check\n"
                       "  the hardware and interrupts.\n");
             else if (hwrx == 0 && hwtx == 0)
                 puts_("  The interface is up but the Ethernet hardware sent and received nothing: no link.\n"

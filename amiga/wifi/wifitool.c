@@ -1,14 +1,14 @@
 /* SPDX-License-Identifier: GPL-2.0-only
- * Alice68-WiFi: the Shell side of the kernel's WiFi (alice68net.device unit 0).
+ * Alice68 WIFI: the Shell side of the kernel's WiFi (alice68net.device unit 0).
  *
- *   Alice68-WiFi                      status (never starts the chip)
- *   Alice68-WiFi START                start the chip (STEP=n in the prefs stops after step n)
- *   Alice68-WiFi SCAN                 networks in range
- *   Alice68-WiFi JOIN "name" "pass" [CC]  connect, and save ENV(ARC):alice68wifi.prefs
- *   Alice68-WiFi RECONNECT            connect to the network in the prefs (for S:User-Startup)
- *   Alice68-WiFi DISCONNECT
- *   Alice68-WiFi LOG                  the driver's log
- *   Alice68-WiFi OFF                  switch the chip off */
+ *   Alice68 WIFI                      status (never starts the chip)
+ *   Alice68 WIFI START                start the chip (STEP=n in the prefs stops after step n)
+ *   Alice68 WIFI SCAN                 networks in range
+ *   Alice68 WIFI JOIN "name" "pass" [CC]  connect, and save ENV(ARC):alice68wifi.prefs
+ *   Alice68 WIFI RECONNECT            connect to the network in the prefs (for S:User-Startup)
+ *   Alice68 WIFI DISCONNECT
+ *   Alice68 WIFI LOG                  the driver's log
+ *   Alice68 WIFI OFF                  switch the chip off */
 #include "wifios.h"
 #include "wifi_api.h"
 #include "../../third_party/Emu68/src/alice/wifi/fmac.h"
@@ -102,7 +102,7 @@ static LONG ask(struct IOStdReq *io, int secs)
         Delay(dos, 5);
     }
     put("the driver is stuck: it has not answered for "); dec(secs);
-    put(" s. Alice68-WiFi LOG in another Shell shows its last lines.\n");
+    put(" s. Alice68 WIFI LOG in another Shell shows its last lines.\n");
     stuck = 1;
     return -1;
 }
@@ -246,7 +246,7 @@ LONG wifitool_main(const char *args, ULONG arglen)
     word(&p, a3, sizeof a3);
     if (cmd[0] == '?' || (cmd[0] && !sieq(cmd, "STATUS") && !sieq(cmd, "START") && !sieq(cmd, "SCAN") && !sieq(cmd, "JOIN") &&
         !sieq(cmd, "RECONNECT") && !sieq(cmd, "DISCONNECT") && !sieq(cmd, "LOG") && !sieq(cmd, "OFF"))) {
-        put("Alice68-WiFi [STATUS | START | SCAN | JOIN \"network\" \"password\" | RECONNECT | DISCONNECT | LOG | OFF]\n");
+        put("Alice68 WIFI [STATUS | START | SCAN | JOIN \"network\" \"password\" | RECONNECT | DISCONNECT | LOG | OFF]\n");
         CloseLibrary(dos);
         return cmd[0] == '?' ? 0 : 10;
     }
@@ -275,7 +275,7 @@ LONG wifitool_main(const char *args, ULONG arglen)
     } else if (sieq(cmd, "OFF")) {
         io->io.io_Command = WIFI_CMD_OFF;
         if (!ask(io, 10)) put("WiFi switched off\n");
-        else if (!stuck) put("not switched off (Alice68-WiFi says why)\n");
+        else if (!stuck) put("not switched off (Alice68 WIFI says why)\n");
     } else if (sieq(cmd, "START")) {
         if (status(io, &st)) { put("no status\n"); rc = 10; }
         else if (st.ws_State != WS_OFF && st.ws_State != WS_FAILED && st.ws_State != WS_NOFW) { put("already running\n"); show(&st); }
@@ -285,20 +285,20 @@ LONG wifitool_main(const char *args, ULONG arglen)
             else {
                 put("Starting the WiFi chip:\n");
                 int r = wait_state(io, &st, 0, 40);
-                if (r) { put(r == -2 ? "stopped watching (it goes on)\n" : r > 0 ? "still starting - Alice68-WiFi shows how it goes\n" : "did not start\n"); rc = 5; }
+                if (r) { put(r == -2 ? "stopped watching (it goes on)\n" : r > 0 ? "still starting - Alice68 WIFI shows how it goes\n" : "did not start\n"); rc = 5; }
                 show(&st);
             }
         }
     } else {
         if (status(io, &st)) st.ws_State = WS_OFF;
         if (st.ws_State == WS_STARTING) { put("The WiFi chip is starting:\n"); wait_state(io, &st, 0, 40); }
-        if (sieq(cmd, "SCAN") && st.ws_State == WS_OFF) { put("the WiFi chip is off: Alice68-WiFi START first\n"); rc = 10; }
+        if (sieq(cmd, "SCAN") && st.ws_State == WS_OFF) { put("the WiFi chip is off: Alice68 WIFI START first\n"); rc = 10; }
         else if (sieq(cmd, "SCAN")) {
             static struct WifiScanEntry e[40];
             io->io.io_Command = WIFI_CMD_SCAN;
             io->io_Data = e;
             io->io_Length = sizeof e;
-            if (ask(io, 20)) { if (!stuck) put("scan failed (is the chip running? Alice68-WiFi LOG says why)\n"); rc = 10; }
+            if (ask(io, 20)) { if (!stuck) put("scan failed (is the chip running? Alice68 WIFI LOG says why)\n"); rc = 10; }
             else {
                 put("Signal  Ch  Security   Access point       Network\n");
                 for (ULONG i = 0; i < io->io_Actual; i++) {
@@ -333,10 +333,10 @@ LONG wifitool_main(const char *args, ULONG arglen)
             io->io.io_Command = j.wj_Ssid[0] ? WIFI_CMD_JOIN : WIFI_CMD_RECONNECT;
             io->io_Data = &j;
             io->io_Length = sizeof j;
-            if (ask(io, 20)) { if (!stuck) put("the WiFi did not take it (Alice68-WiFi LOG says why)\n"); rc = 10; goto done; }
+            if (ask(io, 20)) { if (!stuck) put("the WiFi did not take it (Alice68 WIFI LOG says why)\n"); rc = 10; goto done; }
             if (!status(io, &st) && (st.ws_State == WS_OFF || st.ws_State == WS_STARTING)) put("Starting the WiFi chip:\n");
             int r = wait_state(io, &st, 1, 60);
-            if (r) { put(r > 0 ? "not connected yet - Alice68-WiFi shows how it goes\n" : "not connected\n"); rc = 5; }
+            if (r) { put(r > 0 ? "not connected yet - Alice68 WIFI shows how it goes\n" : "not connected\n"); rc = 5; }
             show(&st);
         } else if (sieq(cmd, "DISCONNECT")) {
             io->io.io_Command = WIFI_CMD_DISCONNECT;

@@ -1,14 +1,14 @@
 /* SPDX-License-Identifier: GPL-2.0-only
  *
- * Alice68-JoyTest - what a game reads from the two joystick ports, live, in a Shell: the
+ * Alice68 JOYTEST - what a game reads from the two joystick ports, live, in a Shell: the
  * directions from JOY1DAT / JOY0DAT, the fire buttons from CIA-A, and the second and third
  * buttons from POTGOR. The same registers games read, so a Bluetooth or USB pad that moves
  * here moves in games too.
  *
- *   Alice68-JoyTest            the joystick port: a line each time it changes, until Ctrl-C
- *   Alice68-JoyTest MOUSEPORT  the mouse port too, read as a joystick (a second pad there);
+ *   Alice68 JOYTEST            the joystick port: a line each time it changes, until Ctrl-C
+ *   Alice68 JOYTEST MOUSEPORT  the mouse port too, read as a joystick (a second pad there);
  *                              a mouse moving there looks like random directions
- *   Alice68-JoyTest ONCE       as they are now
+ *   Alice68 JOYTEST ONCE       as they are now
  *
  * The joystick port's pins 5 and 9 (POTGO's RX/RY bits) are taken from potgo.resource and
  * made inputs while it runs; the mouse port's are left to the system (its right button).
@@ -16,7 +16,7 @@
 #include "amiga.h"
 
 #define VERSION_STR "1.1 (16.11.2026)"
-static const char vers[] __attribute__((used)) = "$VER: Alice68-JoyTest " VERSION_STR;
+static const char vers[] __attribute__((used)) = "Alice68 JOYTEST " VERSION_STR;
 
 void *memcpy(void *d, const void *s, unsigned long n) { UBYTE *a = d; const UBYTE *b = s; while (n--) *a++ = *b++; return d; }
 void *memset(void *d, int c, unsigned long n) { UBYTE *a = d; while (n--) *a++ = (UBYTE)c; return d; }

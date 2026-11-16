@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Alice68-JoyTest on a 68k emulator (machine68k), with 16 MB of RAM so that JOY0DAT/JOY1DAT/
+"""Alice68 JOYTEST (was Alice68-JoyTest) on a 68k emulator (machine68k), with 16 MB of RAM so that JOY0DAT/JOY1DAT/
 POTGOR ($DFF00A/$DFF00C/$DFF016) and CIA-A's PRA ($BFE001) are memory the test sets, and a fake
 potgo.resource: ONCE decodes the ports as games do (the quadrature directions, fire on CIA-A,
 the second and third buttons on POTGOR pins 9 and 5); the loop prints a line on every change and
 none without one, stops on Ctrl-C, takes the joystick port's POTGO bits as inputs and gives them
 back.
 
-    harness_joytest.py amiga/out/Alice68-JoyTest
+    harness_joytest.py amiga/out/Alice68   (its JOYTEST subcommand)
 SPDX-License-Identifier: GPL-2.0-only"""
 import struct, sys
 import machine68k as M
 R = M.Register
 fails = []
-LOAD, SYS, DOS, POT, ARGS, STACK = 0x20000, 0x8000, 0xA000, 0xC000, 0x3F000, 0x80000
+LOAD, SYS, DOS, POT, ARGS, STACK = 0x20000, 0x8000, 0xA000, 0xC000, 0x6F000, 0x80000
 JOY0, JOY1, POTGOR, PRA = 0xDFF00A, 0xDFF00C, 0xDFF016, 0xBFE001
 
 def joy(up=0, down=0, left=0, right=0):
@@ -57,7 +57,7 @@ def run(args, states, brk_after=None):
         for i in range(w(p + 4)):
             r = w(p + 12 + 4 * i); v = struct.unpack('>I', code[r:r + 4])[0]; code[r:r + 4] = struct.pack('>I', v + LOAD)
     mem.w_block(LOAD, bytes(code))
-    a = args.encode() + b'\n'
+    a = ('JOYTEST ' + args).encode() + b'\n'      # C:Alice68's JOYTEST subcommand
     mem.w_block(ARGS, a + b'\0'); mem.w32(STACK, 0x1000)
     cpu.w_reg(R.A7, STACK); cpu.w_reg(R.A0, ARGS); cpu.w_reg(R.D0, len(a)); cpu.w_pc(LOAD); cpu.w_sr(0)
     for _ in range(400):

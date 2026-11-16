@@ -1,11 +1,11 @@
 /* SPDX-License-Identifier: GPL-2.0-only
- * Alice68-USBLog - print the Alice68 kernel's USB log and alice68-usb.device's
+ * Alice68 LOG - print the Alice68 kernel's USB log and alice68-usb.device's
  * from the pass-through board, plus the port table. For a Shell on Workbench,
  * where the splash's log panels can no longer be seen.
- *   Alice68-USBLog                 the last 40 lines of each log
- *   Alice68-USBLog LINES=200       the last 200;  ALL: everything
- *   Alice68-USBLog MATCH=[BT]      only lines with that text (any case)
- *   Alice68-USBLog FOLLOW          then new lines as they come, until Ctrl-C
+ *   Alice68 LOG                 the last 40 lines of each log
+ *   Alice68 LOG LINES=200       the last 200;  ALL: everything
+ *   Alice68 LOG MATCH=[BT]      only lines with that text (any case)
+ *   Alice68 LOG FOLLOW          then new lines as they come, until Ctrl-C
  * Ctrl-C stops it at any line. */
 #include "amiga.h"
 #include "../third_party/Emu68/src/frf_usb/xhci/alice68_usbpt.h"
@@ -141,9 +141,9 @@ LONG usblog_main(const char *args, ULONG arglen)
         }
     }
     puts_("\n");
-    if (!cd) { puts_("Alice68-USBLog: no pass-through board - not an Alice68 kernel, or frf_usb=neptune\n"); CloseLibrary(dos); return 10; }
+    if (!cd) { puts_("Alice68 LOG: no pass-through board - not an Alice68 kernel, or frf_usb=neptune\n"); CloseLibrary(dos); return 10; }
     volatile struct pt_hdr *b = cd->cd_BoardAddr;
-    if (b->magic != PT_MAGIC) { puts_("Alice68-USBLog: board found, but not initialised by the kernel\n"); CloseLibrary(dos); return 10; }
+    if (b->magic != PT_MAGIC) { puts_("Alice68 LOG: board found, but not initialised by the kernel\n"); CloseLibrary(dos); return 10; }
     puts_("Alice68 USB pass-through board at $"); hex((ULONG)b, 8);
     puts_(", alice68-usb.device "); if (b->amiga_ver) { dec(b->amiga_ver >> 16); puts_("."); dec(b->amiga_ver & 0xffff); } else puts_("not opened yet");
     puts_("\n\nPorts handed to Neptune:\n");

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only
- * Alice68-HDF - show alice68hdf.device's hardfiles and its log, in a Shell. */
+ * Alice68 HDF - show alice68hdf.device's hardfiles and its log, in a Shell. */
 #include "../amiga.h"
 #include "hdf_core.h"
 

@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Alice68-Status on a 68k emulator (machine68k) against a fake devicetree.resource and a fake
+"""Alice68 STATUS (was Alice68-Status) on a 68k emulator (machine68k) against a fake devicetree.resource and a fake
 status page (third_party/Emu68/src/alice/alice_status.h): it finds the page through /alice68
 "status", prints every part of it (unknown values as "not measured"/"not counted", the mailbox
 sensors only with their flag), waits while the page is being written (odd seq), says so when
 there is no page, and LOOP stops on Ctrl-C.
 
-    harness_status.py amiga/out/Alice68-Status
+    harness_status.py amiga/out/Alice68   (its STATUS subcommand)
 SPDX-License-Identifier: GPL-2.0-only"""
 import struct, sys
 import machine68k as M
 R = M.Register
 fails = []
-LOAD, SYS, DOS, DTR, ARGS, STACK = 0x20000, 0x8000, 0xA000, 0xC000, 0x3F000, 0x80000
+LOAD, SYS, DOS, DTR, ARGS, STACK = 0x20000, 0x8000, 0xA000, 0xC000, 0x6F000, 0x80000
 PAGE = 0x100000
 U = 0xffffffff
 
@@ -59,7 +59,7 @@ def run(args, have_dt=True, flags=0, sensors=True, odd_reads=0, brk_after=None):
             if not st['odd']: mem.w32(PAGE + 12, 12)
     lvo(DOS, -198, delay)
     # devicetree.resource: one key, two properties
-    KEY, PS, PV, VS, VV = 0x30000, 0x30010, 0x30020, 0x30030, 0x30040
+    KEY, PS, PV, VS, VV = 0x68000, 0x68010, 0x68020, 0x68030, 0x68040
     mem.w32(PV, PAGE); mem.w32(VV, 1)
     lvo(DTR, -6, lambda o, p: setd0(KEY if mem.r_cstr(d(R.A0)) == '/alice68' else 0))
     lvo(DTR, -12, lambda o, p: None)
@@ -75,7 +75,7 @@ def run(args, have_dt=True, flags=0, sensors=True, odd_reads=0, brk_after=None):
         for i in range(w(p + 4)):
             r = w(p + 12 + 4 * i); v = struct.unpack('>I', code[r:r + 4])[0]; code[r:r + 4] = struct.pack('>I', v + LOAD)
     mem.w_block(LOAD, bytes(code))
-    a = args.encode() + b'\n'
+    a = ('STATUS ' + args).encode() + b'\n'       # C:Alice68's STATUS subcommand
     mem.w_block(ARGS, a + b'\0'); mem.w32(STACK, 0x1000)
     cpu.w_reg(R.A7, STACK); cpu.w_reg(R.A0, ARGS); cpu.w_reg(R.D0, len(a)); cpu.w_pc(LOAD); cpu.w_sr(0)
     for _ in range(400):

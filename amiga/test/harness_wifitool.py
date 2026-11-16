@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Run Alice68-WiFi on a 68k emulator (machine68k / Musashi) against a fake
+"""Run Alice68 WIFI on a 68k emulator (machine68k / Musashi) against a fake
 alice68net.device (the kernel's WiFi) and check what it does and says: status
 and LOG, START, JOIN sending the network to the kernel, RECONNECT taking it
 from the prefs, and a stuck driver reported instead of hanging the Shell.
 
-    harness_wifitool.py amiga/out/Alice68-WiFi
+    harness_wifitool.py amiga/out/Alice68 WIFI
 SPDX-License-Identifier: GPL-2.0-only"""
 import struct, sys
 import machine68k as M
@@ -19,7 +19,7 @@ def run(hunk, args, dev):
     answer = commands the driver answers (others stay queued for ever), abort_ok)"""
     mach = M.Machine(M.CPUType.M68020, 4096)
     cpu, mem, traps = mach.cpu, mach.mem, mach.traps
-    SYSBASE, DOSBASE, LOAD, HEAP, ARGS, STACK = 0x8000, 0xA000, 0x20000, 0x100000, 0x3F000, 0x80000
+    SYSBASE, DOSBASE, LOAD, HEAP, ARGS, STACK = 0x8000, 0xA000, 0x20000, 0x100000, 0x6F000, 0x80000
     st = {'done': False, 'exc': None, 'heap': HEAP, 'out': [], 'sent': [], 'pending': None, 'closed': False,
           'idx': 0, 'started': dev.get('running', False), 'freed': False, 'join': None}
     def d(r): return cpu.r_reg(r)
@@ -118,6 +118,7 @@ def run(hunk, args, dev):
         for i in range(w(p + 4)):
             r = w(p + 12 + 4 * i); v = struct.unpack('>I', code[r:r + 4])[0]; code[r:r + 4] = struct.pack('>I', v + LOAD)
     mem.w_block(LOAD, bytes(code))
+    args = 'WIFI ' + args                          # C:Alice68's WIFI subcommand
     mem.w_block(ARGS, args.encode() + b'\n\0')
     mem.w32(STACK, 0x1000)
     cpu.w_reg(R.A7, STACK); cpu.w_reg(R.A0, ARGS); cpu.w_reg(R.D0, len(args) + 1); cpu.w_pc(LOAD); cpu.w_sr(0)
@@ -144,7 +145,7 @@ cases = [
     ('START while running does nothing', 'START', dict(states=steps, answer=answer_all, running=True),
      ['already running'], [], [], True),
     ('SCAN while off does not start it', 'SCAN', dict(states=steps, answer=answer_all),
-     ['the WiFi chip is off: Alice68-WiFi START first'], [], [], True),
+     ['the WiFi chip is off: Alice68 WIFI START first'], [], [], True),
     ('JOIN sends the network to the kernel', 'JOIN "Net" "secret1234" GB', dict(states=joining, answer=answer_all),
      ['Saved in ENV:', 'joining: joining Net', 'State:     connected'], [], [CMD_JOIN], True),
     ('RECONNECT takes the network from the prefs', 'RECONNECT', dict(states=joining, answer=answer_all, files=prefs),
@@ -152,7 +153,7 @@ cases = [
     ('RECONNECT without prefs: the last network', 'RECONNECT', dict(states=joining, answer=answer_all),
      ['no SSID in ENV:alice68wifi.prefs', 'State:     connected'], [], [CMD_RECONNECT], True),
     ('stuck driver: reported, the Shell gets its prompt back', 'JOIN "Net" "secret1234"', dict(states=steps, answer=()),
-     ['the driver is stuck', 'Alice68-WiFi LOG in another Shell'], [], [CMD_JOIN], False),
+     ['the driver is stuck', 'Alice68 WIFI LOG in another Shell'], [], [CMD_JOIN], False),
     ('queued request taken back', 'DISCONNECT', dict(states=steps, answer=(), abort_ok=True),
      ['the driver did not answer'], ['stuck'], [CMD_DISCONNECT], True),
     ('missing device', '', dict(states=steps, present=False), ['cannot open alice68net.device'], [], [], False),

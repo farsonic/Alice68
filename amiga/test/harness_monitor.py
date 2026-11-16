@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Alice68-Monitor DUMP on a 68k emulator (machine68k), against a fake
+"""Alice68 MONITOR DUMP on a 68k emulator (machine68k), against a fake
 pass-through board with log rings, the WiFi driver's state, and a fake exec
 task list whose stack holds a return address into the "driver".
 
-    harness_monitor.py amiga/out/Alice68-Monitor
+    harness_monitor.py amiga/out/Alice68 MONITOR
 SPDX-License-Identifier: GPL-2.0-only"""
 import struct, sys
 import machine68k as M
@@ -11,7 +11,7 @@ R = M.Register
 fails = []
 mach = M.Machine(M.CPUType.M68020, 4096)
 cpu, mem, traps = mach.cpu, mach.mem, mach.traps
-SYS, DOS, EXP, LOAD, HEAP, ARGS, STACK, BOARD = 0x8000, 0xA000, 0xB000, 0x20000, 0x200000, 0x3F000, 0x80000, 0x300000
+SYS, DOS, EXP, LOAD, HEAP, ARGS, STACK, BOARD = 0x8000, 0xA000, 0xB000, 0x20000, 0x200000, 0x6F000, 0x80000, 0x300000
 st = {'done': False, 'exc': None, 'heap': HEAP, 'out': []}
 def d(r): return cpu.r_reg(r)
 def setd0(v): cpu.w_reg(R.D0, v & 0xffffffff)
@@ -74,8 +74,8 @@ if w(p) == 0x3ec:
     for i in range(w(p + 4)):
         r = w(p + 12 + 4 * i); v = struct.unpack('>I', codeh[r:r + 4])[0]; codeh[r:r + 4] = struct.pack('>I', v + LOAD)
 mem.w_block(LOAD, bytes(codeh))
-mem.w_block(ARGS, b'DUMP\n\0'); mem.w32(STACK, 0x1000)
-cpu.w_reg(R.A7, STACK); cpu.w_reg(R.A0, ARGS); cpu.w_reg(R.D0, 5); cpu.w_pc(LOAD); cpu.w_sr(0)
+mem.w_block(ARGS, b'MONITOR DUMP\n\0'); mem.w32(STACK, 0x1000)
+cpu.w_reg(R.A7, STACK); cpu.w_reg(R.A0, ARGS); cpu.w_reg(R.D0, 13); cpu.w_pc(LOAD); cpu.w_sr(0)
 for _ in range(4000):
     if st['done']: break
     cpu.execute(100000)

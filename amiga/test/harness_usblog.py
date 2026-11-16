@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Alice68-USBLog on a 68k emulator (machine68k) against a fake USB pass-through board
+"""Alice68 LOG (was Alice68-USBLog) on a 68k emulator (machine68k) against a fake USB pass-through board
 with a long kernel log: by default only the last 40 lines; LINES=n; ALL; MATCH=text (any
 case, with the brackets of "[BT]"); Ctrl-C stops it in the middle of a long log; a
 word with an 'f' in it is no FOLLOW (it once was, and the tool never ended).
 
-    harness_usblog.py amiga/out/Alice68-USBLog
+    harness_usblog.py amiga/out/Alice68   (its LOG subcommand)
 SPDX-License-Identifier: GPL-2.0-only"""
 import struct, sys
 import machine68k as M
 R = M.Register
 fails = []
-LOAD, SYS, DOS, EXP, ARGS, STACK = 0x20000, 0x8000, 0xA000, 0xE000, 0x3F000, 0x80000
+LOAD, SYS, DOS, EXP, ARGS, STACK = 0x20000, 0x8000, 0xA000, 0xE000, 0x6F000, 0x80000
 
 def run(args, brk_after=None):
     mach = M.Machine(M.CPUType.M68020, 4096)
@@ -56,7 +56,7 @@ def run(args, brk_after=None):
         for i in range(w(p + 4)):
             r = w(p + 12 + 4 * i); v = struct.unpack('>I', code[r:r + 4])[0]; code[r:r + 4] = struct.pack('>I', v + LOAD)
     mem.w_block(LOAD, bytes(code))
-    a = args.encode() + b'\n'
+    a = ('LOG ' + args).encode() + b'\n'          # C:Alice68's LOG subcommand
     mem.w_block(ARGS, a + b'\0'); mem.w32(STACK, 0x1000)
     cpu.w_reg(R.A7, STACK); cpu.w_reg(R.A0, ARGS); cpu.w_reg(R.D0, len(a)); cpu.w_pc(LOAD); cpu.w_sr(0)
     for _ in range(3000):

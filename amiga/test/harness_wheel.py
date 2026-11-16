@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Alice68-Wheel on a 68k emulator (machine68k), against a fake USB card whose wheel counters
+"""Alice68 WHEEL on a 68k emulator (machine68k), against a fake USB card whose wheel counters
 move between Delay()s and a fake input.device that records every event written to it.
 Cases: wheel up/down/left/right, the 4th button, Shift held, the NEWMOUSE option, a flick
 clamped to 8 steps, a second start (stops the first), no card, and a start from Workbench.
 
-    harness_wheel.py amiga/out/Alice68-Wheel
+    harness_wheel.py amiga/out/Alice68 WHEEL
 SPDX-License-Identifier: GPL-2.0-only"""
 import struct, sys
 sys.dont_write_bytecode = True
 import machine68k as M
 R = M.Register
 fails = []
-SYS, DOS, EXP, INP, LOAD, HEAP, ARGS, STACK, BOARD = 0x8000, 0xA000, 0xB000, 0xC000, 0x20000, 0x200000, 0x3F000, 0x80000, 0x300000
+SYS, DOS, EXP, INP, LOAD, HEAP, ARGS, STACK, BOARD = 0x8000, 0xA000, 0xB000, 0xC000, 0x20000, 0x200000, 0x6F000, 0x80000, 0x300000
 PROG = open(sys.argv[1], 'rb').read()
 
 def run(args=b'', board=True, other_port=False, wb=False, script=None):
@@ -48,7 +48,7 @@ def run(args=b'', board=True, other_port=False, wb=False, script=None):
     lvo(SYS, -414, lambda o, p: None)
     for off in (-132, -138): lvo(SYS, off, lambda o, p: None)
     otherp = alloc(34); mem.w32(otherp + 16, 0x4321)
-    lvo(SYS, -390, lambda o, p: setd0(otherp if other_port and mem.r_cstr(d(R.A1)) == 'Alice68-Wheel' else 0))
+    lvo(SYS, -390, lambda o, p: setd0(otherp if other_port and mem.r_cstr(d(R.A1)) == 'Alice68.Wheel' else 0))
     def signal(o, p): st['signal'] = (d(R.A1), d(R.D0))
     lvo(SYS, -324, signal)
     lvo(SYS, -294, lambda o, p: setd0(me))
@@ -91,6 +91,7 @@ def run(args=b'', board=True, other_port=False, wb=False, script=None):
         for i in range(w(pos + 4)):
             r = w(pos + 12 + 4 * i); v = struct.unpack('>I', code[r:r + 4])[0]; code[r:r + 4] = struct.pack('>I', v + LOAD)
     mem.w_block(LOAD, bytes(code))
+    args = b'WHEEL ' + args                          # C:Alice68's WHEEL subcommand
     mem.w_block(ARGS, args + b'\n\0'); mem.w32(STACK, 0x1000)
     cpu.w_reg(R.A7, STACK); cpu.w_reg(R.A0, ARGS); cpu.w_reg(R.D0, len(args) + 1); cpu.w_pc(LOAD); cpu.w_sr(0)
     for _ in range(4000):
@@ -113,7 +114,7 @@ check('runs', s['done'] and not s['exc'] and s['rc'] == 0 and 'running' in s['te
 want = (keys(UP, UP | 0x80, UP, UP | 0x80) + keys(DOWN, DOWN | 0x80) + keys(RIGHT, RIGHT | 0x80)
         + keys(FOURTH, qual=1) + keys(FOURTH | 0x80, qual=1) + keys(*([UP, UP | 0x80] * 8)))
 check('events', s['ev'] == want, s)
-check('public port, removed at the end', s['ports'] == ['Alice68-Wheel', '-removed'], s)
+check('public port, removed at the end', s['ports'] == ['Alice68.Wheel', '-removed'], s)
 check('priority 5, then back', s['pri'][:1] == [5] and len(s['pri']) == 2, s)
 check('input.device closed', s['opened'] == 1 and s['closed'] == 1, s)
 
@@ -136,5 +137,5 @@ check('workbench', s['rc'] == 0 and s['replied'] == [s['wbmsg']] and s['text'] =
 
 if fails:
     print('\n'.join('FAIL: ' + f for f in fails)); sys.exit(1)
-print('Alice68-Wheel: wheels, 4th button, qualifiers, NEWMOUSE, clamp, second start, no card, Workbench')
+print('Alice68 WHEEL: wheels, 4th button, qualifiers, NEWMOUSE, clamp, second start, no card, Workbench')
 print('ALL OK')

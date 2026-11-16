@@ -1,10 +1,10 @@
 /* SPDX-License-Identifier: GPL-2.0-only
- * Alice68-Wheel - a USB mouse's scroll wheel on AmigaOS. The Amiga's mouse port has no wheel,
+ * Alice68 WHEEL - a USB mouse's scroll wheel on AmigaOS. The Amiga's mouse port has no wheel,
  * so the kernel counts the wheel's steps on Alice68's USB card (pt_hdr.wheel_y/_x, mouse_btn)
  * and this turns them into the NewMouse events programs know: raw keys $7A/$7B (wheel up and
  * down), $7C/$7D (left and right), $7E (the 4th button), each pressed and released, through
  * input.device. NEWMOUSE also sends them as IECLASS_NEWMOUSE, for tools that want that.
- * Runs in the background: from WBStartup (Install puts it there), or Run >NIL: Alice68-Wheel.
+ * Runs in the background: from WBStartup (Install puts it there), or Run >NIL: Alice68 WHEEL.
  * Started again (a Shell, or its icon), it stops the first one. */
 #include "amiga.h"
 #include "../third_party/Emu68/src/frf_usb/xhci/alice68_usbpt.h"
@@ -28,7 +28,7 @@ ACHECK(AOFF(struct pt_hdr, wheel_y) == 44 && AOFF(struct pt_hdr, mouse_btn) == 5
 #define NM_WHEEL_RIGHT     0x7d
 #define NM_BUTTON_FOURTH   0x7e
 #define SIGBREAKF_CTRL_C   (1u << 12)
-#define PORTNAME           "Alice68-Wheel"
+#define PORTNAME           "Alice68.Wheel"
 #define MAXSTEPS           8            /* per 1/50 s: a flick of a free-spinning wheel */
 
 static inline APTR FindTask(const char *n)              { return (APTR)lvo(SYSBASE, -294, 0, 0, 0, (ULONG)n); }
@@ -118,14 +118,14 @@ static LONG run(const char *args, ULONG arglen)
     struct MsgPort *other = FindPort(PORTNAME);
     if (other) Signal(other->mp_SigTask, SIGBREAKF_CTRL_C);
     Permit();
-    if (other) { puts_("Alice68-Wheel: stopped\n"); CloseLibrary(dos); return 0; }
+    if (other) { puts_("Alice68 WHEEL: stopped\n"); CloseLibrary(dos); return 0; }
 
     APTR eb = OpenLibrary("expansion.library", 36);
     struct ConfigDev *cd = eb ? FindConfigDev(eb, 0, PT_MANUFACTURER, PT_PRODUCT) : 0;
     if (eb) CloseLibrary(eb);
     volatile struct pt_hdr *b = cd ? cd->cd_BoardAddr : 0;
     if (!b || b->magic != PT_MAGIC) {
-        puts_("Alice68-Wheel: no Alice68 USB card (not an Alice68 kernel, or frf_usb=neptune)\n");
+        puts_("Alice68 WHEEL: no Alice68 USB card (not an Alice68 kernel, or frf_usb=neptune)\n");
         CloseLibrary(dos);
         return 10;
     }
@@ -133,7 +133,7 @@ static LONG run(const char *args, ULONG arglen)
     struct MsgPort *pub = CreateMsgPort(), *rep = CreateMsgPort();
     io = rep ? CreateIORequest(rep, sizeof *io) : 0;
     if (!pub || !io || OpenDevice("input.device", 0, io, 0) != 0) {
-        puts_("Alice68-Wheel: cannot open input.device\n");
+        puts_("Alice68 WHEEL: cannot open input.device\n");
         if (io) DeleteIORequest(io);
         if (rep) DeleteMsgPort(rep);
         if (pub) DeleteMsgPort(pub);
@@ -144,8 +144,8 @@ static LONG run(const char *args, ULONG arglen)
     AddPort(pub);
     APTR task = FindTask(0);
     LONG oldpri = SetTaskPri(task, 5);                        /* above busy programs at 0: no lag */
-    puts_(newmouse ? "Alice68-Wheel: running, NewMouse events too (run it again to stop it)\n"
-                   : "Alice68-Wheel: running (run it again to stop it)\n");
+    puts_(newmouse ? "Alice68 WHEEL: running, NewMouse events too (run it again to stop it)\n"
+                   : "Alice68 WHEEL: running (run it again to stop it)\n");
 
     LONG y = b->wheel_y, x = b->wheel_x;
     ULONG btn = b->mouse_btn;

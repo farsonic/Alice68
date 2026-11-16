@@ -1,11 +1,11 @@
 /* SPDX-License-Identifier: GPL-2.0-only
- * Alice68-Monitor - a window that keeps showing what the machine is doing
+ * Alice68 MONITOR - a window that keeps showing what the machine is doing
  * while something hangs.
  *
- *   Alice68-Monitor          the window (run it first: "run Alice68-Monitor")
- *   Alice68-Monitor DUMP     print everything to the Shell - also after a hang
+ *   Alice68 MONITOR          the window (run it first: "run Alice68 MONITOR")
+ *   Alice68 MONITOR DUMP     print everything to the Shell - also after a hang
  *                            and a reset (Ctrl-Amiga-Amiga): the board keeps it
- *   Alice68-Monitor TIMERS   does each timer.device unit still answer? (run it while
+ *   Alice68 MONITOR TIMERS   does each timer.device unit still answer? (run it while
  *                            something hangs: the Pi's timer bounds the wait)
  *
  * It shows:
@@ -28,7 +28,7 @@
 void *memcpy(void *d, const void *s, unsigned long n) { UBYTE *a = d; const UBYTE *b = s; while (n--) *a++ = *b++; return d; }
 void *memset(void *d, int c, unsigned long n) { UBYTE *a = d; while (n--) *a++ = (UBYTE)c; return d; }
 
-#define MON_VERSION "Alice68-Monitor 1.2"
+#define MON_VERSION "Alice68 MONITOR 1.2"
 
 /* ---- system calls not in wifios.h ------------------------------------------ */
 static inline APTR GetMsg_(APTR p)                     { return (APTR)lvo(SYSBASE, -372, 0, 0, (ULONG)p, 0); }
@@ -608,7 +608,7 @@ LONG monitor_main(const char *args, ULONG arglen)
     find_board();
     if (sieq(w0, "DUMP")) { LONG rc = dump(); CloseLibrary(dos); return rc; }
     if (sieq(w0, "TIMERS")) { LONG rc = timers(); CloseLibrary(dos); return rc; }
-    if (w0[0]) { put("Alice68-Monitor [DUMP|TIMERS]\n"); CloseLibrary(dos); return w0[0] == '?' ? 0 : 10; }
+    if (w0[0]) { put("Alice68 MONITOR [DUMP|TIMERS]\n"); CloseLibrary(dos); return w0[0] == '?' ? 0 : 10; }
 
     GFX = OpenLibrary("graphics.library", 37);
     INTUI = OpenLibrary("intuition.library", 37);
@@ -616,7 +616,7 @@ LONG monitor_main(const char *args, ULONG arglen)
     struct timerequest *tr = tp ? CreateIORequest(tp, sizeof *tr) : 0;
     int timer_ok = tr && !OpenDevice("timer.device", 1, tr, 0);      /* UNIT_VBLANK */
     APTR scr = INTUI ? LockPubScreen(0) : 0;
-    if (!GFX || !INTUI || !timer_ok || !scr) { put("Alice68-Monitor: no graphics, intuition, timer or Workbench screen\n"); goto out; }
+    if (!GFX || !INTUI || !timer_ok || !scr) { put("Alice68 MONITOR: no graphics, intuition, timer or Workbench screen\n"); goto out; }
     WORD sw = *(WORD *)((UBYTE *)scr + 12), sh = *(WORD *)((UBYTE *)scr + 14);
     UBYTE bar = *((UBYTE *)scr + 30);                    /* BarHeight */
     struct TagItem t[] = {
@@ -626,8 +626,8 @@ LONG monitor_main(const char *args, ULONG arglen)
         { WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_VANILLAKEY }, { TAG_DONE, 0 } };
     win = OpenWindowTagList(t);
     UnlockPubScreen(scr);
-    if (!win) { put("Alice68-Monitor: the window would not open\n"); goto out; }
-    put(MON_VERSION ": window open, priority 21 (Alice68-Monitor DUMP prints it all, also after a reset)\n");
+    if (!win) { put("Alice68 MONITOR: the window would not open\n"); goto out; }
+    put(MON_VERSION ": window open, priority 21 (Alice68 MONITOR DUMP prints it all, also after a reset)\n");
     APTR rp = *(APTR *)(win + 50);
     lh = *(UWORD *)((UBYTE *)rp + 58); base = *(UWORD *)((UBYTE *)rp + 62);
     int cw = *(UWORD *)((UBYTE *)rp + 60);

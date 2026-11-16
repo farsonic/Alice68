@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only
  *
- * Alice68-ShowConfig - what this Amiga is made of, as text in a Shell: all that
+ * Alice68 SHOWCONFIG - what this Amiga is made of, as text in a Shell: all that
  * ShowConfig says (processor, Kickstart, chipset, memory, expansion boards) and
  * more: every board's Zorro type, address, size, serial, flags and driver, names
  * for Emu68's and Alice68's boards, and what is live on Alice68's own cards - the
@@ -8,7 +8,7 @@
  * WiFi, counters, queues), alice68hdf.device's hardfiles and folders - and,
  * on request, the libraries, devices and resources in memory and the kernel log.
  *
- *   Alice68-ShowConfig [SYS] [MEM] [BOARDS] [CARDS] [LIBS] [LOG] [ALL]
+ *   Alice68 SHOWCONFIG [SYS] [MEM] [BOARDS] [CARDS] [LIBS] [LOG] [ALL]
  *
  * No words: SYS MEM BOARDS CARDS. ALL: everything. It only reads: nothing is
  * changed, opened on a card or sent to the kernel.
@@ -20,7 +20,7 @@
 #include "hdf/hdf_dev.h"
 
 #define VERSION_STR "1.0 (07.11.2026)"
-static const char vers[] __attribute__((used)) = "$VER: Alice68-ShowConfig " VERSION_STR;
+static const char vers[] __attribute__((used)) = "Alice68 SHOWCONFIG " VERSION_STR;
 
 void *memcpy(void *d, const void *s, unsigned long n) { UBYTE *a = d; const UBYTE *b = s; while (n--) *a++ = *b++; return d; }
 void *memset(void *d, int c, unsigned long n) { UBYTE *a = d; while (n--) *a++ = (UBYTE)c; return d; }
@@ -293,7 +293,7 @@ static void show_usb(volatile UBYTE *b)
     volatile struct pt_req *rq = (volatile struct pt_req *)(b + PT_OFF_REQS);
     for (ULONG i = 0; i < PT_REQS; i++) if (rq[i].state < 4) st[rq[i].state]++;
     pf("     requests: %u free, %u waiting for the kernel, %u in progress, %u finished\n", st[0], st[1], st[2], st[3]);
-    pf("     logs: kernel %u bytes, driver %u bytes written since power-on (Alice68-USBLog shows them)\n", h->klog_wr, h->alog_wr);
+    pf("     logs: kernel %u bytes, driver %u bytes written since power-on (Alice68 LOG shows them)\n", h->klog_wr, h->alog_wr);
 }
 
 static const char *nstate(ULONG s)
@@ -481,7 +481,7 @@ LONG showconfig_main(const char *args, ULONG arglen)
         else if (word_is(w, n, "LOG")) want |= LOG;
         else if (word_is(w, n, "ALL")) want |= SYS | MEM | BRD | CRD | LIB | LOG;
         else {
-            puts_("Alice68-ShowConfig [SYS] [MEM] [BOARDS] [CARDS] [LIBS] [LOG] [ALL]\n"
+            puts_("Alice68 SHOWCONFIG [SYS] [MEM] [BOARDS] [CARDS] [LIBS] [LOG] [ALL]\n"
                   "  no words: SYS MEM BOARDS CARDS. ALL: everything, with the libraries,\n"
                   "  devices and resources in memory, and the kernel's log.\n");
             flush();
@@ -492,7 +492,7 @@ LONG showconfig_main(const char *args, ULONG arglen)
     }
     if (!want) want = SYS | MEM | BRD | CRD;
     collect_boards();
-    pf("Alice68-ShowConfig %s\n\n", VERSION_STR);
+    pf("Alice68 SHOWCONFIG %s\n\n", VERSION_STR);
     if (want & SYS) show_sys();
     if (want & MEM) show_mem();
     if (want & BRD) show_boards();

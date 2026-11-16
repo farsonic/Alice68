@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Run Alice68-NetCheck on a 68k emulator (machine68k / Musashi) against a fake
+"""Run Alice68 NETCHECK on a 68k emulator (machine68k / Musashi) against a fake
 SANA-II genet.device, in the situations it has to explain, and check its text.
 
-    harness_netcheck.py amiga/out/Alice68-NetCheck
+    harness_netcheck.py amiga/out/Alice68 NETCHECK
 SPDX-License-Identifier: GPL-2.0-only"""
 import struct, sys
 import machine68k as M
@@ -14,7 +14,7 @@ def run(hunk, args, dev):
     """dev: dict(open_by_name, open_by_path, version, revision, irq, hwrx, hwtx, bps, ctrl_c_after)"""
     mach = M.Machine(M.CPUType.M68020, 4096)
     cpu, mem, traps = mach.cpu, mach.mem, mach.traps
-    SYSBASE, DOSBASE, DEVBASE, LOAD, HEAP, ARGS, STACK = 0x8000, 0xA000, 0xC000, 0x20000, 0x100000, 0x3F000, 0x80000
+    SYSBASE, DOSBASE, DEVBASE, LOAD, HEAP, ARGS, STACK = 0x8000, 0xA000, 0xC000, 0x20000, 0x100000, 0x6F000, 0x80000
     st = {'done': False, 'exc': None, 'heap': HEAP, 'out': [], 'rounds': 0, 'opened': None}
     def d(r): return cpu.r_reg(r)
     def setd0(v): cpu.w_reg(R.D0, v & 0xffffffff)
@@ -134,7 +134,7 @@ def run(hunk, args, dev):
         for i in range(w(p + 4)):
             r = w(p + 12 + 4 * i); v = struct.unpack('>I', code[r:r + 4])[0]; code[r:r + 4] = struct.pack('>I', v + LOAD)
     mem.w_block(LOAD, bytes(code))
-    a = ARGS; mem.w_block(a, args.encode() + b'\n\0')
+    args = 'NETCHECK ' + args; a = ARGS; mem.w_block(a, args.encode() + b'\n\0')
     sp = STACK; mem.w32(sp, 0x1000)
     cpu.w_reg(R.A7, sp); cpu.w_reg(R.A0, a); cpu.w_reg(R.D0, len(args) + 1); cpu.w_pc(LOAD); cpu.w_sr(0)
     for _ in range(2000):
@@ -158,10 +158,10 @@ cases = [
     ('loaded by a stack that holds it exclusively: no second copy', '', dict(base, open_by_name=False),
      ['refused a second', 'opened it for itself alone'], ['genet.device']),
     ('not loaded: from DEVS:Networks/, not configured', '', dict(unloaded),
-     ['DEVS:Networks/genet.device unit 0 (not loaded before', 'not configured: no TCP/IP stack', 'Alice68-NetCheck TEST'],
+     ['DEVS:Networks/genet.device unit 0 (not loaded before', 'not configured: no TCP/IP stack', 'Alice68 NETCHECK TEST'],
      ['genet.device', 'DEVS:Networks/genet.device']),
     ('not configured, MAC counted frames, no interrupts: not blamed on Alice68', '', dict(unloaded, open_by_name=True, loaded=True, hwrx=3),
-     ['not configured: no TCP/IP stack', 'not switched its interrupts on', 'Alice68-NetCheck TEST'], None, ['NO interrupt']),
+     ['not configured: no TCP/IP stack', 'not switched its interrupts on', 'Alice68 NETCHECK TEST'], None, ['NO interrupt']),
     ('two copies loaded: warns, refuses TEST', 'TEST', dict(base, configured=False, copies=2),
      ['2 copies of genet.device are loaded', 'TEST is not run', 'may belong to a copy'], None, ['sending 3', 'bringing the interface up']),
     ('missing', '', dict(unloaded, open_by_path=False), ['cannot open it', 'version 3.x'], None),

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Alice68-ShowConfig on a 68k emulator (machine68k), against a fake exec,
+"""Alice68 SHOWCONFIG on a 68k emulator (machine68k), against a fake exec,
 graphics, expansion and dos.library: an AGA machine with chip and fast memory,
 Emu68's ROM board, the Alice68 USB and network cards (filled in as the kernel
 would, at the offsets the C compiler gives for alice68_usbpt.h and alice_net.h)
 and alice68hdf.device with a hardfile and a folder; then a machine without
 any of Alice68's parts.
 
-    harness_showconfig.py Alice68-ShowConfig
+    harness_showconfig.py Alice68 SHOWCONFIG
 SPDX-License-Identifier: GPL-2.0-only"""
 import os, struct, subprocess, sys, tempfile
 import machine68k as M
@@ -95,6 +95,8 @@ def run(args, alice68=True):
     r = alloc(20); mem.w32(r + 10, cstr('FileSystem.resource')); addtail(SYSBASE + 336, r)
     libs = {'graphics.library': GFX, 'expansion.library': EXP, 'dos.library': DOS}
     lvo(SYSBASE, -552, lambda o, p: setd0(libs.get(mem.r_cstr(d(R.A1)), 0)))
+    PROC = 0x1E000; mem.w32(PROC + 172, 0x1E200 >> 2)          # FindTask(0): a Shell process (pr_CLI set): C:Alice68's dispatcher asks
+    lvo(SYSBASE, -294, lambda o, p: setd0(PROC if d(R.A1) == 0 else 0))
     for off in (-414, -132, -138, -210): lvo(SYSBASE, off, lambda o, p: None)
     lvo(SYSBASE, -198, lambda o, p: setd0(alloc(d(R.D0))))
     def availmem(o, p):
@@ -184,6 +186,7 @@ def run(args, alice68=True):
         for i in range(w(p + 4)):
             r_ = w(p + 12 + 4 * i); v = struct.unpack('>I', code[r_:r_ + 4])[0]; code[r_:r_ + 4] = struct.pack('>I', v + LOAD)
     mem.w_block(LOAD, bytes(code))
+    args = 'SHOWCONFIG ' + args                     # C:Alice68's SHOWCONFIG subcommand
     mem.w_block(ARGS, args.encode() + b'\n\0')
     mem.w32(STACK, 0x1000)
     cpu.w_reg(R.A7, STACK); cpu.w_reg(R.A0, ARGS); cpu.w_reg(R.D0, len(args) + 1); cpu.w_pc(LOAD); cpu.w_sr(0)
@@ -231,7 +234,7 @@ want('ALL', a, ['LIBRARIES (5)', 'graphics.library', ' 40.42', 'icon.library', '
 m = run('boards')
 want('BOARDS only', m, ['EXPANSION BOARDS (5)'], ['SYSTEM', 'MEMORY', 'ALICE68\n'])
 u = run('?')
-want('?', u, ['Alice68-ShowConfig [SYS] [MEM] [BOARDS] [CARDS] [LIBS] [LOG] [ALL]'], ['SYSTEM'])
+want('?', u, ['Alice68 SHOWCONFIG [SYS] [MEM] [BOARDS] [CARDS] [LIBS] [LOG] [ALL]'], ['SYSTEM'])
 x = run('', alice68=False)
 want('not Alice68', x, ['EXPANSION BOARDS (1)', 'no Alice68 cards: not an Alice68 kernel', 'alice68hdf.device: not running'], ['Emu68:'])
 xl = run('LOG', alice68=False)
