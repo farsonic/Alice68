@@ -552,28 +552,37 @@ new address.)
    | Compute Module 4 | `brcmfmac43456-sdio.bin`, `brcmfmac43456-sdio.clm_blob`, `brcmfmac43456-sdio.txt` |
 
    They are in Raspberry Pi's
-   [firmware-nonfree](https://github.com/RPi-Distro/firmware-nonfree/tree/bookworm/debian/config/brcm80211)
-   repository, branch `bookworm`, under `debian/config/brcm80211/` (`cypress/` and
-   `brcm/`), or in `/lib/firmware/cypress/` and `/lib/firmware/brcm/` on a Raspberry Pi
-   OS card (copy what links point to, under these names).
+   [firmware-nonfree](https://github.com/RPi-Distro/firmware-nonfree/tree/bullseye/debian/config/brcm80211)
+   repository, branch `bullseye` (see below why not `bookworm`), under
+   `debian/config/brcm80211/` (`cypress/` and `brcm/`). A current Raspberry Pi OS card has
+   the newer firmware that does not work with Alice68's WPA; a Raspberry Pi OS "bullseye"
+   card has the right one in `/lib/firmware/cypress/`.
 
    **All of it in one go**, straight onto the card from a Mac or Linux (WiFi and the
    Bluetooth firmware; change `/Volumes/EMU68` to where your card's FAT partition is):
    ```bash
    mkdir -p /Volumes/EMU68/WIFI && cd /Volumes/EMU68/WIFI && \
    curl -fL --remote-name-all \
-     https://raw.githubusercontent.com/RPi-Distro/firmware-nonfree/bookworm/debian/config/brcm80211/cypress/cyfmac43455-sdio-standard.bin \
-     https://raw.githubusercontent.com/RPi-Distro/firmware-nonfree/bookworm/debian/config/brcm80211/cypress/cyfmac43455-sdio.clm_blob \
-     https://raw.githubusercontent.com/RPi-Distro/firmware-nonfree/bookworm/debian/config/brcm80211/brcm/brcmfmac43455-sdio.txt \
+     https://raw.githubusercontent.com/RPi-Distro/firmware-nonfree/bullseye/debian/config/brcm80211/cypress/cyfmac43455-sdio-standard.bin \
+     https://raw.githubusercontent.com/RPi-Distro/firmware-nonfree/bullseye/debian/config/brcm80211/cypress/cyfmac43455-sdio.clm_blob \
+     https://raw.githubusercontent.com/RPi-Distro/firmware-nonfree/bullseye/debian/config/brcm80211/brcm/brcmfmac43455-sdio.txt \
      https://raw.githubusercontent.com/RPi-Distro/bluez-firmware/master/broadcom/BCM4345C0.hcd && \
    ls -l
    ```
-   That is for a Pi 4 Model B. You should see four files: 609,309, 2,676, 2,074 and 63,806
+   That is for a Pi 4 Model B. You should see four files: 637,406, 2,676, 2,074 and 63,806
    bytes. On Windows, make the `WIFI` folder on the card, open PowerShell in it and run the
    `curl` part as one line, with `curl.exe` for `curl` and without the `\` line ends.
 
+   **The firmware must be version 7.45.241 (from Raspberry Pi's `bullseye` branch, as above),
+   not the newer 7.45.265 on `bookworm`** (609,309 bytes). Raspberry Pi built 7.45.265 without
+   the chip's own WPA handshake (Raspberry Pi OS does it in Linux), and Alice68 relies on the
+   chip's: with it, WiFi stops at "this firmware has no WPA supplicant". Open networks work
+   with either.
+
    For a Compute Module 4, take the 43456 files instead of the first three (the same
-   repository, all under `brcm/`):
+   repository, all under `brcm/`). **Its firmware (7.84.17.1, on every branch) has no WPA
+   handshake of its own either, so a CM4 joins only open networks until Alice68 does the
+   handshake itself:**
    ```bash
    curl -fL --remote-name-all \
      https://raw.githubusercontent.com/RPi-Distro/firmware-nonfree/bookworm/debian/config/brcm80211/brcm/brcmfmac43456-sdio.bin \

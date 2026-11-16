@@ -1062,7 +1062,7 @@ static void join(const struct fm_bss *b)
         iov_set("wpaie", ie, n);
         int32_t se = iov_int("sup_wpa", 1);
         if (se <= -100) { retry("the WiFi chip is not answering"); return; }
-        if (se) { retry("this firmware has no WPA supplicant"); return; }
+        if (se) { retry("this firmware has no WPA supplicant: use 7.45.241 (README, WiFi)"); return; }
         uint8_t k[140];
         unsigned pl = strlen(W.pass);
         if (sae) {

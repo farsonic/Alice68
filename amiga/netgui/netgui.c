@@ -589,7 +589,8 @@ static Object *wifi_page(void)
 {
 	Object *g = vgroup(8);
 
-	nets_table = mui_newc(table_mcc, MUIA_Table_Header, (ULONG)"Network\tSignal\tChannel\tSecurity", TAGEND);
+	nets_table = mui_newc(table_mcc, MUIA_Table_Header, (ULONG)"Network\tSignal\tChannel\tSecurity", MUIA_Table_OneLine, 1,
+	                      MUIA_Table_Empty, (ULONG)"No networks yet: press Scan.", TAGEND);
 	if (!nets_table)
 		return NULL;
 	mui_do(nets_table, MUIM_Notify, MUIA_Table_Active, MUIV_EveryTime, (ULONG)app, 2, MUIM_Application_ReturnID, ID_PICK);
@@ -688,7 +689,7 @@ static void nets_show(int n)
 		}
 	for (i = 0; i < n; i++) {
 		const struct WifiScanEntry *e = &scanbuf[i];
-		rt_snprintf(nets_row[i], sizeof(nets_row[i]), "%s\n%ld dBm\t%u\t%s", e->we_Ssid[0] ? e->we_Ssid : "(hidden)",
+		rt_snprintf(nets_row[i], sizeof(nets_row[i]), "%s\t%ld dBm\t%u\t%s", e->we_Ssid[0] ? e->we_Ssid : "(hidden)",
 		            (long)e->we_Rssi, (unsigned)e->we_Channel, secname(e->we_Security));
 		nets_rows[i] = nets_row[i];
 	}

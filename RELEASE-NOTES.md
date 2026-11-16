@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **WiFi firmware: 7.45.241, not 7.45.265.** The firmware Raspberry Pi ships now (7.45.265,
+  their `bookworm` files) has no WPA handshake of its own, which Alice68 needs: WiFi stopped at
+  "this firmware has no WPA supplicant". The README's download takes 7.45.241 (their
+  `bullseye` files), which has it; the message now points there. A CM4's firmware has none
+  on any branch: open networks only, until Alice68 does the handshake itself.
+- **Alice68-Network:** the WiFi symbol is drawn as arcs (it was three bent lines); the list of
+  networks in range lines its columns up (each row was a name line plus cells shifted one
+  column), shows every network (it scrolls: the wheel, or click "N more" / "N above"; it
+  stopped at what fitted), and says "No networks yet" instead of Riptide's "No TCP
+  connections".
 - **A status page for monitors, and `Alice68-Status`.** The kernel keeps a read-only page
   any 68k program can read (found in `devicetree.resource` as `/alice68` `status`): the
   kernel's build, uptime, each ARM core's job and, for CPU1, how busy it is; the SoC's

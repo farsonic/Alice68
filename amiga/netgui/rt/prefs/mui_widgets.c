@@ -569,6 +569,10 @@ struct table_data {
 	const char *header;
 	const char *const *rows;
 	int n, active, hot, shown;
+	int one;                            /* MUIA_Table_OneLine */
+	int top;                            /* the first row shown (scrolled with the wheel or the "more" lines) */
+	int fit;                            /* rows that fit, as last drawn */
+	const char *empty;                  /* MUIA_Table_Empty */
 	/* what is on screen, for updates */
 	int valid, drawn_n, drawn_active, drawn_hot, drawn_fit;
 	LONG drawn_x[TB_COLS + 1], drawn_w;
@@ -581,8 +585,10 @@ static LONG tb_headh(void)
 	return theme_fh() + (theme_compact() ? 1 : 3);
 }
 
-static LONG tb_rowh(void)
+static LONG tb_rowh(const struct table_data *d)
 {
+	if (d && d->one)
+		return theme_fh() + (theme_compact() ? 2 : 4);
 	return 2 * theme_fh() + (theme_compact() ? 2 : 5);
 }
 
@@ -649,7 +655,7 @@ static void tb_layout(struct table_data *d, struct RastPort *rp, LONG w, LONG *x
  * first line across the width and the cells below it */
 static void tb_row(struct table_data *d, Object *obj, struct RastPort *rp, const LONG *x, int nc, int r, LONG ry)
 {
-	LONG l = _mleft(obj) + 2, rh = tb_rowh(), fh = theme_fh(), y1 = ry + (theme_compact() ? 1 : 2);
+	LONG l = _mleft(obj) + 2, rh = tb_rowh(d), fh = theme_fh(), y1 = ry + (theme_compact() ? 1 : 2);
 	char t[120];
 	const char *nl = strchr(d->rows[r], '\n');
 	int c, k;
@@ -660,15 +666,17 @@ static void tb_row(struct table_data *d, Object *obj, struct RastPort *rp, const
 	} else {
 		theme_fill(rp, _mleft(obj) + 1, ry, _mright(obj) - 1, ry + rh - 1, tpen(r == d->hot ? T_HOVER : T_HEAD));
 	}
-	k = nl ? (int)(nl - d->rows[r]) : 0;
-	if (k > (int)sizeof(t) - 1)
-		k = (int)sizeof(t) - 1;
-	memcpy(t, d->rows[r], (size_t)k);
-	t[k] = 0;
-	text_fit(rp, l + 2, y1, _mwidth(obj) - 10, t, tpen(T_TEXT), 0);
+	if (!d->one) {
+		k = nl ? (int)(nl - d->rows[r]) : 0;
+		if (k > (int)sizeof(t) - 1)
+			k = (int)sizeof(t) - 1;
+		memcpy(t, d->rows[r], (size_t)k);
+		t[k] = 0;
+		text_fit(rp, l + 2, y1, _mwidth(obj) - 10, t, tpen(T_TEXT), 0);
+	}
 	for (c = 0; c < nc; c++) {
 		cell(d->rows[r], c, t, sizeof(t));
-		text_fit(rp, l + x[c], y1 + fh + 1, x[c + 1] - x[c] - 6, t, tpen(c == 0 ? T_TEXT : T_DIM), 0);
+		text_fit(rp, l + x[c], d->one ? y1 : y1 + fh + 1, x[c + 1] - x[c] - 6, t, tpen(c == 0 ? T_TEXT : T_DIM), 0);
 	}
 	rt_strlcpy(d->cache[r], d->rows[r], sizeof(d->cache[r]));
 }
@@ -676,15 +684,20 @@ static void tb_row(struct table_data *d, Object *obj, struct RastPort *rp, const
 static void tb_draw(struct table_data *d, Object *obj, int update)
 {
 	struct RastPort *rp = _rp(obj);
-	LONG x[TB_COLS + 1], l = _mleft(obj) + 2, rh = tb_rowh(), hh = tb_headh(), y = _mtop(obj), fh = theme_fh();
+	LONG x[TB_COLS + 1], l = _mleft(obj) + 2, rh = tb_rowh(d), hh = tb_headh(), y = _mtop(obj), fh = theme_fh();
 	LONG w = _mwidth(obj) - 4;
 	char t[64];
 	int nc, c, r, fit;
 
 	tb_layout(d, rp, w, x, &nc);
 	fit = (int)((_mbottom(obj) - y - hh) / rh);
+	d->fit = fit;
+	if (d->n <= fit || fit < 3)
+		d->top = 0;
+	else if (d->top > d->n - (fit - 1))
+		d->top = d->n - (fit - 1);
 	/* only the rows that changed, when the columns and rows stayed */
-	if (update && d->valid && d->drawn_n == d->n && d->drawn_fit == fit && d->drawn_w == w &&
+	if (update && d->valid && d->top == 0 && d->drawn_n == d->n && d->drawn_fit == fit && d->drawn_w == w &&
 	    d->drawn_active == d->active && d->drawn_hot == d->hot && d->n <= fit && d->n > 0 &&
 	    !memcmp(d->drawn_x, x, sizeof(LONG) * (size_t)(nc + 1))) {
 		for (r = 0; r < d->n; r++)
@@ -708,29 +721,65 @@ static void tb_draw(struct table_data *d, Object *obj, int update)
 	d->drawn_hot = d->hot;
 	memcpy(d->drawn_x, x, sizeof(d->drawn_x));
 	if (d->n == 0) {
-		theme_text(rp, l, y + 2, "No TCP connections.", tpen(T_DIM), 0);
+		theme_text(rp, l, y + 2, d->empty ? d->empty : "No TCP connections.", tpen(T_DIM), 0);
 		return;
 	}
-	for (r = 0; r < d->n && r < fit; r++) {
-		LONG ry = y + (LONG)r * rh;
-		if (r == fit - 1 && d->n > fit) {
-			rt_snprintf(t, sizeof(t), "%d more ...", d->n - r);
+	/* slots: "N above" first when scrolled down, "N more" last when rows follow (click, or the wheel) */
+	for (int s = 0; s < fit; s++) {
+		LONG ry = y + (LONG)s * rh;
+		int row = d->top + s - (d->top > 0);
+		if (s == 0 && d->top > 0) {
+			rt_snprintf(t, sizeof(t), "%d above ...", d->top);
+			theme_text(rp, l, ry + (rh - fh) / 2, t, tpen(T_DIM), 0);
+			continue;
+		}
+		if (row >= d->n)
+			break;
+		if (s == fit - 1 && row < d->n - 1) {
+			rt_snprintf(t, sizeof(t), "%d more ...", d->n - row);
 			theme_text(rp, l, ry + (rh - fh) / 2, t, tpen(T_DIM), 0);
 			break;
 		}
-		tb_row(d, obj, rp, x, nc, r, ry);
+		tb_row(d, obj, rp, x, nc, row, ry);
 	}
+	(void)r;
 }
 
+/* the row under y; -2: the "above" line, -3: the "more" line, -1: none */
 static int tb_hit(struct table_data *d, Object *obj, LONG y)
 {
 	LONG top = _mtop(obj) + tb_headh();
-	int r;
+	int s, row;
 
 	if (y < top)
 		return -1;
-	r = (int)((y - top) / tb_rowh());
-	return r < d->n ? r : -1;
+	s = (int)((y - top) / tb_rowh(d));
+	if (d->fit >= 3 && d->n > d->fit) {
+		if (s == 0 && d->top > 0)
+			return -2;
+		row = d->top + s - (d->top > 0);
+		if (s == d->fit - 1 && row < d->n - 1)
+			return -3;
+		return row < d->n ? row : -1;
+	}
+	return s < d->n ? s : -1;
+}
+
+static void tb_scroll(struct table_data *d, Object *obj, int by)
+{
+	int max = d->n - (d->fit - 1), t = d->top + by;
+
+	if (d->fit < 3 || d->n <= d->fit)
+		return;
+	if (t > max)
+		t = max;
+	if (t < 0)
+		t = 0;
+	if (t != d->top) {
+		d->top = t;
+		d->valid = 0;
+		MUI_Redraw(obj, MADF_DRAWOBJECT);
+	}
 }
 
 DISPATCHER(table_dispatch)
@@ -744,6 +793,8 @@ DISPATCHER(table_dispatch)
 		d = INST_DATA(cl, obj);
 		memset(d, 0, sizeof(*d));
 		d->header = (const char *)mc_tagval(msg, MUIA_Table_Header, (ULONG)"");
+		d->one = (int)mc_tagval(msg, MUIA_Table_OneLine, 0);
+		d->empty = (const char *)mc_tagval(msg, MUIA_Table_Empty, 0);
 		d->active = -1;
 		d->hot = -1;
 		return (ULONG)obj;
@@ -778,9 +829,11 @@ DISPATCHER(table_dispatch)
 		}
 		break;
 	case MUIM_AskMinMax: {
-		LONG h = tb_headh() + tb_rowh() * 2 + 4;
+		LONG h;
+		d = INST_DATA(cl, obj);
+		h = tb_headh() + tb_rowh(d) * (d->one ? 3 : 2) + 4;
 		DoSuperMethodA(cl, obj, msg);
-		mc_minmax(msg, 160, 400, MUI_MAXMAX, h, tb_headh() + tb_rowh() * 4, MUI_MAXMAX);
+		mc_minmax(msg, 160, 400, MUI_MAXMAX, h, tb_headh() + tb_rowh(d) * (d->one ? 6 : 4), MUI_MAXMAX);
 		return 0;
 	}
 	case MUIM_Setup:
@@ -788,7 +841,7 @@ DISPATCHER(table_dispatch)
 			return FALSE;
 		theme_setup(obj);
 		d = INST_DATA(cl, obj);
-		mc_handler(obj, cl, &d->ehn, IDCMP_MOUSEBUTTONS | IDCMP_MOUSEMOVE, 1);
+		mc_handler(obj, cl, &d->ehn, IDCMP_MOUSEBUTTONS | IDCMP_MOUSEMOVE | IDCMP_RAWKEY, 1);
 		return TRUE;
 	case MUIM_Cleanup:
 		d = INST_DATA(cl, obj);
@@ -819,8 +872,17 @@ DISPATCHER(table_dispatch)
 		d = INST_DATA(cl, obj);
 		if (!im || !d->shown)
 			return 0;
+		if (im->Class == IDCMP_RAWKEY) {                /* the wheel over the table scrolls it */
+			if ((im->Code == 0x7A || im->Code == 0x7B) && mc_inside(obj, im)) {
+				tb_scroll(d, obj, im->Code == 0x7A ? -2 : 2);
+				return MUI_EventHandlerRC_Eat;
+			}
+			return 0;
+		}
 		i = mc_inside(obj, im) ? tb_hit(d, obj, im->MouseY) : -1;
 		if (im->Class == IDCMP_MOUSEMOVE) {
+			if (i < 0)
+				i = -1;
 			if (i != d->hot) {
 				d->hot = i;
 				MUI_Redraw(obj, MADF_DRAWUPDATE);
@@ -828,6 +890,10 @@ DISPATCHER(table_dispatch)
 			return 0;
 		}
 		if (im->Class == IDCMP_MOUSEBUTTONS && im->Code == SELECTDOWN && mc_inside(obj, im)) {
+			if (i == -2 || i == -3) {                   /* a page up or down */
+				tb_scroll(d, obj, (i == -2 ? -1 : 1) * (d->fit > 3 ? d->fit - 2 : 1));
+				return MUI_EventHandlerRC_Eat;
+			}
 			if (i >= 0) {
 				struct TagItem t[2];
 				t[0].ti_Tag = MUIA_Table_Active;

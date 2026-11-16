@@ -299,6 +299,8 @@ void theme_line(struct RastPort *rp, LONG x0, LONG y0, LONG x1, LONG y1, LONG pe
  *   L x0 y0 x1 y1   line             R x0 y0 x1 y1   rectangle outline
  *   F x0 y0 x1 y1   filled box       O cx cy r       circle outline
  *   E cx cy r       filled circle    P n x0 y0 ...   polyline through n points
+ *   A cx cy r       the top of a ring (about 50 degrees each side of straight up), thicker
+ *                   than a line: radio waves
  * Same order as the IC_* enum (one per page); drawn for Riptide, rearranged for Alice68-Network. */
 static const char *const icons[IC_NICONS] = {
 	/* ABOUT: an "i" in a ring */
@@ -308,8 +310,8 @@ static const char *const icons[IC_NICONS] = {
 	/* ETH: a network card: the board, a chip, the socket, the contacts (Riptide's IFACE) */
 	"cl F 1 3 14 11 ci R 1 3 14 11 F 3 5 6 8 ca R 9 5 13 9 F 10 6 12 8 ci L 3 12 3 13 L 5 12 5 13 L 7 12 7 13 "
 	"L 9 12 9 13 L 11 12 11 13",
-	/* WIFI: a radio's waves above a dot */
-	"ca E 8 12 1 ci P 3 5 10 8 8 11 10 P 3 3 7 8 4 13 7 P 3 1 4 8 1 14 4",
+	/* WIFI: a radio's waves above a dot: three arcs round it */
+	"ca E 8 13 2 ci A 8 13 5 A 8 13 8 A 8 13 11",
 	/* ETHSET: three sliders */
 	"ci L 3 2 3 14 L 8 2 8 14 L 13 2 13 14 ca F 2 9 4 11 F 7 4 9 6 F 12 10 14 12",
 	/* WIFISET: as ETHSET */
@@ -403,6 +405,22 @@ static void circle(struct RastPort *rp, LONG cx, LONG cy, LONG r, int fill, int 
 	}
 }
 
+/* the top of a ring: rows above the centre, within about 50 degrees of straight up, t pixels thick */
+static void arc(struct RastPort *rp, LONG cx, LONG cy, LONG r, int t)
+{
+	LONG d, ri = r - t;
+
+	for (d = -r; d < 0; d++) {
+		LONG xe = half_width(r, d), xi = ri > 0 && -d <= ri ? half_width(ri, d) + 1 : 0, lim = -d * 4 / 3;
+		if (xe > lim)
+			xe = lim;
+		if (xi > xe)
+			continue;
+		RectFill(rp, cx - xe, cy + d, cx - xi, cy + d);
+		RectFill(rp, cx + xi, cy + d, cx + xe, cy + d);
+	}
+}
+
 void theme_icon(struct RastPort *rp, int icon, LONG x, LONG y, LONG size, int dim)
 {
 	const char *p;
@@ -437,6 +455,10 @@ void theme_icon(struct RastPort *rp, int icon, LONG x, LONG y, LONG size, int di
 			a = inum(&p), b = inum(&p), cc = inum(&p), d = inum(&p);
 			RectFill(rp, x + a * size / 16, y + b * size / 16, x + (cc + 1) * size / 16 - 1,
 			         y + (d + 1) * size / 16 - 1);
+			break;
+		case 'A':
+			a = inum(&p), b = inum(&p), cc = inum(&p);
+			arc(rp, GX(a), GY(b), cc * size / 16, size >= 22 ? (int)(size * 3 / 32) : size >= 16 ? 2 : 1);
 			break;
 		case 'O':
 		case 'E':
