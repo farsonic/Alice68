@@ -2,8 +2,10 @@
 
 ## Unreleased
 
-- **`Alice68-JoyTest`:** the two joystick ports as games read them (JOYxDAT, CIA-A, POTGOR),
-  live in a Shell: directions, fire, fire 2 and fire 3, a line per change; `ONCE` for just now.
+- **`Alice68-JoyTest`:** the joystick port as games read it (JOY1DAT, CIA-A, POTGOR), live in
+  a Shell: directions, fire, fire 2 and fire 3, a line per change; `ONCE` for just now,
+  `MOUSEPORT` for the mouse port as well (only then: a moving mouse there reads as random
+  directions and flooded the Shell in its first version).
   For trying a Bluetooth or USB pad without a game. Tested on the 68k emulator
   (`amiga/test/harness_joytest.py`).
 - **Bluetooth: a device asking for an L2CAP mode other than basic** (enhanced retransmission:

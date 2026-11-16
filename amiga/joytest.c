@@ -5,15 +5,17 @@
  * buttons from POTGOR. The same registers games read, so a Bluetooth or USB pad that moves
  * here moves in games too.
  *
- *   Alice68-JoyTest         a line each time something changes, until Ctrl-C
- *   Alice68-JoyTest ONCE    the ports as they are now
+ *   Alice68-JoyTest            the joystick port: a line each time it changes, until Ctrl-C
+ *   Alice68-JoyTest MOUSEPORT  the mouse port too, read as a joystick (a second pad there);
+ *                              a mouse moving there looks like random directions
+ *   Alice68-JoyTest ONCE       as they are now
  *
  * The joystick port's pins 5 and 9 (POTGO's RX/RY bits) are taken from potgo.resource and
  * made inputs while it runs; the mouse port's are left to the system (its right button).
  */
 #include "amiga.h"
 
-#define VERSION_STR "1.0 (16.11.2026)"
+#define VERSION_STR "1.1 (16.11.2026)"
 static const char vers[] __attribute__((used)) = "$VER: Alice68-JoyTest " VERSION_STR;
 
 void *memcpy(void *d, const void *s, unsigned long n) { UBYTE *a = d; const UBYTE *b = s; while (n--) *a++ = *b++; return d; }
@@ -70,7 +72,7 @@ LONG joytest_main(const char *args, ULONG arglen)
     dos = OpenLibrary("dos.library", 36);
     if (!dos) return 20;
     out = Output(dos);
-    int once = word(args, arglen, "once");
+    int once = word(args, arglen, "once"), both = word(args, arglen, "mouseport");
     ULONG got = 0;
     pot = OpenResource("potgo.resource");
     if (pot) {
@@ -78,18 +80,20 @@ LONG joytest_main(const char *args, ULONG arglen)
         if (got) WritePotgo(0x0000, got);             /* inputs: a pad's buttons pull them low */
     }
     if (got != 0xF000) puts_("(the joystick port's pins 5 and 9 are in use by another program: FIRE2/FIRE3 may not show)\n");
-    if (!once) puts_("Move the stick and press the buttons; Ctrl-C to stop.\n");
+    if (!once) puts_(both ? "Both ports (a mouse moving in the mouse port shows as directions); Ctrl-C to stop.\n" : "The joystick port: move the stick and press the buttons; Ctrl-C to stop.\n");
     ULONG last = 0xffffffffu;
     for (;;) {
         UWORD j1 = *JOY1DAT, j0 = *JOY0DAT, pg = *POTGOR;
         UBYTE pra = *CIAAPRA;
         ULONG p2 = port_state(j1, !(pra & 0x80), !(pg & 0x4000), !(pg & 0x1000));
         ULONG p1 = port_state(j0, !(pra & 0x40), !(pg & 0x0400), 0);
-        ULONG now = p2 | p1 << 8;
+        ULONG now = p2 | (both ? p1 << 8 : 0);        /* the mouse's counters only when asked: they move with it */
         if (now != last || once) {
             show_port("Joystick port: ", p2, 1);
-            show_port("  Mouse port: ", p1, 0);
-            puts_(" (JOY1DAT $"); hex4(j1); puts_(" JOY0DAT $"); hex4(j0); puts_(")\n");
+            if (both) show_port("  Mouse port: ", p1, 0);
+            puts_(" (JOY1DAT $"); hex4(j1);
+            if (both) { puts_(" JOY0DAT $"); hex4(j0); }
+            puts_(")\n");
             last = now;
         }
         if (once) break;

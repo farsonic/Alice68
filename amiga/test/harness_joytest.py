@@ -68,11 +68,12 @@ def run(args, states, brk_after=None):
     return ''.join(st['out']), st
 
 def ports(line):
+    if 'Mouse port:' not in line: return line.split('Joystick port:')[1].split('(')[0].split(), None
     a, b = line.split('Mouse port:')
     return a.split('Joystick port:')[1].split(), b.split('(')[0].split()
 
 # ONCE: up+left, fire (CIA-A bit 7 low), fire 2 (POTGOR bit 14 low), fire 3 (bit 12 low); the mouse port: right, its fire
-text, st = run('ONCE', [dict(j1=joy(up=1, left=1), pra=0x3C, pg=0xFF00 & ~0x4000 & ~0x1000, j0=joy(right=1))])
+text, st = run('ONCE MOUSEPORT', [dict(j1=joy(up=1, left=1), pra=0x3C, pg=0xFF00 & ~0x4000 & ~0x1000, j0=joy(right=1))])
 lines = [l for l in text.splitlines() if 'Joystick port:' in l]
 if len(lines) != 1: fails.append('ONCE: %d lines' % len(lines))
 else:
@@ -89,6 +90,10 @@ for name, kw in (('UP', dict(up=1)), ('DOWN', dict(down=1)), ('LEFT', dict(left=
 text, st = run('ONCE', [dict(j1=joy(down=1, right=1))])
 j, m = ports([l for l in text.splitlines() if 'Joystick port:' in l][0])
 if [x for x in j if x != '-'] != ['DOWN', 'RIGHT']: fails.append('down+right: %r' % j)
+# without MOUSEPORT a mouse moving in the mouse port prints nothing
+text, st = run('', [dict(), dict(j0=0x0102), dict(j0=0x0305), dict(j0=0x0708), dict()], brk_after=4)
+lines = [l for l in text.splitlines() if 'Joystick port:' in l]
+if len(lines) != 1 or 'Mouse port' in text: fails.append('a moving mouse: %d lines %r' % (len(lines), lines))
 # the loop: a line per change only, Ctrl-C ends it
 seq = [dict(), dict(), dict(j1=joy(up=1)), dict(j1=joy(up=1)), dict(j1=joy(up=1), pra=0x7C), dict(), dict(), dict()]
 text, st = run('', seq, brk_after=7)
@@ -97,5 +102,5 @@ if len(lines) != 4 or '*** Break' not in text: fails.append('loop: %d lines, bre
 if ('free', 0xF000) not in st['pot']: fails.append('loop: POTGO bits not given back')
 if fails:
     print('\n'.join('FAIL: ' + f for f in fails)); sys.exit(1)
-print('directions, fire, fire 2 and 3 as games read them; both ports; a line per change; Ctrl-C; POTGO bits taken and given back')
+print('directions, fire, fire 2 and 3 as games read them; the mouse port only with MOUSEPORT (a moving mouse prints nothing); a line per change; Ctrl-C; POTGO bits taken and given back')
 print('ALL OK')
