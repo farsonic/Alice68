@@ -925,8 +925,11 @@ Object *net_page(int p)
 
 void net_start(void)
 {
+	step("network: looking for the board");
 	find_board();
+	step("network: reading the prefs");
 	prefs_load();
+	step("network: opening alice68net.device");
 	dev_open();
 }
 

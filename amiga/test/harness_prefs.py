@@ -3,6 +3,7 @@
 does not open. From the Shell it must say that it needs MUI 3.8 and point to the Alice68
 command; from Workbench the same in a requester, and reply to Workbench's message. A wrong
 argument line is reported by PrintFault. Every library it opened must be closed again.
+Started with a 4 KB stack, it runs on a 64 KB one of its own (StackSwap) and frees it.
 (The pages' logic is tested through the Shell command: harness_cardcmd.py, harness_status.py,
 harness_usblog.py, harness_joytest.py, harness_monitor.py, harness_wifitool.py.)
 
@@ -79,6 +80,23 @@ def run(cli, args='\n', rdargs_ok=True):
     def reply(o, p): st['replied'] = d(R.A1)
     lvo(SYS, -378, reply)
     for off in (-132, -138): lvo(SYS, off, lambda o, p: None)
+    mem.w32(PROC + 58, STACK - 0x1000); mem.w32(PROC + 62, STACK + 4)    # tc_SPLower/Upper: a Shell's 4 KB
+    BIG = 0x100000
+    def allocmem(o, p):
+        if st.get('mem'): fails.append('AllocMem asked twice'); setd0(0); return
+        st['mem'] = (BIG, d(R.D0)); setd0(BIG)
+    lvo(SYS, -198, allocmem)
+    def freemem(o, p): st['freedmem'] = (d(R.A1), d(R.D0))
+    lvo(SYS, -210, freemem)
+    def stackswap(o, p):
+        # exec: the return address moves from the old stack to the new one, the old sp is kept in stk_Pointer
+        ss, sp = d(R.A0), cpu.r_reg(R.A7); ret = mem.r32(sp); new = mem.r32(ss + 8)
+        lo, hi = mem.r32(ss), mem.r32(ss + 4)
+        mem.w32(ss, mem.r32(PROC + 58)); mem.w32(ss + 4, mem.r32(PROC + 62)); mem.w32(ss + 8, sp + 4)
+        mem.w32(PROC + 58, lo); mem.w32(PROC + 62, hi)
+        mem.w32(new - 4, ret); cpu.w_reg(R.A7, new - 4)
+        st.setdefault('swaps', []).append((lo, hi, new))
+    lvo(SYS, -732, stackswap)
     mem.w32(WBMSG + 28, 0)                       # sm_NumArgs 0: no icon to read
     lvo(DOS, -798, lambda o, p: setd0(0x1D000 if rdargs_ok else 0))
     lvo(DOS, -858, lambda o, p: st.__setitem__('freed', d(R.D1)))
@@ -103,6 +121,10 @@ def run(cli, args='\n', rdargs_ok=True):
     if st['exc']: fails.append('CPU exception %d at $%x' % st['exc'])
     if not st['done']: fails.append('did not return')
     if st['opened']: fails.append('libraries left open: %s' % [hex(x) for x in st['opened']])
+    sw = st.get('swaps', [])
+    if st.get('mem', (0, 0))[1] < 65536 or len(sw) != 2 or not (BIG < sw[0][0] < sw[0][1] == sw[0][2] == BIG + st['mem'][1]) \
+       or sw[1][:2] != (STACK - 0x1000, STACK + 4) or not STACK - 0x1000 < sw[1][2] < STACK or st.get('freedmem') != st.get('mem') or cpu.r_reg(R.A7) != STACK + 4:
+        fails.append('own stack: alloc %r, swaps %r, freed %r, sp %x' % (st.get('mem'), sw, st.get('freedmem'), cpu.r_reg(R.A7)))
     return st
 
 st = run(True)

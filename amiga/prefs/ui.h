@@ -69,6 +69,7 @@ void rows_end(struct rows *r);                  /* to the table */
 
 /* the status line, and questions */
 void say(const char *s);
+void step(const char *what);      /* DEBUG: a line in the Shell (prefs.c) */
 void sayf(const char *fmt, ...);
 int  ask(const char *text, const char *buttons);   /* MUI_Request: 1 the first button ... 0 the last */
 

@@ -142,6 +142,7 @@ python3 amiga/test/harness_monitor.py amiga/out/Alice68     # MONITOR DUMP again
 python3 amiga/test/harness_showconfig.py amiga/out/Alice68  # SHOWCONFIG: boards, memory and Alice68's cards, faked
 python3 amiga/test/harness_wheel.py amiga/out/Alice68       # WHEEL against a fake card and input.device
 python3 amiga/test/harness_prefs.py amiga/out/Alice68Prefs  # Alice68Prefs without MUI: told, requester, libraries closed
+bash amiga/test/fakecard/build.sh       # a fake card service (DEVS:alice68hdf.device on FAKECARD:) for Alice68Prefs in FS-UAE with real MUI
 python3 amiga/test/harness_alice68net.py amiga/out/alice68net.device # opens of units the kernel does not serve, and close
 tools/splash-preview/build.sh > out.ppm  # the splash, drawn by the kernel's own code (W H setup-storage: the setup screen)
 ```

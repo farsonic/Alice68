@@ -361,6 +361,22 @@ static int page_arg(const char *s)
 }
 
 static char a_pub[64], a_page[32], a_theme[8];
+static int a_debug;
+
+/* DEBUG: each step of the start written to the Shell, to see where it stops */
+void step(const char *what)
+{
+	char b[96];
+	struct Task *t;
+	int n;
+
+	if (!a_debug)
+		return;
+	t = FindTask(NULL);
+	n = rt_snprintf(b, sizeof(b), "Alice68Prefs: %s (stack %ld free)\n", what,
+	                (long)((UBYTE *)&t - (UBYTE *)t->tc_SPLower));
+	Write(Output(), b, n);
+}
 
 static void wb_tooltypes(struct WBStartup *wb)
 {
@@ -390,11 +406,11 @@ static void wb_tooltypes(struct WBStartup *wb)
 	IconBase = NULL;
 }
 
-/* PUBSCREEN/K,PAGE/K,THEME/K: 0, or -1 when the line is wrong */
+/* PUBSCREEN/K,PAGE/K,THEME/K,DEBUG/S: 0, or -1 when the line is wrong */
 static int cli_args(void)
 {
-	LONG a[3] = { 0, 0, 0 };
-	APTR rda = ReadArgs((CONST_STRPTR)"PUBSCREEN/K,PAGE/K,THEME/K", a, NULL);
+	LONG a[4] = { 0, 0, 0, 0 };
+	APTR rda = ReadArgs((CONST_STRPTR)"PUBSCREEN/K,PAGE/K,THEME/K,DEBUG/S", a, NULL);
 
 	if (!rda) {
 		PrintFault(IoErr(), (CONST_STRPTR)"Alice68Prefs");
@@ -406,11 +422,13 @@ static int cli_args(void)
 		rt_strlcpy(a_page, (const char *)a[1], sizeof(a_page));
 	if (a[2])
 		rt_strlcpy(a_theme, (const char *)a[2], sizeof(a_theme));
+	a_debug = a[3] != 0;
 	FreeArgs(rda);
 	return 0;
 }
 
-long amiga_main(char *args, long len)
+long prefs_main(char *args, long len);
+long prefs_main(char *args, long len)   /* from amiga_main (bigstack.S), on a 64 KB stack */
 {
 	struct Process *me = (struct Process *)FindTask(NULL);
 	struct WBStartup *wb = NULL;
@@ -462,6 +480,7 @@ long amiga_main(char *args, long len)
 			UnlockPubScreen(NULL, s);
 		}
 	}
+	step("MUI open, making the classes");
 	if (rp_classes_make() < 0 || widgets_classes_make() < 0)
 		goto out;
 	app = mui_new(MUIC_Application, MUIA_Application_Title, (ULONG)"Alice68Prefs", MUIA_Application_Version,
@@ -474,15 +493,43 @@ long amiga_main(char *args, long len)
 		r = MUI_Error() == MUIE_SingleTask ? 0 : 20;       /* another one is open: it came to the front */
 		goto out;
 	}
-	if (card_prepare() < 0 || build_window(a_pub[0] ? a_pub : NULL) < 0)
+	step("application made, reading the card");
+	if (card_prepare() < 0)
 		goto out;
+	step("building the window");
+	if (build_window(a_pub[0] ? a_pub : NULL) < 0)
+		goto out;
+	step("starting the network and card pages");
 	net_start();
 	card_start();
+	step("opening the window");
 	mui_set(win, MUIA_Window_Open, TRUE);
-	if (!mui_get(win, MUIA_Window_Open))
+	if (!mui_get(win, MUIA_Window_Open)) {
+		static const char t[] = "Alice68Prefs: its window does not fit on this screen. It needs a screen of\n"
+		                        "about 800 x 480 or more (Prefs/ScreenMode). Alice68 HELP lists the Shell commands.\n";
+		step("the window did not open");
+		if (!wb)
+			Write(Output(), (APTR)t, (LONG)sizeof(t) - 1);
+		else {
+			struct EasyStruct es = { sizeof(struct EasyStruct), 0, (CONST_STRPTR)"Alice68Prefs",
+			                         (CONST_STRPTR)"Alice68Prefs's window does not fit on this screen.\n"
+			                         "It needs a screen of about 800 x 480 or more (Prefs/ScreenMode).\n"
+			                         "The Shell's Alice68 command does the same: Alice68 HELP lists it.", (CONST_STRPTR)"OK" };
+			EasyRequestArgs(NULL, &es, NULL, NULL);
+		}
 		goto out;
+	}
+	if (a_debug) {
+		struct Window *w = (struct Window *)mui_get(win, MUIA_Window_Window);
+		char m[80];
+		if (w)
+			rt_snprintf(m, sizeof(m), "window open at %d,%d, %d x %d", w->LeftEdge, w->TopEdge, w->Width, w->Height);
+		step(w ? m : "window open (no Intuition window?)");
+	}
 	say(net_hello() ? net_hello() : "Alice68Prefs " A68P_VERSION);
+	step("filling the page");
 	page_shown();
+	step("page filled, waiting for input");
 	tport = CreateMsgPort();
 	treq = tport ? (struct timerequest *)CreateIORequest(tport, sizeof(struct timerequest)) : NULL;
 	if (treq && !OpenDevice((CONST_STRPTR)"timer.device", UNIT_VBLANK, (struct IORequest *)treq, 0))
@@ -491,7 +538,14 @@ long amiga_main(char *args, long len)
 		tick_send(treq);
 	r = 0;
 	for (;;) {
-		LONG id = (LONG)mui_do(app, MUIM_Application_NewInput, (ULONG)&sigs);
+		LONG id;
+		static int nin;
+		if (nin < 6) {
+			char m[48];
+			rt_snprintf(m, sizeof(m), "input %d", ++nin);
+			step(m);
+		}
+		id = (LONG)mui_do(app, MUIM_Application_NewInput, (ULONG)&sigs);
 		if (id == MUIV_Application_ReturnID_Quit)
 			break;
 		if (id && command((ULONG)id))
@@ -504,6 +558,8 @@ long amiga_main(char *args, long len)
 			if (timer_on && (got & (1UL << tport->mp_SigBit)) && CheckIO((struct IORequest *)treq)) {
 				static int q;
 				WaitIO((struct IORequest *)treq);
+				if (q < 8)
+					step("tick");
 				text_tick(page);
 				if (++q % 4 == 0) {
 					net_tick(page);

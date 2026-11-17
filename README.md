@@ -289,11 +289,13 @@ cursor keys for the pages, **Esc** to cancel. Starting it again brings the windo
 | Diagnostics | **Logs** (the kernel's and the USB driver's, or the network board's: WiFi, Ethernet, Bluetooth; a filter, and Follow), **Monitor** (tasks, backtraces, the WiFi driver's state: what `Alice68 MONITOR DUMP` prints; Save to RAM:) |
 
 ```
-Alice68Prefs [PUBSCREEN=name] [PAGE=name] [THEME=DARK|LIGHT]
+Alice68Prefs [PUBSCREEN=name] [PAGE=name] [THEME=DARK|LIGHT] [DEBUG]
 ```
 
 `PAGE=` takes a page's name or a heading (`PAGE=Bluetooth`, `PAGE=Network`); the icon's tool
-types are the same arguments.
+types are the same arguments. `DEBUG` (Shell only) prints each step of the start, so if the
+window stays empty or never opens, the last line shows where it stopped. Alice68Prefs runs on a
+64 KB stack of its own, whatever stack the Shell or the icon gives it.
 
 ### Managing the SD card from AmigaOS
 

@@ -130,16 +130,28 @@ def icon_wheel():
     return p
 
 def icon_prefs():
-    """a settings panel: three sliders, their knobs in blue"""
+    """Alice68's settings: a panel of three sliders, the A68 SD card in front of it"""
     p = Pic()
-    x0, y0, x1, y1 = 12, 1, 43, 23
+    x0, y0, x1, y1 = 6, 1, 35, 22                         # the panel
     p.rect(x0, y0, x1, y1, 2)
     p.frame(x0, y0, x1, y1, 1)
-    for k, (x, knob) in enumerate(((19, 15), (28, 6), (37, 12))):
-        p.rect(x, y0 + 3, x, y1 - 3, 1)                  # the slot
-        p.rect(x - 3, knob, x + 3, knob + 3, 3)          # the knob
-        p.frame(x - 3, knob, x + 3, knob + 3, 1)
+    p.rect(x0 + 1, y0 + 1, x1 - 1, y0 + 3, 3)             # its title bar
+    p.rect(x0, y0 + 4, x1, y0 + 4, 1)
+    for x, knob in ((12, 14), (20, 7)):
+        p.rect(x, y0 + 7, x, y1 - 2, 1)                  # the slot
+        p.rect(x - 3, knob, x + 3, knob + 2, 3)          # the knob
+        p.frame(x - 3, knob, x + 3, knob + 2, 1)
     p.rect(x1 + 1, y0 + 2, x1 + 1, y1 + 1, 1); p.rect(x0 + 2, y1 + 1, x1 + 1, y1 + 1, 1)   # shadow
+    c0, d0, c1, d1 = 28, 6, 47, 24                        # the card
+    p.rect(c0, d0, c1, d1, 3)
+    for i in range(5): p.rect(c1 - 4 + i, d0, c1, d0 + i, 2 if c1 - 4 + i <= x1 and d0 + i <= y1 else 0)   # the cut corner
+    for i in range(5): p.px(c1 - 4 + i, d0 + i, 1)
+    p.rect(c0, d0, c0, d1, 1); p.rect(c1, d0 + 4, c1, d1, 1); p.rect(c0, d1, c1, d1, 1); p.rect(c0, d0, c1 - 4, d0, 1)
+    for k in range(4): p.rect(c0 + 3 + k * 3, d0 + 2, c0 + 3 + k * 3, d0 + 4, 2)          # contacts
+    p.rect(c0 + 2, d0 + 7, c1 - 2, d1 - 2, 2)              # the label
+    p.frame(c0 + 2, d0 + 7, c1 - 2, d1 - 2, 1)
+    p.text(c0 + 4, d0 + 9, 'A68', 1)
+    p.rect(c1 + 1, d0 + 6, c1 + 1, d1 + 1, 1); p.rect(c0 + 2, d1 + 1, c1 + 1, d1 + 1, 1)   # shadow
     return p
 
 def _in_ellipse(x, y, cx, cy, rx, ry):

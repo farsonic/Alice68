@@ -24,7 +24,7 @@ GEN_H  := $(foreach l,$(LIBS),$(B)/gen/$(l)_calls.h) $(B)/gen/muimaster_calls.h 
 RT_SRC := rt/libc.c rt/printf.c rt/prefs/mui_util.c rt/prefs/mui_theme.c rt/prefs/mui_classes.c rt/prefs/mui_lang.c \
           rt/prefs/mui_widgets.c rt/prefs/stat_util.c
 SRC    := prefs.c ui.c pg_net.c pg_card.c pg_text.c
-OBJ    := $(B)/startup.o $(patsubst %.c,$(B)/%.o,$(notdir $(RT_SRC)) $(SRC)) $(B)/mui_thunks.o
+OBJ    := $(B)/startup.o $(patsubst %.c,$(B)/%.o,$(notdir $(RT_SRC)) $(SRC)) $(B)/mui_thunks.o $(B)/bigstack.o
 
 all: $(OUT)/Alice68Prefs
 
@@ -43,6 +43,9 @@ $(B)/%.o: %.c $(GEN_H) $(wildcard *.h rt/prefs/*.h rt/os/*.h)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c -o $@ $<
 $(B)/startup.o: rt/startup.S
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c -o $@ $<
+$(B)/bigstack.o: bigstack.S
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c -o $@ $<
 $(B)/mui_thunks.o: rt/prefs/mui_thunks.S
