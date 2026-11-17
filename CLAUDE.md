@@ -22,8 +22,13 @@ User-facing docs: README.md. History of where code came from: docs/PROVENANCE.md
   maps it → `alice68hdf.device` `save_setup()` rewrites `cmdline.txt` (`amiga/hdf/cmdedit.c`) and sets
   `AN_SET_SAVED` → CPU1's `setup_poll()` restarts the Pi. Never log the line (WiFi password).
   Tests: `tools/hdf-test/cmdedit_test.c`, `harness_folders.py ... setup [cardro]`.
-- `amiga/` — 68k side: `alice68-usb.device`, `Alice68-USBLog`, `amiga/hdf/` (`alice68hdf.device`,
-  `hdf_core.[ch]`, `Alice68-HDF`), `amiga.h` (minimal NDK types with offset asserts), `lvo.S`.
+- `amiga/` — 68k side: `alice68-usb.device`, `amiga/hdf/` (`alice68hdf.device`, `hdf_core.[ch]`),
+  `amiga.h` (minimal NDK types with offset asserts), `lvo.S`. The user's programs are two, named
+  Riptide's way: `C:Alice68` (`alice68.c`), one Shell command whose subcommands are the old tools
+  (STATUS `status.c`, LOG `usblog.c`, JOYTEST, WIFI `wifi/wifitool.c`, HDF `hdf/hdfinfo.c`, NETCHECK,
+  SHOWCONFIG, MONITOR, WHEEL, CARD and BT `cardcmd.c`), each compiled alone and linked in with only
+  its `*_main` global (`build.sh`'s `sub`, objcopy); and `SYS:Prefs/Alice68Prefs` (`amiga/prefs/`,
+  below). Started from Workbench (the `WBStartup/Alice68Wheel` project), C:Alice68 is the wheel helper.
   `alice68hdf.device` also mounts SD-card folders (`folders.c` + `fatfs.c`) and CD images
   (`isos.c` + `iso9660.c`, `*.iso` in the root and `ISO/`, read-only, `CD0:`...); the two DOS
   handlers share `dosdefs.h`. `exfat.c`: the card's first exFAT partition (hardfiles, CD images,
@@ -49,14 +54,20 @@ User-facing docs: README.md. History of where code came from: docs/PROVENANCE.md
   brcmfmac and OpenBSD bwfm only: **never copy from WiFiPi.device** (no licence on most files), nor
   from RISC OS's binary-only WLanBWFM. Firmware messages are built byte by byte.
 - `amiga/net/alice68net.c` — `alice68net.device`: netdev client of the network board (unit 0 WiFi,
-  unit 1 the kernel's GENET Ethernet, `eth_*` in `alice_net.c`). `amiga/netgui/` — `Alice68-Network` (MUI,
-  built with Riptide's MUI layer in `amiga/netgui/rt/`, see its README; `make -C amiga/netgui`
-  from `build.sh`); `amiga/netprefs.c` — `Alice68-NetworkGT`,
-  the GadTools settings window (`lvoy.S` for calls with a2/a3). `amiga/wifi/` — `Alice68-WiFi`, `wifi_api.h`, `netdev.h`.
+  unit 1 the kernel's GENET Ethernet, `eth_*` in `alice_net.c`). `amiga/wifi/` — `Alice68 WIFI`, `wifi_api.h`, `netdev.h`.
+- `amiga/prefs/` — `Alice68Prefs`, the only GUI (MUI 3.8+, no GadTools fallback: without MUI it says
+  so and points to `Alice68 HELP`). Built with Riptide's MUI layer in `amiga/prefs/rt/` (see its README;
+  `make -C amiga/prefs` from `build.sh`). `prefs.c` window, menus, arguments (PUBSCREEN= PAGE= THEME=,
+  tool types), pages in `rt/prefs/prefs_fields.h` (icons: `mui_theme.c`, same order); `ui.c` building
+  blocks; `pg_net.c` the network pages (was Alice68-Network); `pg_card.c` Card, Files, Settings, Text
+  files, Bluetooth on `amiga/cardcore.c` (was Alice68-Card; shared with `Alice68 CARD`/`BT`);
+  `pg_text.c` Status, Joystick, Logs, Monitor: the subcommands' own code with its output caught
+  (`amiga/capture.c` replaces `dos_write` in `out/a68prefs.o`, built by `build.sh`). Put logic the
+  window needs into a module the Shell command also uses, so it is tested there.
   `alice68hdf.device` hands the `WIFI` folder's files to the kernel at boot (`offer_wifi`).
 - Mouse wheel: `frf_xhci.c` reads a mouse's report descriptor (`alice_hid.[ch]`, host-independent,
   `tools/hid-test`) and, with a wheel, uses report protocol; the steps go to `pt_hdr.wheel_y/_x,
-  mouse_btn` on the USB card, and `amiga/wheel.c` (`Alice68-Wheel`, in WBStartup) sends NewMouse
+  mouse_btn` on the USB card, and `amiga/wheel.c` (`Alice68 WHEEL`; WBStartup's Alice68Wheel) sends NewMouse
   raw keys through input.device. Other mice stay in boot protocol.
 - Ctrl-Amiga-Amiga: `frf_native_keyboard.c` spots Ctrl + both GUI keys; `frf_xhci_pt.c` sets
   `pt_hdr.reset_req` = 1; `alice68hdf.device`'s vertical blank server (`hdf_vbl`) sets 2 and calls
@@ -77,20 +88,21 @@ User-facing docs: README.md. History of where code came from: docs/PROVENANCE.md
   bootargs; state and commands in the network board's `AN_OFF_BT`, `struct an_bt`). Keyboard reports go to
   `frf_native_usb_keyboard_boot_report`, mice to `aga_virtual_mouse_update`/`pt_mouse_extra`. The mailbox
   buffer is the WiFi coroutine's too: `alice_mbox` refuses (-9) while it is inside one.
-- `amiga/card.c` — `Alice68-Card` (GadTools): the SD card's partitions, files, cmdline.txt (options from
-  `src/raspi/alice_opts.c`, shared with the setup screen; `cmd_apply` from `hdf/cmdedit.c`), config.txt,
-  Kickstart, Restart (network board `an_hdr.restart` = `AN_RESTART`, CPU1 reboots). It works only through
+- `amiga/cardcore.c` — the SD card for Alice68Prefs and `Alice68 CARD`/`BT` (`cardcmd.c`): partitions, files,
+  cmdline.txt (options from `src/raspi/alice_opts.c`, shared with the setup screen; `cmd_apply` from
+  `hdf/cmdedit.c`; the password only ever as `********`), config.txt lines, Kickstart, Bluetooth keys
+  (`bt.dev=`), saving with `.bak`, Restart (network board `an_hdr.restart` = `AN_RESTART`, CPU1 reboots). It works only through
   `alice68hdf.device`'s card service (`hdf/cardsvc.[ch]`, unit `CS_UNIT`): runs in the caller's process
   under `db->fsem`, refuses what `fold_busy()` says is in use. Tests: `harness_folders.py ... card [cardro|exfatrw]`,
-  `amiga/test/harness_card.py` (fake libraries and card service).
+  `amiga/test/harness_cardcmd.py` (fake card service and network board).
 - Status page: `third_party/Emu68/src/alice/alice_status.[ch]` — a read-only 4 KB page for 68k monitors
-  (`struct alice68_status`, shared with `amiga/status.c` = `Alice68-Status`), mapped by `boards/emu68rom.c` at
+  (`struct alice68_status`, shared with `amiga/status.c` = `Alice68 STATUS`), mapped by `boards/emu68rom.c` at
   ROM board + 0x700000 and named in the 68k's device tree as `/alice68` `status`; CPU1 fills it once a second
   from `alice_net_poll` (seq odd while writing; 0xffffffff = not measured, never guessed). Temperature from the
   AVS register; clock/voltage/throttled by mailbox only with `status.sensors=mbox` (mailbox answers can be
   taken by the wrong client). Test: `amiga/test/harness_status.py`.
-- `amiga/monitor.c` — `Alice68-Monitor`: debugging window (tasks, backtraces, the board's log rings,
-  the WiFi driver's `pt_wstat` "where"). The board layout is in `alice68_usbpt.h`; it survives a 68k reset.
+- `amiga/monitor.c` — `Alice68 MONITOR`: debugging window (tasks, backtraces, the board's log rings,
+  the WiFi driver's `pt_wstat` "where"; DUMP prints it, as the Monitor page shows it). The board layout is in `alice68_usbpt.h`; it survives a 68k reset.
 - `tools/hdf-test/`, `amiga/test/` — tests. `tools/splash-preview/` — render the splash on a PC.
 
 ## Setting up a fresh machine (Ubuntu 24.04)
@@ -116,20 +128,21 @@ bash amiga/build.sh                      # 68k parts -> amiga/out/; regenerates 
 bash tools/build-alice68-pi4.sh         # -> dist/pi4/kernel8.img   (FRF_USB=OFF for the no-USB kernel)
 tools/hdf-test/run.sh                    # hardfile, folder and CD image tests: cores on the PC + driver on a 68k emulator (expect all "ALL OK")
 python3 amiga/test/harness.py amiga/out/alice68-usb.device   # USB pass-through driver on the 68k emulator
-python3 amiga/test/harness_netcheck.py amiga/out/Alice68-NetCheck   # the network check tool against a fake SANA-II driver
 tools/wifi-test/run.sh                   # WiFi protocol layer on the PC (expect "ALL OK")
 tools/hid-test/run.sh                    # the USB mouse report parser on the PC (expect "ALL OK")
 tools/bt-test/run.sh                     # the Bluetooth host against a scripted controller (expect "ALL OK")
-python3 amiga/test/harness_wheel.py amiga/out/Alice68-Wheel  # the mouse wheel tool against a fake card and input.device
-python3 amiga/test/harness_wifitool.py amiga/out/Alice68-WiFi   # the WiFi tool against a fake driver
-python3 amiga/test/harness_monitor.py amiga/out/Alice68-Monitor  # Alice68-Monitor DUMP against a fake board
-python3 amiga/test/harness_netprefs.py amiga/out/Alice68-NetworkGT # the GadTools network window against fake libraries
-python3 amiga/test/harness_showconfig.py amiga/out/Alice68-ShowConfig # boards, memory and Alice68's cards, faked
+python3 amiga/test/harness_alice68.py amiga/out/Alice68     # C:Alice68: every subcommand dispatched, HELP, unknown words, Workbench
+python3 amiga/test/harness_cardcmd.py amiga/out/Alice68     # CARD and BT (cardcore.c, Alice68Prefs's card pages) against a fake card service
+python3 amiga/test/harness_status.py amiga/out/Alice68      # STATUS against a fake devicetree.resource and page
+python3 amiga/test/harness_usblog.py amiga/out/Alice68      # LOG: last lines, MATCH, Ctrl-C
+python3 amiga/test/harness_joytest.py amiga/out/Alice68     # JOYTEST: the joystick ports as games read them, faked in 16 MB of RAM
+python3 amiga/test/harness_wifitool.py amiga/out/Alice68    # WIFI against a fake driver (JOIN saves the prefs, SCAN)
+python3 amiga/test/harness_netcheck.py amiga/out/Alice68    # NETCHECK against a fake SANA-II driver
+python3 amiga/test/harness_monitor.py amiga/out/Alice68     # MONITOR DUMP against a fake board
+python3 amiga/test/harness_showconfig.py amiga/out/Alice68  # SHOWCONFIG: boards, memory and Alice68's cards, faked
+python3 amiga/test/harness_wheel.py amiga/out/Alice68       # WHEEL against a fake card and input.device
+python3 amiga/test/harness_prefs.py amiga/out/Alice68Prefs  # Alice68Prefs without MUI: told, requester, libraries closed
 python3 amiga/test/harness_alice68net.py amiga/out/alice68net.device # opens of units the kernel does not serve, and close
-python3 amiga/test/harness_card.py amiga/out/Alice68-Card   # the SD card manager against fake libraries and card service
-python3 amiga/test/harness_usblog.py amiga/out/Alice68-USBLog # the log tool: last lines, MATCH, Ctrl-C
-python3 amiga/test/harness_status.py amiga/out/Alice68-Status # the status page tool against a fake devicetree.resource and page
-python3 amiga/test/harness_joytest.py amiga/out/Alice68-JoyTest # the joystick ports as games read them, faked in 16 MB of RAM
 tools/splash-preview/build.sh > out.ppm  # the splash, drawn by the kernel's own code (W H setup-storage: the setup screen)
 ```
 

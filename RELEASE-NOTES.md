@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+- **Two programs instead of twelve, named Riptide's way.** The Amiga side is now
+  **Alice68Prefs** (`SYS:Prefs`), one MUI settings window built on Riptide's MUI layer like
+  RiptidePrefs, and **`C:Alice68`**, one Shell command with subcommands. The arguments and
+  the output of each old tool are the same.
+
+  | Was | Now |
+  |---|---|
+  | `Alice68-Status` | `Alice68 STATUS`; Alice68Prefs's System > Status |
+  | `Alice68-USBLog` | `Alice68 LOG`; Diagnostics > Logs |
+  | `Alice68-JoyTest` | `Alice68 JOYTEST`; Input > Joystick |
+  | `Alice68-WiFi` | `Alice68 WIFI` |
+  | `Alice68-HDF` | `Alice68 HDF` |
+  | `Alice68-NetCheck` | `Alice68 NETCHECK` |
+  | `Alice68-ShowConfig` | `Alice68 SHOWCONFIG` |
+  | `Alice68-Monitor` | `Alice68 MONITOR`; Diagnostics > Monitor (DUMP's text) |
+  | `Alice68-Wheel` (and `WBStartup/Alice68-Wheel`) | `Alice68 WHEEL`; `WBStartup/Alice68Wheel` starts it |
+  | `Alice68-Card` | Alice68Prefs's Card, Files, Settings, Text files and Bluetooth pages; `Alice68 CARD` and `Alice68 BT` |
+  | `Alice68-Network` | Alice68Prefs's Network pages (Apply is now Use) |
+  | `Alice68-NetworkGT` | gone: without MUI, `Alice68 WIFI JOIN` / `RECONNECT` |
+
+  Alice68Prefs: the pages under System, Storage, Network, Input and Diagnostics headings,
+  Save / Use / Restart Pi / Cancel, every command in the menus, P / Shift-P and the cursor
+  keys for the pages, Esc, help bubbles, `PUBSCREEN=` `PAGE=` `THEME=DARK|LIGHT` (also as tool
+  types), and a second start brings the window to the front. It needs MUI 3.8; without it
+  it says so. `cmdline.txt` and `config.txt` are written only on Save (with `.bak`), the WiFi
+  password is never shown, Restart Pi goes through the network board.
+  New in the Shell: `Alice68 CARD` (partitions, files, OPTIONS, SET, BOOT, KICKSTART, CONFIG,
+  CMDLINE, RESTART) and `Alice68 BT` (LIST, SCAN, PAIR, CONNECT, FORGET, KEEP): the same code
+  as the window's pages (`amiga/cardcore.c`).
+  **Install** puts in `C:Alice68`, `SYS:Prefs/Alice68Prefs` and `WBStartup/Alice68Wheel`, and
+  takes the old programs away; Uninstall puts back what they had replaced.
+  Tested on the 68k emulator: every subcommand's harness against `C:Alice68`, the dispatcher
+  (`harness_alice68.py`), CARD and BT against a fake card service and network board
+  (`harness_cardcmd.py`, which takes over Alice68-Card's harness), Alice68Prefs's start
+  without MUI (`harness_prefs.py`). The MUI window itself needs a real Amiga (or an emulator
+  with MUI) to try.
 - **`Alice68-JoyTest`:** the joystick port as games read it (JOY1DAT, CIA-A, POTGOR), live in
   a Shell: directions, fire, fire 2 and fire 3, a line per change; `ONCE` for just now,
   `MOUSEPORT` for the mouse port as well (only then: a moving mouse there reads as random

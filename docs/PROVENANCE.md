@@ -40,11 +40,13 @@ Alice68's history starts with three commits that keep the inputs apart:
      Core Specification (HCI, L2CAP, Secure Simple Pairing) and the HID profile; the
      Broadcom vendor commands (firmware download) as Linux's `btbcm` uses them (GPL-2.0).
      No code from BlueZ, BTstack or Zephyr;
-   - `Alice68-Card` (`amiga/card.c`) and the card service (`amiga/hdf/cardsvc.c`), the
-     setup screen (`src/raspi/alice_setup.c`, `alice_opts.c`), written for Alice68;
-   - `Alice68-Network` (`amiga/netgui/`), built on the MUI layer of Riptide's RiptidePrefs
-     (GPL-2.0-only, https://github.com/farsonic/riptide at `4e5f73c`), copied into
-     `amiga/netgui/rt/` with the changes listed in its README;
+   - Alice68-Card (now `amiga/cardcore.c`, Alice68Prefs's card pages and `Alice68 CARD`)
+     and the card service (`amiga/hdf/cardsvc.c`), the setup screen (`src/raspi/alice_setup.c`,
+     `alice_opts.c`), written for Alice68;
+   - Alice68Prefs (`amiga/prefs/`, which was Alice68-Network in `amiga/netgui/`), built on the
+     MUI layer of Riptide's RiptidePrefs (GPL-2.0-only, https://github.com/farsonic/riptide at
+     `4e5f73c`, unchanged up to `95c36f2`), copied into `amiga/prefs/rt/` with the changes
+     listed in its README;
    - the licensing documents.
 
 Later Emu68 changes are taken on the `upstream` branch and merged into `next`:

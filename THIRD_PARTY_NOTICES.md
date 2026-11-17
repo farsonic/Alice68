@@ -71,13 +71,13 @@ was copied from them, but they deserve the credit:
   Copyright (c) 2026, lwip-amiga contributors; the licence text is in
   `amiga/wifi/LICENSE-netdev.txt`.
 
-## In Alice68-Network
+## In Alice68Prefs
 
-* `amiga/netgui/rt/` – the MUI layer of [Riptide](https://github.com/farsonic/riptide)'s
+* `amiga/prefs/rt/` – the MUI layer of [Riptide](https://github.com/farsonic/riptide)'s
   RiptidePrefs (its theme, page list, heads, buttons, labels, graph, table and tabs
   classes, the library call generator and the freestanding startup), from commit
-  `4e5f73c`, GPL-2.0-only, by the Riptide authors. Which files, and what was changed,
-  is in `amiga/netgui/rt/README`. No MUI SDK file is included; the MUI numbers are
+  `4e5f73c` (unchanged up to `95c36f2`, Riptide 0.39), GPL-2.0-only, by the Riptide
+  authors. Which files, and what was changed, is in `amiga/prefs/rt/README`. No MUI SDK file is included; the MUI numbers are
   Riptide's own definitions.
 
 ## Not included
@@ -108,12 +108,12 @@ supply these.
   USB pass-through to AmigaOS and the virtual eject.
 * `third_party/Emu68/src/raspi/alice_splash.[ch]`, `include/logo/logo_alice.h`,
   `tools/mklogo_alice.py`, `tools/splash-preview/` – the boot splash.
-* `amiga/` – `alice68-usb.device`, `Alice68-USBLog`, `alice68hdf.device` and
-  `Alice68-HDF` (68k), and the 68k test harnesses.
+* `amiga/` – `alice68-usb.device`, `alice68hdf.device`, the `C:Alice68` Shell command,
+  `cardcore.c`, Alice68Prefs's own files (`amiga/prefs/*.c`) (68k), and the 68k test harnesses.
 * `third_party/Emu68/src/alice/` – the network board and the WiFi on CPU1 (`alice_net.[ch]`,
   `wifi/sdio.c`, `wifi/chip.c`, `wifi/fmac.[ch]`).
-* `amiga/net/` – `alice68net.device`; `amiga/wifi/` – `Alice68-WiFi` (except `netdev.h`, above);
-  `amiga/monitor.c` – `Alice68-Monitor`.
+* `amiga/net/` – `alice68net.device`; `amiga/wifi/` – `Alice68 WIFI` (except `netdev.h`, above);
+  `amiga/monitor.c` – `Alice68 MONITOR`.
 * `tools/hdf-test/` – test SD card images and the hardfile tests; `tools/wifi-test/` –
   the WiFi protocol tests.
 * `tools/build-alice68-pi4.sh` and the Pi 4 changes to the files above

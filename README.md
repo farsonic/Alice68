@@ -103,7 +103,7 @@ disable_overscan=1        # the whole 1920x1080: without it the firmware leaves 
 The HDMI mode is set by the Pi's firmware at power-on and stays for the whole session:
 AmigaOS screen modes (PAL, NTSC, hires, interlace, RTG) are scaled into it (`aga.scale=`),
 so the monitor itself doesn't change mode. To change what the screen gets, change
-`hdmi_mode` here (or on Alice68-Card's Text files page) and restart.
+`hdmi_mode` here (or on Alice68Prefs's Text files page) and restart.
 
 | `hdmi_mode` | Picture |
 |---|---|
@@ -192,11 +192,11 @@ aga.look=0 aga.scale=1
 | `wifi.country=GB` | Your country: the WiFi channels allowed |
 | `wifi=off` | Leave the WiFi chip off |
 | `bt=off` | Leave Bluetooth off (see [Bluetooth](#bluetooth-keyboards-and-mice-new)) |
-| `bt.dev=ADDRESS:KEY:KIND[:...]` | A paired Bluetooth device (Alice68-Card writes these) |
+| `bt.dev=ADDRESS:KEY:KIND[:...]` | A paired Bluetooth device (Alice68Prefs writes these) |
 | `eth=on` | Start the kernel's Ethernet at boot (it also starts when a stack opens `alice68net.device` unit 1) |
 | `eth=off` | Keep the kernel off the Ethernet port (for rondoval's `genet.device`) |
 | `net.oui=off` | Keep the Pi's own MAC addresses (otherwise both network units use Commodore's OUI, `00:80:10`) |
-| `net.trace=1` | Log every ICMP (ping) frame and the first dropped frames to the network log (Alice68-Monitor DUMP), kernel and alice68net.device |
+| `net.trace=1` | Log every ICMP (ping) frame and the first dropped frames to the network log (Alice68 MONITOR DUMP), kernel and alice68net.device |
 | `status.sensors=mbox` | Also put the ARM clock, core voltage and throttling on the [status page](#status-page-for-monitors) (read through the VideoCore mailbox every 5 s; see there why it is off by default) |
 
 Examples:
@@ -265,26 +265,55 @@ firmware's own) stay as they are. The card must be writable (`dtoverlay=emmc,uni
 otherwise the boot log says why nothing was written. The WiFi password is kept in
 `cmdline.txt` as typed, as `wifi.psk=` always has been.
 
-## Managing the SD card from AmigaOS: Alice68-Card
+## Alice68Prefs and the Alice68 command
 
-`Alice68-Card` (in `ALICE68:C`, and in `C:` after Install) looks after the SD card
-Alice68 started from, in a GadTools window on Workbench. You don't need a PC for any of
-it.
+Alice68 has two programs on the Amiga side, named the way Riptide names its own:
+**Alice68Prefs** (in `SYS:Prefs` after `ALICE68:Install`), the settings window, and
+**`Alice68`** (in `C:`), one Shell command that does the same without a window.
+
+**Alice68Prefs** needs MUI 3.8 or later (`muimaster.library` 19); without MUI it says so and
+points to the `Alice68` command. One window on Workbench, in the look of RiptidePrefs: the
+pages on the left under their headings, the page's name and what it is for above its
+contents, **Save**, **Use**, **Restart Pi** and **Cancel** below, and a status line. Every
+command is in the menus too (Project: Save, Use, Restart Pi, About, Quit; Edit: Last Saved;
+Settings: Dark Theme, Help Bubbles). Keys: the underlined letters, **P** and **Shift-P** or the
+cursor keys for the pages, **Esc** to cancel. Starting it again brings the window to the front.
+
+| Heading | Pages |
+|---|---|
+| | **About** |
+| System | **Status** (the kernel's [status page](#status-page-for-monitors), live), **Settings** (`cmdline.txt`'s options), **Text files** (`config.txt` and `cmdline.txt`) |
+| Storage | **Card**, **Files** |
+| Network | **Status**, **Ethernet**, **WiFi**, **Ethernet settings**, **WiFi settings**, **Ethernet traffic**, **WiFi traffic** (see [WiFi and Ethernet](#wifi-and-ethernet-alice68s-network-card-ethernet-tested-on-a-pi-wifi-still-being-tested)) |
+| Input | **Bluetooth**, **Joystick** (the joystick port as games read it) |
+| Diagnostics | **Logs** (the kernel's and the USB driver's, or the network board's: WiFi, Ethernet, Bluetooth; a filter, and Follow), **Monitor** (tasks, backtraces, the WiFi driver's state: what `Alice68 MONITOR DUMP` prints; Save to RAM:) |
+
+```
+Alice68Prefs [PUBSCREEN=name] [PAGE=name] [THEME=DARK|LIGHT]
+```
+
+`PAGE=` takes a page's name or a heading (`PAGE=Bluetooth`, `PAGE=Network`); the icon's tool
+types are the same arguments.
+
+### Managing the SD card from AmigaOS
+
+The Storage pages, **Settings**, **Text files** and **Bluetooth** look after the SD card
+Alice68 started from. You don't need a PC for any of it.
 
 | Page | What it does |
 |---|---|
 | Card | The card's partitions: type, file system, label, size, free space (**Count free space**). Which of them is Alice68's FAT partition, the exFAT volume, Emu68's own Amiga disk. Whether AmigaOS may write the exFAT partition. The hardfiles and CD images mounted from the card. |
-| Files | Browse the FAT partition and the exFAT partition: folders first, sizes, `in use` for anything that can't be changed now. Filter to hardfiles, CD images, Kickstart ROMs or WiFi firmware. **Open folder** (or double-click), **Parent**, **New folder**, **Rename to name**, **Delete...** (it asks first). **Boot from it** makes a hardfile the boot drive (`hdf.boot=`), **Use as Kickstart** makes a ROM the Kickstart (`initramfs` in `config.txt`). |
-| Settings | The options of `cmdline.txt`, the same ones the [setup screen](#setup) offers (both use one table, `src/raspi/alice_opts.c`), and the Kickstart ROM. Each shows what it does underneath when you pick it. **Back to the card's** drops your changes. |
+| Files | Browse the FAT partition and the exFAT partition: folders first, sizes, `in use` for anything that can't be changed now. Filter to hardfiles, CD images, Kickstart ROMs or WiFi firmware. **Open**, **Parent**, **New folder**, **Rename to** (the name typed), **Delete...** (it asks first). **Boot from it** makes a hardfile the boot drive (`hdf.boot=`), **Use as Kickstart** makes a ROM the Kickstart (`initramfs` in `config.txt`). |
+| Settings | The options of `cmdline.txt`, the same ones the [setup screen](#setup) offers (both use one table, `src/raspi/alice_opts.c`), and which Kickstart ROM `config.txt` names. Each option's help bubble says what it does. **Edit > Last Saved** drops your changes. |
 | Bluetooth | The kernel's Bluetooth: its state, the paired devices (**Connect now**, **Forget...**), **Scan** and **Pair**, the passkey to type, and its last log lines. Pairings are written to `cmdline.txt` at once. See [Bluetooth](#bluetooth-keyboards-and-mice-new). |
-| Text files | `config.txt` line by line: pick a line to change it, **Add**, **Delete**. `cmdline.txt` as it will be saved; type into it to change it directly, and the Settings page follows. |
+| Text files | `config.txt` line by line: pick a line to change it, **Change**, **Add**, **Insert**, **Delete**. `cmdline.txt` as it will be saved; type into it (Return) to change it directly, and the Settings page follows. |
 
-The window can be resized: lists grow with it, and the buttons stay sized to their labels.
 The WiFi password is never shown. The Settings page and the `cmdline.txt` line show
 `********` in its place. Type a new one over it to change it, or empty the field to remove
 it. Editing the line around `********` keeps the password as it is.
 
-Nothing is written until you press **Save**, apart from what the Files page does at once.
+Nothing is written until you press **Save**, apart from what the Files page does at once
+and a Bluetooth pairing.
 Save writes `cmdline.txt` and `config.txt`, and keeps the previous versions as
 `cmdline.txt.bak` and `config.txt.bak`. **Restart Pi** starts the Pi again so the new
 settings take effect. It asks first if there are changes you haven't saved.
@@ -295,6 +324,33 @@ volumes are mounted. Mounted hardfiles and CD images, files open on a folder vol
 folder volumes' own folders can't be deleted, renamed or overwritten. The exFAT partition
 is only written with `alice68.exfat=rw` (or `boot`), and nothing at all on a read-only
 card (`dtoverlay=emmc,unit0=ro`).
+
+### The Alice68 command
+
+`C:Alice68` alone, or `Alice68 HELP`, lists what it does. Each subcommand was a program of its
+own up to Alice68 0.6 (the old name in brackets); the arguments are the same.
+
+| Command | What it does |
+|---|---|
+| `Alice68 STATUS [LOOP]` | The kernel's status page: cores, temperature, JIT, USB, network (was `Alice68-Status`) |
+| `Alice68 CARD [INFO [FREE]]` | The SD card's partitions, free space, what is mounted (was part of `Alice68-Card`) |
+| `Alice68 CARD LIST [path] [EXFAT]`, `DELETE`, `RENAME`, `MKDIR` | Files of the FAT (or exFAT) partition |
+| `Alice68 CARD OPTIONS`, `SET option ...` | `cmdline.txt`'s options as the Settings page has them; `SET aga.scale=4 wifi.country=GB` or `SET Scaling=16:9` changes and saves them |
+| `Alice68 CARD BOOT name.hdf`, `KICKSTART [name.rom]` | The hardfile to boot from; the Kickstart ROM (without a name: the ROMs on the card) |
+| `Alice68 CARD CONFIG [SET n text \| ADD text \| INSERT n text \| DELETE n]`, `CMDLINE ["line"]` | `config.txt` line by line; `cmdline.txt` as one line (`wifi.psk=********` keeps the password) |
+| `Alice68 CARD RESTART` | Restarts the Pi through the network board |
+| `Alice68 BT [LIST]`, `SCAN`, `PAIR addr`, `CONNECT addr`, `FORGET addr`, `KEEP` | Bluetooth; KEEP writes the paired list into `cmdline.txt` (Alice68Prefs does that by itself) |
+| `Alice68 WIFI [START\|SCAN\|JOIN "name" "pass" [CC]\|RECONNECT\|DISCONNECT\|LOG\|OFF]` | The kernel's WiFi (was `Alice68-WiFi`) |
+| `Alice68 LOG [ALL] [LINES=n] [MATCH=text] [FOLLOW]` | The kernel's and the drivers' logs (was `Alice68-USBLog`) |
+| `Alice68 JOYTEST [ONCE] [MOUSEPORT]` | The joystick port as games read it (was `Alice68-JoyTest`) |
+| `Alice68 HDF` | The hardfiles, folders and CD images found, and why (was `Alice68-HDF`) |
+| `Alice68 NETCHECK [device] [unit] [WATCH\|TEST]` | What a network driver reports (was `Alice68-NetCheck`) |
+| `Alice68 SHOWCONFIG [ALL ...]` | Boards, memory and Alice68's cards (was `Alice68-ShowConfig`) |
+| `Alice68 MONITOR [DUMP]` | The debugging window; DUMP prints it all (was `Alice68-Monitor`) |
+| `Alice68 WHEEL [NEWMOUSE]` | The mouse wheel helper; run again to stop it (was `Alice68-Wheel`) |
+
+SET, BOOT, KICKSTART, CONFIG's changes and CMDLINE write the file at once, the old one kept as
+`.bak`. `Alice68-Card`, `Alice68-Network` and `Alice68-NetworkGT` are Alice68Prefs's pages now.
 
 ## Alice68's expansion cards
 
@@ -349,12 +405,12 @@ waits for the hardware.
 | Emu68's ROM board | `0x6d73` / `2` | - | holds `alice68hdf.device` (hardfiles, folders) and Emu68's own drivers | - | both kernels |
 
 `0x6d73` is Emu68's manufacturer number. Workbench's `ShowConfig` lists the cards;
-**`Alice68-ShowConfig`** (in `C:` after `ALICE68:Install`) says much more: the processor,
+**`Alice68 SHOWCONFIG`** (in `C:` after `ALICE68:Install`) says much more: the processor,
 Kickstart, chipset and every memory region; each board's Zorro type, address, size,
 serial, flags and driver, with names for Emu68's and Alice68's boards; and what is live on
 Alice68's cards - the USB devices passed through and the request slots, both network
 units' link, addresses, WiFi network, counters and queues, and `alice68hdf.device`'s
-hardfiles and folders. `Alice68-ShowConfig ALL` adds the libraries, devices and resources
+hardfiles and folders. `Alice68 SHOWCONFIG ALL` adds the libraries, devices and resources
 in memory and the end of the kernel's log; `SYS`, `MEM`, `BOARDS`, `CARDS`, `LIBS` and
 `LOG` pick parts.
 They are **Alice68's own design**: no real card has these IDs, and the drivers in
@@ -371,7 +427,7 @@ What this gives:
   already knows how to use (the classic `IOUsbHWReq` interface), and a network driver
   for the netdev interface. They are installed from `ALICE68:` like any other driver.
 - **The logs survive a 68k reset**: both cards keep the kernel's and the drivers' log
-  rings, which `Alice68-USBLog`, `Alice68-WiFi LOG` and `Alice68-Monitor` read even
+  rings, which `Alice68 LOG`, `Alice68 WIFI LOG` and `Alice68 MONITOR` read even
   after a hang and a Ctrl-Amiga-Amiga.
 
 The **no-USB kernel** (`kernel8-nousb.img`) has no USB card: the network card's
@@ -383,8 +439,8 @@ card is still there but stays empty: the kernel leaves the USB-A ports to rondov
 
 The kernel keeps a small **status page** that any 68k program can read: what each ARM core
 does (and how busy it is, where that is measured), the SoC's temperature, Emu68's translation
-cache, the network units' counters and the kernel's build. **`Alice68-Status`** (in `C:` after
-`ALICE68:Install`) prints it; `Alice68-Status LOOP` every second until Ctrl-C.
+cache, the network units' counters and the kernel's build. **`Alice68 STATUS`** (in `C:` after
+`ALICE68:Install`) prints it; `Alice68 STATUS LOOP` every second until Ctrl-C.
 
 For monitor programs:
 
@@ -436,7 +492,7 @@ A CM4's USB port is the USB-C controller, so on a CM4 use `frf_usb=neptune` (unt
 - **Ctrl-Amiga-Amiga** resets the Amiga side, as on a real Amiga. The Amiga keys are a USB
   keyboard's **Windows keys** (or a Mac keyboard's **Cmd keys**): press **Ctrl + left
   Windows/Cmd + right Windows/Cmd**. The Pi keeps running, so Alice68's logs survive (see
-  `Alice68-Monitor DUMP`). If AmigaOS has hung and can't take the request within 2 seconds,
+  `Alice68 MONITOR DUMP`). If AmigaOS has hung and can't take the request within 2 seconds,
   the whole Pi restarts instead. Keyboards without a right Windows key (often a Menu key
   there) can't make the chord; use the full restart below. With `frf_usb=neptune` (USB-C)
   it always restarts the whole Pi.
@@ -445,17 +501,17 @@ A CM4's USB port is the USB-C controller, so on a CM4 use `frf_usb=neptune` (unt
 ### The mouse's scroll wheel
 
 The Amiga's mouse port has no wheel, so the kernel counts a USB mouse's wheel steps on the
-[USB card](#alice68s-expansion-cards), and **`Alice68-Wheel`** turns them into the
+[USB card](#alice68s-expansion-cards), and **`Alice68 WHEEL`** turns them into the
 "NewMouse" events most wheel-aware programs know (raw keys `$7A`/`$7B` for up and down,
 `$7C`/`$7D` for left and right, `$7E` for the 4th button), with Shift and the other
 qualifiers as you hold them. **Install** puts it in `C:` and in `WBStartup`, so it starts
 with Workbench. Running it again (or double-clicking its icon) stops it, and
-`Alice68-Wheel NEWMOUSE` also sends each event as `IECLASS_NEWMOUSE` for tools that want
-that. Without installing: `Run >NIL: ALICE68:C/Alice68-Wheel`.
+`Alice68 WHEEL NEWMOUSE` also sends each event as `IECLASS_NEWMOUSE` for tools that want
+that. Without installing: `Run >NIL: ALICE68:C/Alice68 WHEEL`.
 
 The kernel reads the wheel from the mouse's own report layout (its HID report descriptor).
 A mouse without a wheel, or one whose layout the kernel cannot read, works as before
-(buttons and movement), and the boot log says `wheel for Alice68-Wheel` after a mouse that
+(buttons and movement), and the boot log says `wheel for Alice68 WHEEL` after a mouse that
 has one. Mice on the USB-C port (`frf_usb=neptune`) have no wheel through the kernel.
 
 ### Neptune on the USB-A ports (storage, network)
@@ -467,7 +523,7 @@ The kernel keeps USB keyboards and mice for itself and offers every other device
    needs no host-controller driver of its own here: **don't** use `xhci.device` while the
    kernel owns the USB-A ports, as the two cannot share the controller.
 2. Install `alice68-usb.device` into `DEVS:USBHardware/`: double-click **Install** in
-   `ALICE68:` (it also puts `Alice68-USBLog` in `C:`), or copy them by hand.
+   `ALICE68:` (it also puts the `Alice68` command in `C:`), or copy them by hand.
 3. Start Neptune on it, from a Shell or at every boot in `S:User-Startup`:
    ```
    C:USBStart >NIL: alice68-usb.device 0
@@ -476,15 +532,15 @@ The kernel keeps USB keyboards and mice for itself and offers every other device
    added a `USBStart` line for `xhci.device`, change it to this.
 
 Neptune sees an 8-port USB 2.0 root hub, with every device the kernel doesn't keep for
-itself on it. USB 3 devices work as USB 2.0. `Alice68-USBLog FOLLOW` tails the kernel's and
+itself on it. USB 3 devices work as USB 2.0. `Alice68 LOG FOLLOW` tails the kernel's and
 the driver's USB logs in a Shell.
 
-`Alice68-USBLog` prints the last 40 lines of each log. `LINES=200` prints more, `ALL`
+`Alice68 LOG` prints the last 40 lines of each log. `LINES=200` prints more, `ALL`
 everything, and `MATCH=[BT]` only the lines with that text. Ctrl-C stops it at any line.
 For example, the Bluetooth lines only:
 
 ```
-Alice68-USBLog MATCH=[BT] LINES=100
+Alice68 LOG MATCH=[BT] LINES=100
 ```
 
 - **Network adapters:** the Neptune class is the SANA-II driver. For `cdceth.usbclass`,
@@ -507,18 +563,17 @@ that reports sent frames as promptly as this one) can use it; Roadshow, AmiTCP a
 only) cannot. The WiFi chip's own firmware does the WPA2 handshake (and WPA3 where the
 firmware supports it).
 
-**`Alice68-Network`** (in `C:`, or drag it to `SYS:Prefs`) is the settings window, in MUI
-(3.8 or later) and in the look of Riptide's preferences. Its pages:
+Alice68Prefs's **Network** pages are the settings window (they were `Alice68-Network`):
 
-- **About**, **Status** (both units and all traffic of the last minute);
-- **Networks**: **Ethernet** (the link: rate, duplex, autonegotiation, what each side
+- **Status** (both units and all traffic of the last minute);
+- **Ethernet** (the link: rate, duplex, autonegotiation, what each side
   offers, flow control, link downs, time up, the MAC address) and **WiFi** (the connection,
   and the networks in range: Scan, then a click on one to join it);
-- **Settings**: **Ethernet** (an on/off switch; autonegotiation and the speeds and duplexes
-  to offer, or a fixed speed and duplex; flow control) and **WiFi** (an on/off switch;
+- **Ethernet settings** (an on/off switch; autonegotiation and the speeds and duplexes
+  to offer, or a fixed speed and duplex; flow control) and **WiFi settings** (an on/off switch;
   network name, password - dots unless Show is ticked -, country, Join and save,
   Disconnect, power saving);
-- **Traffic**: **Ethernet** and **WiFi** (rates, bytes, packets, drops and errors in and out,
+- **Ethernet traffic** and **WiFi traffic** (rates, bytes, packets, drops and errors in and out,
   and a graph of the last minute).
 
 **The on/off switches** at the top of the two Settings pages switch a unit's hardware off
@@ -529,10 +584,10 @@ on. On again, the WiFi rejoins its network and the Ethernet starts if a stack us
 The line beside each switch says what it means right now. **Save** keeps the switches'
 positions for the next start (`UNIT0=OFF` / `UNIT1=OFF` in `alice68net.prefs`).
 
-**Apply** gives the kernel the settings now; **Save** also keeps them for the next start
+**Use** gives the kernel the settings now; **Save** also keeps them for the next start
 (the WiFi network in `ENVARC:alice68wifi.prefs`, the Ethernet and WiFi settings in
 `ENVARC:alice68net.prefs`, which `alice68net.device` applies when it starts). Without MUI,
-`Alice68-NetworkGT` is a simpler GadTools window.
+`Alice68 WIFI JOIN` and `RECONNECT` do the WiFi from a Shell.
 
 **Commodore's MAC prefix.** Both units' MAC addresses start with Commodore International's
 `00:80:10`; the last three bytes are the Pi's own. `net.oui=off` in `cmdline.txt` keeps the
@@ -600,11 +655,11 @@ new address.)
    ```
    aga.look=0 aga.scale=1 wifi.ssid="MyNetwork" wifi.psk="my password" wifi.country=GB
    ```
-   or from AmigaOS (`Alice68-WiFi` is installed into `C:` by `ALICE68:Install`):
+   or from AmigaOS (`Alice68 WIFI` is installed into `C:` by `ALICE68:Install`):
    ```
-   Alice68-WiFi JOIN "MyNetwork" "my password" GB
+   Alice68 WIFI JOIN "MyNetwork" "my password" GB
    ```
-   which also saves `ENV:` and `ENVARC:alice68wifi.prefs`; then `Alice68-WiFi RECONNECT`
+   which also saves `ENV:` and `ENVARC:alice68wifi.prefs`; then `Alice68 WIFI RECONNECT`
    in `S:User-Startup` joins it at every boot. `wifi.country` (or the third word of JOIN)
    is your two-letter country code: the channels allowed. `wifi=off` in `cmdline.txt` keeps
    the chip off; `wifi.sdclock=` sets the SDIO clock (25000000 by default).
@@ -647,9 +702,9 @@ SANA-II): put `eth=off` in `cmdline.txt`. Alice68's Emu68 has the dcache extensi
 (`emu68-drivers-<ver>-rangeops.lha`) and use its SANA-II `genet.device` **3.x**, in
 `DEVS:Networks/`: give the stack the full path `DEVS:Networks/genet.device`, unit 0. (Its
 4.x `genet.device` is a netdev driver like `alice68net.device` unit 1, which does the same
-job.) `C:Alice68-NetCheck` prints what a SANA-II driver reports, as text, on any AmigaOS:
+job.) `Alice68 NETCHECK` prints what a SANA-II driver reports, as text, on any AmigaOS:
 link rate, MAC address, packets and whether its interrupts reach AmigaOS.
-`Alice68-NetCheck WATCH` repeats the counters every second; `Alice68-NetCheck TEST` brings
+`Alice68 NETCHECK WATCH` repeats the counters every second; `Alice68 NETCHECK TEST` brings
 the interface up if no TCP/IP stack has, sends three broadcast test frames and says
 whether the link, the hardware and its interrupts work. It never loads a second copy of a
 driver a stack is using.
@@ -658,21 +713,21 @@ driver a stack is using.
 `DEVS:NetInterfaces/`, `S:User-Startup` or a stack's own settings): the kernel drives the
 chip now, and another driver resetting the same controller cuts it off. The kernel marks the
 controller disabled in the device tree for AmigaOS; if something resets it anyway, the
-splash and `Alice68-WiFi LOG` say "the WiFi controller was reset by someone else", and the
+splash and `Alice68 WIFI LOG` say "the WiFi controller was reset by someone else", and the
 kernel starts the chip again 5 seconds later.
 
-`Alice68-WiFi` on its own shows the state, the network, the signal and the counters;
+`Alice68 WIFI` on its own shows the state, the network, the signal and the counters;
 `SCAN` lists the networks in range; `LOG` shows the kernel's WiFi log (the same lines are
 on the splash and the serial log as `[WIFI] ...`) - send that if WiFi does not come up.
 `DISCONNECT`, `OFF` (chip off) and `START` (on again) do what they say.
 
-**When something hangs: `Alice68-Monitor`.** Start it first (`run Alice68-Monitor`): a
+**When something hangs: `Alice68 MONITOR`.** Start it first (`run Alice68 MONITOR`): a
 window at priority 21 that keeps updating while the mouse still moves. It shows what the
 WiFi is doing now, every task with its state, the signals it waits for and a backtrace,
 and the logs of the kernel, the network and the USB driver as they grow. Keys: space
 pauses, `1`-`5` choose the log, `t` the size of the task list, `q` quits. The logs live on
 the kernel's boards, which a 68k reset (Ctrl-Amiga-Amiga) does not clear: after a hang,
-reset and run `Alice68-Monitor DUMP >RAM:dump.txt` to get what led up to it, including the
+reset and run `Alice68 MONITOR DUMP >RAM:dump.txt` to get what led up to it, including the
 monitor's last task table.
 
 Not supported: WEP, WPA-Enterprise, hidden networks only by name (they are tried when
@@ -683,7 +738,7 @@ not seen in a scan), access-point mode.
 The Pi 4's WiFi chip also does Bluetooth, and the kernel now drives it: Bluetooth
 keyboards and mice work on the Amiga like USB ones, Classic ones and Bluetooth Low
 Energy (LE) ones (many newer mice and slim keyboards). Keyboards include
-Ctrl-Amiga-Amiga; mice include the wheel, for `Alice68-Wheel`. LE support is new and has
+Ctrl-Amiga-Amiga; mice include the wheel, for `Alice68 WHEEL`. LE support is new and has
 only been tested on a PC against a scripted device so far.
 
 1. **The firmware.** Copy `BCM4345C0.hcd` into the `WIFI` folder on the SD card (the
@@ -693,7 +748,7 @@ only been tested on a PC against a scripted device so far.
    WiFi firmware, it isn't ours to ship. `alice68hdf.device` hands it to the kernel
    while AmigaOS starts, so Bluetooth comes up a few seconds into the boot, not on the
    splash. Without the file, the chip's own older firmware is tried.
-2. **Pairing.** Open `Alice68-Card`, **Bluetooth** page. Put the keyboard or mouse in
+2. **Pairing.** Open Alice68Prefs, **Bluetooth** page (or use `Alice68 BT` in a Shell). Put the keyboard or mouse in
    pairing mode, press **Scan**, pick it in the lower list, press **Pair**.
    - A keyboard: type the six digits shown on the Bluetooth keyboard, then Enter.
    - A mouse: it pairs by itself.
@@ -702,7 +757,7 @@ only been tested on a PC against a scripted device so far.
      insists on LE Secure Connections pairing can't pair yet: the page says so.
 3. **After that,** paired devices are kept in `cmdline.txt` (`bt.dev=ADDRESS:KEY:KIND`,
    KIND a hex digit: 1 keyboard + 2 mouse + 4 LE + 8 game pad,
-   with `:EDIV:RAND:TYPE[:IRK]` after it for an LE device; Alice68-Card writes it at once). They reconnect by themselves at every boot once
+   with `:EDIV:RAND:TYPE[:IRK]` after it for an LE device; Alice68Prefs writes it at once). They reconnect by themselves at every boot once
    AmigaOS is starting, usually when you press a key or move the mouse. **Connect now**
    calls one, **Forget...** removes it.
 
@@ -727,13 +782,13 @@ pad, **Scan**, pick it ("game pad" in the list), **Pair**; no code to type.
 - **Other buttons:** `bt.pad.buttons=F,F2,F3` in `cmdline.txt` names the pad's buttons
   (their HID numbers, 1-16) for fire, fire 2 and fire 3, and `bt.pad.jump=N` makes a button
   push Up as well (for games that jump with Up). Turn a pad's buttons into numbers by
-  pressing them with `Alice68-USBLog MATCH=[BT]` open: the first reports are logged.
+  pressing them with `Alice68 LOG MATCH=[BT]` open: the first reports are logged.
 - **Which mode:** pads with several modes (picked with a button held at power-on) should
   be paired in their **Android / D-input** mode first; a Switch mode (it pretends to be a
   Switch Pro controller, report `0x3F`) works too. The **Fantech EOS Mini**: Android/D-input.
   The log says once, at each connection, what it found: `game pad: report N, X/Y n bits,
   hat yes/no, n buttons` - a photo of that line tells which mode a pad is in.
-- **Testing it:** `Alice68-JoyTest` (in `C:` after `ALICE68:Install`) prints, live, what a
+- **Testing it:** `Alice68 JOYTEST` (in `C:` after `ALICE68:Install`) prints, live, what a
   game reads from the joystick port: the directions, fire, fire 2 and fire 3, a line per
   change, Ctrl-C to stop (`ONCE`: just now; `MOUSEPORT`: the mouse port too, for a second
   pad - a mouse moving there shows as random directions, as a game would read it). It reads the same chip registers games do, so what
@@ -808,7 +863,7 @@ whose name is taken is mounted as `HF<unit><partition>` (e.g. `HF10`) instead.
 | `hdf=off` | No hardfiles at all. |
 
 Limits: FAT32 holds files up to 4 GB; put bigger hardfiles on an exFAT partition.
-Copy files only while the Pi is off. `C:Alice68-HDF`
+Copy files only while the Pi is off. `Alice68 HDF`
 lists the hardfiles found and the driver's log, including why anything was left out.
 `tools/hdf-test/run.sh` runs the tests on a PC.
 
@@ -924,9 +979,8 @@ alice68.folder=Amiga/Work:Work    # the folder Amiga/Work, as volume Work:
   switch off in the middle of a copy, and check the card on a PC if you ever do.
 
 **Installing Alice68's Amiga files.** The release's `ALICE68` folder (made by
-`amiga/build.sh` as `amiga/out/ALICE68`) holds `C/` (`Alice68-HDF`, `Alice68-USBLog`,
-`Alice68-NetCheck`, `Alice68-ShowConfig`, `Alice68-WiFi`, `Alice68-Network`,
-`Alice68-NetworkGT`, `Alice68-Monitor`), `DEVS/alice68net.device`, `DEVS/USBHardware/alice68-usb.device`, a
+`amiga/build.sh` as `amiga/out/ALICE68`) holds `C/Alice68` (the [Shell command](#the-alice68-command)), `Prefs/Alice68Prefs`,
+`WBStartup/Alice68Wheel`, `DEVS/alice68net.device`, `DEVS/USBHardware/alice68-usb.device`, a
 `ReadMe.txt`, and an installer. `ALICE68:` shows an SD card icon on Workbench; open it
 and double-click **Install** (it runs the Amiga's Installer), or in a Shell:
 
@@ -973,8 +1027,8 @@ driver reads the images itself.
   and not other formats such as `.bin`/`.cue`, `.nrg` or `.cdi`. Like hardfiles, an image
   must lie in the card's first 4 GB unless the card driver handles 64-bit offsets.
 
-`C:Alice68-ShowConfig` lists the images mounted and their volumes, and the driver's log
-(the splash's SYSTEM panel, `C:Alice68-HDF`) says why an image was left out.
+`Alice68 SHOWCONFIG` lists the images mounted and their volumes, and the driver's log
+(the splash's SYSTEM panel, `Alice68 HDF`) says why an image was left out.
 `tools/hdf-test/run.sh` tests the ISO reader on a PC against images made by
 `genisoimage` (Rock Ridge, Joliet and plain), and the volumes on a 68k emulator.
 
@@ -1009,8 +1063,8 @@ ARM_GNU_TOOLCHAIN=$HOME/toolchains/arm-gnu-toolchain-15.2.rel1-x86_64-aarch64_be
   bash tools/build-alice68-pi4.sh
 ```
 
-Build the 68k parts, `alice68-usb.device`, `Alice68-USBLog`, `alice68hdf.device` and
-`Alice68-HDF` (output: `amiga/out/`):
+Build the 68k parts, `alice68-usb.device`, `alice68hdf.device`, `alice68net.device`, `C:Alice68`
+and Alice68Prefs (output: `amiga/out/`):
 
 ```bash
 bash amiga/build.sh

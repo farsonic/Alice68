@@ -6,25 +6,39 @@ kernel8.img). alice68hdf.device mounts it as the volume ALICE68: at every
 boot, so new versions of these files arrive by copying the folder onto the
 card from a PC.
 
-  C/Alice68-HDF          the hardfiles and folders found, and why
-  C/Alice68-USBLog       the USB pass-through's log
-  C/Alice68-NetCheck     what the network driver reports
-  C/Alice68-ShowConfig   ShowConfig and more: boards, Alice68's cards, memory
-  C/Alice68-Status       the ARM side now: cores, temperature, JIT, network (LOOP)
-  C/Alice68-JoyTest      the joystick ports as games read them, live (ONCE)
-  C/Alice68-WiFi         WiFi from the Shell
-  C/Alice68-Network      the network settings window (MUI)
-  C/Alice68-NetworkGT    the same without MUI (GadTools)
-  C/Alice68-Card         the SD card: partitions, files, cmdline.txt, config.txt
-  C/Alice68-Monitor      a debugging window
-  C/Alice68-Wheel        a USB mouse's scroll wheel (also in WBStartup)
+  C/Alice68              the Shell command (Alice68 HELP lists what it does)
+  Prefs/Alice68Prefs     the settings window (MUI 3.8 or later)
+  WBStartup/Alice68Wheel starts the mouse wheel helper with Workbench
   DEVS/USBHardware/alice68-usb.device   for Neptune or Poseidon
   DEVS/alice68net.device the network card (WiFi unit 0, Ethernet unit 1)
 
-Alice68-Wheel turns a USB mouse's wheel into the NewMouse events most
-programs know (wheel up/down/left/right, the 4th button). Install puts it in
-WBStartup too, so it starts with Workbench; run it again to stop it. Without
-installing: Run >NIL: ALICE68:C/Alice68-Wheel
+Alice68Prefs has pages for the kernel's status, cmdline.txt's settings,
+config.txt, the SD card and its files, the network (WiFi and Ethernet),
+Bluetooth, the joystick, the logs and a monitor. Save writes cmdline.txt
+and config.txt (keeping .bak copies); Restart Pi restarts with them.
+
+The Shell command does the same without a window:
+
+  Alice68 STATUS [LOOP]       the kernel: cores, temperature, JIT, network
+  Alice68 CARD ...            partitions, files, OPTIONS, SET, BOOT, KICKSTART,
+                              CONFIG, CMDLINE, RESTART
+  Alice68 BT ...              Bluetooth: LIST, SCAN, PAIR, CONNECT, FORGET, KEEP
+  Alice68 WIFI ...            WiFi: SCAN, JOIN "name" "password", RECONNECT ...
+  Alice68 LOG [LINES=n] [MATCH=text] [FOLLOW]   the kernel's and USB driver's logs
+  Alice68 JOYTEST [ONCE]      the joystick ports as games read them, live
+  Alice68 HDF                 the hardfiles and folders found, and why
+  Alice68 NETCHECK            what the network driver reports
+  Alice68 SHOWCONFIG          boards, Alice68's cards, memory
+  Alice68 MONITOR [DUMP]      a debugging window (DUMP: as text)
+  Alice68 WHEEL               a mouse's scroll wheel (run it again: stop it)
+
+The wheel helper turns a USB or Bluetooth mouse's wheel into the NewMouse
+events most programs know (wheel up/down/left/right, the 4th button).
+Install puts Alice68Wheel in WBStartup, so it starts with Workbench.
+
+Install also takes away the separate programs of Alice68 0.6 and before
+(C/Alice68-Status, Alice68-Card, Alice68-Network ...): they are all in
+C:Alice68 and Alice68Prefs now. Uninstall puts back what they replaced.
 
 Icons/ holds volume icons: copy one onto a drive as its Disk.info. Folders
 and CD images show theirs by themselves; for a hardfile's partition:
