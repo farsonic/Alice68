@@ -754,10 +754,19 @@ void card_stop(void)
 	fe = NULL;
 }
 
+/* Edit, Last Saved: cmdline.txt and config.txt as on the card again */
+void card_reload(void)
+{
+	if (!cs_ok)
+		return;
+	loaded = !cc_load();
+	card_start();
+}
+
 void card_shown(int p)
 {
+	opts_read();                                     /* what was typed on the page left */
 	if (p == P_TEXT || p == P_SETTINGS) {
-		opts_read();
 		opts_show();
 		lines_show();
 	} else if (p == P_BT) {
@@ -808,6 +817,8 @@ int card_command(ULONG id)
 		say("alice68hdf.device's card service is not there: the SD card can't be changed from here");
 		return 1;
 	}
+	if (id != ID_OPT)
+		opts_read();                                 /* typed, not yet taken: before anything changes the values */
 	switch (id) {
 	case ID_FREE:
 		say("Counting free space...");

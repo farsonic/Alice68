@@ -17,7 +17,7 @@ CFLAGS := -m68020 -mtune=68020-60 -O2 -std=gnu99 -ffreestanding -fno-builtin -fn
           -fno-asynchronous-unwind-tables -fno-unwind-tables -fno-stack-protector \
           -ffunction-sections -fdata-sections -Wall -Wno-unused-parameter \
           -Irt/include -Irt -Irt/os -I$(B) -I. -I.. -I../wifi -I../../third_party/Emu68/src/alice -I../../third_party/Emu68/src/raspi
-LDFLAGS := -T rt/link.ld --emit-relocs --gc-sections --no-warn-rwx-segments
+LDFLAGS := -T rt/link.ld --emit-relocs --gc-sections --no-warn-rwx-segments --no-warn-execstack
 
 LIBS   := exec dos timer locale battclock intuition gadtools graphics icon
 GEN_H  := $(foreach l,$(LIBS),$(B)/gen/$(l)_calls.h) $(B)/gen/muimaster_calls.h $(B)/gen/expansion_calls.h

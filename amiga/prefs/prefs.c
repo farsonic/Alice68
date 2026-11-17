@@ -33,6 +33,7 @@ struct GfxBase *GfxBase;
 struct Library *IconBase;
 
 int card_prepare(void);
+void card_reload(void);
 
 /* ==================================================================
  * the pages (the nav list and the heads draw these)
@@ -302,9 +303,7 @@ static int command(ULONG id)
 		go_page(P_ABOUT);
 		break;
 	case ID_LASTSAVED:
-		card_stop();
-		if (card_prepare() == 0)
-			card_start();
+		card_reload();
 		say("cmdline.txt and config.txt read again from the card");
 		break;
 	case ID_DARK:
