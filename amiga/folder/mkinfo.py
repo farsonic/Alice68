@@ -129,6 +129,19 @@ def icon_wheel():
         if xs and y > 2: p.px(xs[-1] + 1, y, 1)
     return p
 
+def icon_prefs():
+    """a settings panel: three sliders, their knobs in blue"""
+    p = Pic()
+    x0, y0, x1, y1 = 12, 1, 43, 23
+    p.rect(x0, y0, x1, y1, 2)
+    p.frame(x0, y0, x1, y1, 1)
+    for k, (x, knob) in enumerate(((19, 15), (28, 6), (37, 12))):
+        p.rect(x, y0 + 3, x, y1 - 3, 1)                  # the slot
+        p.rect(x - 3, knob, x + 3, knob + 3, 3)          # the knob
+        p.frame(x - 3, knob, x + 3, knob + 3, 1)
+    p.rect(x1 + 1, y0 + 2, x1 + 1, y1 + 1, 1); p.rect(x0 + 2, y1 + 1, x1 + 1, y1 + 1, 1)   # shadow
+    return p
+
 def _in_ellipse(x, y, cx, cy, rx, ry):
     return ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 <= 1.0
 

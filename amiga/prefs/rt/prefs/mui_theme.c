@@ -301,11 +301,22 @@ void theme_line(struct RastPort *rp, LONG x0, LONG y0, LONG x1, LONG y1, LONG pe
  *   E cx cy r       filled circle    P n x0 y0 ...   polyline through n points
  *   A cx cy r       the top of a ring (about 50 degrees each side of straight up), thicker
  *                   than a line: radio waves
- * Same order as the IC_* enum (one per page); drawn for Riptide, rearranged for Alice68-Network. */
+ * Same order as the IC_* enum (one per page); drawn for Riptide, rearranged and added to for Alice68Prefs. */
 static const char *const icons[IC_NICONS] = {
 	/* ABOUT: an "i" in a ring */
 	"ca O 8 8 6 ci F 7 7 8 11 F 7 4 8 5",
-	/* STATUS: a screen with a line graph going up and down (Riptide's) */
+	/* STATUS: a chip with its pins, the core in the accent */
+	"cl F 4 4 11 11 ci R 4 4 11 11 ca F 6 6 9 9 ci L 6 1 6 3 L 9 1 9 3 L 6 12 6 14 L 9 12 9 14 L 1 6 3 6 L 1 9 3 9 "
+	"L 12 6 14 6 L 12 9 14 9",
+	/* SETTINGS: three sliders */
+	"ci L 3 2 3 14 L 8 2 8 14 L 13 2 13 14 ca F 2 9 4 11 F 7 4 9 6 F 12 10 14 12",
+	/* TEXT: a page of text */
+	"cw F 3 1 12 14 ci R 3 1 12 14 L 5 4 10 4 L 5 6 10 6 L 5 8 10 8 ca L 5 10 8 10",
+	/* CARD: an SD card, its corner cut, and its contacts */
+	"cw F 4 2 12 14 ci P 6 3 14 3 4 6 1 12 1 12 14 3 14 ca F 6 3 7 5 F 9 3 10 5",
+	/* FILES: a folder */
+	"cy F 1 5 14 13 F 1 3 6 4 ci R 1 5 14 13 L 1 3 6 3 L 6 3 7 5 L 1 3 1 5",
+	/* NETSTATUS: a screen with a line graph going up and down (Riptide's STATUS) */
 	"cw F 2 3 13 10 ci R 1 2 14 11 L 5 14 10 14 L 7 12 7 13 ca P 5 3 9 6 6 8 8 10 4 12 6",
 	/* ETH: a network card: the board, a chip, the socket, the contacts (Riptide's IFACE) */
 	"cl F 1 3 14 11 ci R 1 3 14 11 F 3 5 6 8 ca R 9 5 13 9 F 10 6 12 8 ci L 3 12 3 13 L 5 12 5 13 L 7 12 7 13 "
@@ -320,6 +331,14 @@ static const char *const icons[IC_NICONS] = {
 	"ca L 5 13 5 3 L 3 5 5 3 L 7 5 5 3 cg L 11 3 11 13 L 9 11 11 13 L 13 11 11 13",
 	/* WIFITRAFFIC: as ETHTRAFFIC */
 	"ca L 5 13 5 3 L 3 5 5 3 L 7 5 5 3 cg L 11 3 11 13 L 9 11 11 13 L 13 11 11 13",
+	/* BT: the Bluetooth rune */
+	"ca P 6 4 4 11 11 8 14 8 1 11 4 4 11",
+	/* JOY: a joystick: its base, the stick and the knob, a fire button */
+	"cl F 3 11 13 14 ci R 3 11 13 14 L 8 4 8 10 ca E 8 4 2 cr E 11 12 1",
+	/* LOGS: a list of lines (Riptide's QRULE) */
+	"ca F 2 3 3 4 ci F 2 7 3 8 F 2 11 3 12 L 6 4 14 4 L 6 8 14 8 L 6 12 14 12",
+	/* MONITOR: a heartbeat line (Riptide's KA) */
+	"cr P 6 1 8 5 8 7 3 9 13 11 8 14 8",
 };
 
 /* the pen of an icon colour letter */

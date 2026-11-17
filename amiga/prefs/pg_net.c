@@ -1,45 +1,25 @@
 /*
- * Alice68-Network 2.1 - the settings and statistics of Alice68's network
- * card (alice68net.device: unit 0 the Pi 4's WiFi, unit 1 its Gigabit
- * Ethernet, both run by the kernel on CPU1). MUI, in the look of Riptide's
- * RiptidePrefs: its theme and classes are in rt/ (see rt/README).
+ * Alice68Prefs: the Network pages - the settings and statistics of Alice68's network card
+ * (alice68net.device: unit 0 the Pi 4's WiFi, unit 1 its Gigabit Ethernet, both run by the
+ * kernel on CPU1). This was Alice68-Network 2.3.
  *
- * The page list: About and Status; Networks (what the Ethernet and the WiFi
- * are doing, and the WiFi networks in range); Settings (the Ethernet's
- * speeds, duplex, autonegotiation and flow control; the WiFi's network,
- * password, country and power saving); Traffic (each unit's numbers and
- * the last minute as a graph). Save, Apply and Close below, and a status
- * line. The numbers come straight from the network board, once a second;
- * actions go to alice68net.device without waiting (the window never blocks).
+ * Status (both units, a minute of traffic); Ethernet and WiFi (what each is doing, the WiFi
+ * networks in range); their settings (the Ethernet's speeds, duplex, autonegotiation and flow
+ * control; the WiFi's network, password, country and power saving); their traffic. The numbers
+ * come straight from the network board, once a second; actions go to alice68net.device without
+ * waiting (the window never blocks).
  *
- * What it keeps: ENV:alice68wifi.prefs and ENVARC: (the WiFi network: SSID,
- * PASSWORD, COUNTRY - also read by "Alice68-WiFi RECONNECT") and
- * ENV:alice68net.prefs and ENVARC: (ETH=, WIFI= and UNITn=OFF, which
- * alice68net.device applies when it starts). The MAC addresses are the kernel's business.
- *
- * Start: from the Shell or Workbench, no arguments.
+ * What it keeps: ENV:alice68wifi.prefs and ENVARC: (the WiFi network: SSID, PASSWORD, COUNTRY -
+ * also read by "Alice68 WIFI RECONNECT") and ENV:alice68net.prefs and ENVARC: (ETH=, WIFI= and
+ * UNITn=OFF, which alice68net.device applies when it starts).
  * SPDX-License-Identifier: GPL-2.0-only
  */
-#include <stddef.h>
-#include "cmd/cmdlib.h"
-#include "prefs/mui_classes.h"
-#include "prefs/mui_theme.h"
-#include "prefs/mui_widgets.h"
+#include "ui.h"
 #include "prefs/stat_util.h"
-#include "prefs/prefs_fields.h"
 #include "gen/expansion_calls.h"
 #include "alice_net.h"
 #include "wifi_api.h"
 
-#define A68N_VERSION "2.3"
-#define A68N_DATE    "07.11.2026"
-#define A68N_TITLE   "Alice68 Network"
-static const char vers[] __attribute__((used)) = "$VER: Alice68-Network " A68N_VERSION " (" A68N_DATE ")";
-
-struct ExecBase *SysBase;
-struct DosLibrary *DOSBase;
-struct IntuitionBase *IntuitionBase;
-struct GfxBase *GfxBase;
 struct Library *ExpansionBase;
 
 #define SEC_OPEN  0x01                  /* the kernel's SEC_* (wifi/fmac.h) */
@@ -49,36 +29,12 @@ struct Library *ExpansionBase;
 #define SEC_WPA3  0x10
 #define SEC_8021X 0x20
 
-/* ==================================================================
- * the pages (the nav list and the heads draw these)
- * ================================================================== */
-const struct rp_page rp_pages[RP_NPAGES] = {
-	[P_ABOUT] = { "About", "Alice68-Network: which version this is, and where it comes from." },
-	[P_STATUS] = { "Status", "Both network units at a glance, and all their traffic of the last minute." },
-	[P_ETH] = { "Ethernet", "The Pi's Gigabit Ethernet port (unit 1): the link, what each side offers, "
-	                        "and the MAC address." },
-	[P_WIFI] = { "WiFi", "The Pi's WiFi (unit 0): the network it is on, and the networks in range. "
-	                     "Click one to join it." },
-	[P_ETHSET] = { "Ethernet", "Speeds and duplex to offer, a fixed speed instead, flow control. Apply "
-	                           "renegotiates the link; Save keeps it for the next start." },
-	[P_WIFISET] = { "WiFi", "The network to join, its password (hidden unless Show is ticked), the "
-	                        "country and power saving." },
-	[P_ETHTRAFFIC] = { "Ethernet", "Frames and bytes in and out, drops and errors, and the last minute." },
-	[P_WIFITRAFFIC] = { "WiFi", "Frames and bytes in and out, drops and errors, and the last minute." },
-};
-const int rp_nav_order[RP_NPAGES] = { P_ABOUT, P_STATUS, P_ETH, P_WIFI, P_ETHSET, P_WIFISET, P_ETHTRAFFIC,
-                                      P_WIFITRAFFIC };
-const char *const rp_nav_head[RP_NPAGES] = { NULL, NULL, "Networks", NULL, "Settings", NULL, "Traffic", NULL };
-
 /* return IDs */
 enum {
-	ID_SAVE = 1, ID_APPLY, ID_CLOSE, ID_PAGE, ID_FRONT,
-	ID_ETH_SW, ID_AUTONEG, ID_WIFI_SW,
+	ID_ETH_SW = ID_NET, ID_AUTONEG, ID_WIFI_SW,
 	ID_JOIN, ID_DISC, ID_SCAN, ID_PICK, ID_SHOWPW
 };
-
-static Object *app, *win, *root, *nav, *head, *pages, *status, *bar, *btn[3];
-static int page = P_STATUS;
+static char note[120];                  /* what the last action did, for the status line */
 
 /* ==================================================================
  * the network board: the kernel's numbers, read without asking anyone
@@ -122,8 +78,6 @@ static struct WifiScanEntry scanbuf[AN_SCAN_MAX];
 static struct WifiJoin joinbuf;
 static struct NetEthCfg ecfg;
 static ULONG wcfg;
-static char note[120];                  /* what the last action did, for the status line */
-
 static void dev_open(void)
 {
 	int i;
@@ -216,71 +170,13 @@ static void fmt_modes(char *buf, int len, ULONG m)
 		rt_strlcpy(buf, "-", (size_t)len);
 }
 
-/* a value cut to fit a line (the labels do not wrap) */
-static void cut(char *b, int max)
-{
-	if ((int)strlen(b) > max && max > 3) {
-		b[max - 3] = '.';
-		b[max - 2] = '.';
-		b[max - 1] = '.';
-		b[max] = 0;
-	}
-}
 
-/* ==================================================================
- * building blocks
- * ================================================================== */
-static Object *rect(void)
-{
-	return mui_new(MUIC_Rectangle, TAGEND);
-}
 
-static Object *hgroup2(Object *a, Object *b)
-{
-	return mui_new(MUIC_Group, MUIA_Group_Horiz, TRUE, MUIA_Group_Spacing, 0, MUIA_Group_Child, (ULONG)a,
-	               MUIA_Group_Child, (ULONG)b, TAGEND);
-}
 
-static Object *label(const char *text, int kind)
-{
-	return mui_newc(qlabel_mcc, MUIA_QLabel_Text, (ULONG)text, MUIA_QLabel_Kind, (ULONG)kind, TAGEND);
-}
 
-static Object *left(Object *o)
-{
-	return o ? hgroup2(o, rect()) : NULL;
-}
 
-static Object *button(const char *text, ULONG id)
-{
-	const char *u = strchr(text, '_');
-	char key = u && u[1] ? (char)(u[1] >= 'A' && u[1] <= 'Z' ? u[1] + 32 : u[1]) : 0;
-	Object *b = mui_newc(qbutton_mcc, MUIA_QButton_Label, (ULONG)text, MUIA_InputMode, MUIV_InputMode_RelVerify,
-	                     MUIA_ControlChar, (ULONG)key, MUIA_CycleChain, 1, TAGEND);
 
-	if (b && app)
-		mui_do(b, MUIM_Notify, MUIA_Pressed, FALSE, (ULONG)app, 2, MUIM_Application_ReturnID, id);
-	return b;
-}
 
-static Object *checkbox(ULONG id)
-{
-	Object *g = mui_new(MUIC_Image, MUIA_Frame, MUIV_Frame_ImageButton, MUIA_InputMode, MUIV_InputMode_Toggle,
-	                    MUIA_Image_Spec, MUII_CheckMark, MUIA_Image_FreeVert, FALSE, MUIA_Background, MUII_ButtonBack,
-	                    MUIA_ShowSelState, FALSE, MUIA_CycleChain, 1, TAGEND);
-
-	if (g && id)
-		mui_do(g, MUIM_Notify, MUIA_Selected, MUIV_EveryTime, (ULONG)app, 2, MUIM_Application_ReturnID, id);
-	return g;
-}
-
-/* a check box with its text right of it, the rest of the row empty */
-static Object *check_row(Object *cb, const char *text)
-{
-	return cb ? mui_new(MUIC_Group, MUIA_Group_Horiz, TRUE, MUIA_Group_Spacing, 6, MUIA_Group_Child, (ULONG)cb,
-	                    MUIA_Group_Child, (ULONG)label(text, QL_LABEL), MUIA_Group_Child, (ULONG)rect(), TAGEND)
-	          : NULL;
-}
 
 /* the on/off switch of a unit, and the line beside it that says what that means now */
 static Object *sw_obj[2], *sw_text[2];
@@ -335,89 +231,13 @@ static void switch_refresh(void)
 	}
 }
 
-static Object *string(ULONG maxlen, int secret)
-{
-	return mui_new(MUIC_String, MUIA_Frame, MUIV_Frame_String, MUIA_String_MaxLen, maxlen,
-	               secret ? MUIA_String_Secret : TAG_IGNORE, TRUE, MUIA_CycleChain, 1, TAGEND);
-}
 
-static Object *row(Object *a, Object *b, Object *c, Object *d)
-{
-	return mui_new(MUIC_Group, MUIA_Group_Horiz, TRUE, MUIA_Group_Spacing, 8, MUIA_Group_Child, (ULONG)a,
-	               b ? MUIA_Group_Child : TAG_IGNORE, (ULONG)b, c ? MUIA_Group_Child : TAG_IGNORE, (ULONG)c,
-	               d ? MUIA_Group_Child : TAG_IGNORE, (ULONG)d, MUIA_Group_Child, (ULONG)rect(), TAGEND);
-}
 
-/* a page's contents with the theme's margins */
-static Object *page_box(Object *c)
-{
-	ULONG in = theme_compact() ? 4 : 10;
 
-	return c ? mui_new(MUIC_Group, MUIA_InnerLeft, 12, MUIA_InnerRight, 12, MUIA_InnerTop, in, MUIA_InnerBottom, in,
-	                   MUIA_Group_VertSpacing, theme_compact() ? 3 : 6, MUIA_Group_Child, (ULONG)c,
-	                   MUIA_Group_Child, (ULONG)rect(), TAGEND) : NULL;
-}
 
-static Object *vgroup(int spacing)
-{
-	return mui_new(MUIC_Group, MUIA_Group_VertSpacing, theme_compact() ? spacing / 2 : spacing, TAGEND);
-}
 
-static void add(Object *g, Object *o)
-{
-	if (g && o)
-		mui_do(g, OM_ADDMEMBER, (ULONG)o);
-}
 
-/* A block of "name  value" rows, as MikroTik's Status tab: names right-aligned
- * in the first column, the values (which change) in the others. */
-#define VMAX 14
-#define VLEN 64                         /* longer values are cut */
-struct vblock {
-	int n;
-	Object *obj[VMAX];
-	char text[VMAX][VLEN], shown[VMAX][VLEN];
-};
 
-static Object *vblock_build(struct vblock *v, const char *const *names, int n, int cols)
-{
-	Object *g = mui_new(MUIC_Group, MUIA_Group_Columns, cols, MUIA_Group_HorizSpacing, 12,
-	                    MUIA_Group_VertSpacing, theme_compact() ? 1 : 3, TAGEND);
-	int i, c;
-
-	if (!g)
-		return NULL;
-	v->n = n;
-	for (i = 0; i < n; i++) {
-		Object *l = label(names[i], QL_LABEL);
-		if (!l)
-			return NULL;
-		add(g, l);
-		for (c = 1; c < cols; c++) {
-			int k = i * (cols - 1) + (c - 1);
-			v->text[k][0] = '-';
-			v->text[k][1] = 0;
-			v->obj[k] = label(v->text[k], QL_NOTE);
-			if (!v->obj[k])
-				return NULL;
-			add(g, v->obj[k]);
-		}
-	}
-	return g;
-}
-
-/* show a value; only what changed is drawn again */
-static void vset(struct vblock *v, int k, const char *s)
-{
-	if (!v->obj[k])
-		return;
-	rt_strlcpy(v->text[k], s, VLEN);
-	cut(v->text[k], VLEN - 1 < 52 ? VLEN - 1 : 52);
-	if (strcmp(v->text[k], v->shown[k])) {
-		rt_strlcpy(v->shown[k], v->text[k], VLEN);
-		mui_set(v->obj[k], MUIA_QLabel_Text, (ULONG)v->text[k]);
-	}
-}
 
 /* ==================================================================
  * traffic: rates from the counters, a minute of history per unit
@@ -447,23 +267,6 @@ static void traffic_sample(int u, ULONG ms)
 	rp_hist_push(&t->hist, t->rate_rxb, t->rate_txb);
 }
 
-/* ==================================================================
- * About
- * ================================================================== */
-static Object *about_page(void)
-{
-	Object *g = vgroup(6);
-
-	add(g, left(label("Alice68-Network " A68N_VERSION " (" A68N_DATE ")", QL_TITLE)));
-	add(g, left(label("The settings and numbers of Alice68's network card:\n"
-	                  "the Raspberry Pi 4's WiFi and Gigabit Ethernet, run by\n"
-	                  "the kernel on CPU1, used through alice68net.device.", QL_TEXT)));
-	add(g, left(label("Licence and source", QL_TITLE)));
-	add(g, left(label("Free software under the GNU General Public License,\n"
-	                  "version 2. Its look and classes are Riptide's\n"
-	                  "RiptidePrefs (github.com/farsonic/riptide).", QL_TEXT)));
-	return page_box(g);
-}
 
 /* ==================================================================
  * Status
@@ -597,7 +400,7 @@ static Object *wifi_page(void)
 	add(g, vblock_build(&wifi_v, wifi_names, W_N, 2));
 	add(g, row(label("Networks in range", QL_TITLE), button("Sca_n", ID_SCAN), NULL, NULL));
 	add(g, nets_table);
-	return page_box(g);
+	return page_full(g);
 }
 
 static const char *find(const char *h, const char *n)
@@ -985,16 +788,6 @@ static int prefs_save(void)
 	return ok;
 }
 
-/* ==================================================================
- * actions
- * ================================================================== */
-static void say(const char *s)
-{
-	if (s != note)
-		rt_strlcpy(note, s, sizeof(note));
-	if (status)
-		mui_set(status, MUIA_Status_Text, (ULONG)note);
-}
 
 /* the Ethernet and WiFi settings to the kernel, when they differ from its own */
 static int apply_settings(void)
@@ -1093,7 +886,8 @@ static void dev_done(void)
  * ================================================================== */
 static ULONG last_tick_us;
 
-static void refresh(void)
+/* once a second, whichever page is shown: the traffic counts and the switches */
+void net_tick(int p)
 {
 	ULONG now, ms;
 
@@ -1106,8 +900,8 @@ static void refresh(void)
 	traffic_sample(1, ms);
 	rp_hist_push(&trf_all.hist, trf[0].rate_rxb + trf[1].rate_rxb, trf[0].rate_txb + trf[1].rate_txb);
 	switch_refresh();
-	switch (page) {
-	case P_STATUS: status_refresh(); break;
+	switch (p) {
+	case P_NETSTATUS: status_refresh(); break;
 	case P_ETH: eth_refresh(); break;
 	case P_WIFI: wifi_refresh(); break;
 	case P_ETHTRAFFIC: traffic_refresh(1); break;
@@ -1115,14 +909,10 @@ static void refresh(void)
 	}
 }
 
-/* ==================================================================
- * the window
- * ================================================================== */
-static Object *build_page(int p)
+Object *net_page(int p)
 {
 	switch (p) {
-	case P_ABOUT: return about_page();
-	case P_STATUS: return status_page();
+	case P_NETSTATUS: return status_page();
 	case P_ETH: return eth_page();
 	case P_WIFI: return wifi_page();
 	case P_ETHSET: return ethset_page();
@@ -1133,104 +923,81 @@ static Object *build_page(int p)
 	return NULL;
 }
 
-static int build_window(void)
+void net_start(void)
 {
-	static const char *const blabel[3] = { "_Save", "_Apply", "_Close" };
-	static const ULONG bid[3] = { ID_SAVE, ID_APPLY, ID_CLOSE };
-	static const char *const bhelp[3] = {
-		"Applies the settings and keeps them, and the WiFi network, for the next start; joins the "
-		"network typed in if the WiFi is not on it already.",
-		"Applies the Ethernet and WiFi settings now, without keeping them, and joins the network "
-		"typed in if the WiFi is not on it already.",
-		"Closes the window. The card keeps running." };
-	Object *right, *top;
-	int i;
-
-	nav = mui_newc(nav_mcc, MUIA_Nav_Active, (ULONG)page, MUIA_ShortHelp, (ULONG)" ", TAGEND);
-	head = mui_newc(head_mcc, MUIA_Head_Page, (ULONG)page, TAGEND);
-	pages = mui_new(MUIC_Group, MUIA_Group_PageMode, TRUE, TAGEND);
-	status = mui_newc(status_mcc, TAGEND);
-	bar = mui_new(MUIC_Group, MUIA_Group_Horiz, TRUE, MUIA_Group_SameSize, TRUE, MUIA_Group_Spacing, 8,
-	              MUIA_InnerLeft, 8, MUIA_InnerRight, 8, MUIA_InnerTop, theme_compact() ? 3 : 6,
-	              MUIA_InnerBottom, theme_compact() ? 3 : 6, MUIA_Background, (ULONG)theme_spec(T_PANEL), TAGEND);
-	if (!nav || !head || !pages || !status || !bar)
-		return -1;
-	for (i = 0; i < RP_NPAGES; i++) {
-		Object *pg = build_page(i);
-		if (!pg)
-			return -1;
-		add(pages, pg);
-	}
-	for (i = 0; i < 3; i++) {
-		btn[i] = button(blabel[i], bid[i]);
-		if (!btn[i])
-			return -1;
-		mui_set(btn[i], MUIA_ShortHelp, (ULONG)theme_bubble(blabel[i] + 1, bhelp[i]));
-		add(bar, btn[i]);
-	}
-	mui_set(pages, MUIA_Group_ActivePage, (ULONG)page);
-	right = mui_new(MUIC_Group, MUIA_Group_Spacing, 0, MUIA_Group_Child, (ULONG)head, MUIA_Group_Child,
-	                (ULONG)pages, TAGEND);
-	top = right ? mui_new(MUIC_Group, MUIA_Group_Horiz, TRUE, MUIA_Group_Spacing, 0, MUIA_Group_Child, (ULONG)nav,
-	                      MUIA_Group_Child, (ULONG)right, TAGEND) : NULL;
-	root = top ? mui_new(MUIC_Group, MUIA_Group_Spacing, 0, MUIA_InnerLeft, 0, MUIA_InnerRight, 0, MUIA_InnerTop, 0,
-	                     MUIA_InnerBottom, 0, MUIA_Background, (ULONG)theme_spec(T_WINDOW), MUIA_Group_Child,
-	                     (ULONG)top, MUIA_Group_Child, (ULONG)mui_newc(line_mcc, TAGEND), MUIA_Group_Child,
-	                     (ULONG)bar, MUIA_Group_Child, (ULONG)status, TAGEND) : NULL;
-	if (!root)
-		return -1;
-	win = mui_new(MUIC_Window, MUIA_Window_Title, (ULONG)A68N_TITLE, MUIA_Window_ID, 0x41363846UL /* A68N */,
-	              MUIA_Window_RootObject, (ULONG)root, TAGEND);
-	if (!win)
-		return -1;
-	add(app, win);
-	mui_do(win, MUIM_Notify, MUIA_Window_CloseRequest, TRUE, (ULONG)app, 2, MUIM_Application_ReturnID, ID_CLOSE);
-	mui_do(app, MUIM_Notify, MUIA_Application_DoubleStart, MUIV_EveryTime, (ULONG)app, 2,
-	       MUIM_Application_ReturnID, ID_FRONT);
-	mui_do(nav, MUIM_Notify, MUIA_Nav_Active, MUIV_EveryTime, (ULONG)pages, 3, MUIM_Set, MUIA_Group_ActivePage,
-	       MUIV_TriggerValue);
-	mui_do(nav, MUIM_Notify, MUIA_Nav_Active, MUIV_EveryTime, (ULONG)head, 3, MUIM_Set, MUIA_Head_Page,
-	       MUIV_TriggerValue);
-	mui_do(nav, MUIM_Notify, MUIA_Nav_Active, MUIV_EveryTime, (ULONG)app, 2, MUIM_Application_ReturnID, ID_PAGE);
-	return 0;
+	find_board();
+	prefs_load();
+	dev_open();
 }
 
-static void go_page(int p)
+void net_stop(void)
 {
-	page = p;
-	mui_set(nav, MUIA_Nav_Active, (ULONG)p);
-	refresh();
+	dev_close();
 }
 
-/* 1: quit */
-static int command(ULONG id)
+ULONG net_signals(void)
+{
+	return ioport ? 1UL << ioport->mp_SigBit : 0;
+}
+
+void net_signal(ULONG got)
+{
+	if (ioport && (got & (1UL << ioport->mp_SigBit)))
+		dev_done();
+}
+
+/* what the window's status line says first */
+const char *net_hello(void)
+{
+	if (!nb)
+		return "no Alice68 network board: this is not an Alice68 kernel with the network";
+	if (!ropen[R_WIFI] && !ropen[R_ETH])
+		return "alice68net.device could not be opened: is it in DEVS:?";
+	return NULL;
+}
+
+/* the settings differ from the kernel's, or the WiFi network typed in is not the one it is on */
+int net_changed(void)
+{
+	const char *ssid = str_of(w_ssid);
+	volatile struct an_unit *e, *w;
+	struct NetEthCfg c;
+
+	if (!nb || !w_ssid)
+		return 0;
+	e = U(1);
+	w = U(0);
+	ethset_read(&c);
+	if (c.ec_Adv != e->cfg_adv || c.ec_Flags != e->cfg_flags || c.ec_Speed != e->cfg_speed)
+		return e->kind != AN_KIND_NONE;
+	if ((mui_get(w_ps, MUIA_Selected) ? AN_WC_POWERSAVE : 0) != (w->cfg_flags & AN_WC_POWERSAVE))
+		return 1;
+	return ssid[0] && (w->state != AN_ST_CONNECTED || strcmp(ssid, (const char *)w->ssid));
+}
+
+/* Save (keep) or Use: the settings to the kernel; the network typed in joined */
+int net_save(int keep)
+{
+	const char *ssid = str_of(w_ssid);
+	volatile struct an_unit *w = U(0);
+	int r = apply_settings();
+
+	if (r < 0)
+		return -1;
+	if (ssid[0] && nb && (w->state != AN_ST_CONNECTED || strcmp(ssid, (const char *)w->ssid)))
+		do_join(keep);
+	else if (keep)
+		say(prefs_save() ? (r ? "network: applied, and saved for the next start" : "network: saved for the next start")
+		                 : "the network prefs could not be saved");
+	else
+		say(r ? "network: applied (not saved: Save keeps it)" : "network: nothing changed");
+	return r;
+}
+
+/* the pages' own buttons; 0 when it is not theirs */
+int net_command(ULONG id)
 {
 	switch (id) {
-	case ID_CLOSE:
-		return 1;
-	case ID_FRONT:
-		mui_do(win, MUIM_Window_ToFront);
-		break;
-	case ID_PAGE:
-		page = (int)mui_get(nav, MUIA_Nav_Active);
-		refresh();
-		break;
-	case ID_SAVE:
-	case ID_APPLY: {
-		const char *ssid = (const char *)mui_get(w_ssid, MUIA_String_Contents);
-		volatile struct an_unit *w = U(0);
-		int r = apply_settings();
-		if (r < 0)
-			break;
-		if (ssid && ssid[0] && nb && (w->state != AN_ST_CONNECTED || strcmp(ssid, (const char *)w->ssid)))
-			do_join(id == ID_SAVE);
-		else if (id == ID_SAVE)
-			say(prefs_save() ? (r ? "applied, and saved for the next start" : "saved for the next start")
-			                 : "the prefs could not be saved");
-		else
-			say(r ? "applied (not saved: Save keeps it)" : "nothing changed");
-		break;
-	}
 	case ID_AUTONEG:
 		ethset_disable();
 		break;
@@ -1259,6 +1026,7 @@ static int command(ULONG id)
 	case ID_PICK: {
 		LONG r = (LONG)mui_get(nets_table, MUIA_Table_Active);
 		if (r >= 0 && r < nets_n) {
+			extern void go_page(int p);
 			mui_set(w_ssid, MUIA_String_Contents, (ULONG)scanbuf[r].we_Ssid);
 			go_page(P_WIFISET);
 			mui_set(win, MUIA_Window_ActiveObject, (ULONG)w_pw[mui_get(w_show, MUIA_Selected) ? 1 : 0]);
@@ -1269,125 +1037,8 @@ static int command(ULONG id)
 	case ID_SHOWPW:
 		show_password((int)mui_get(w_show, MUIA_Selected));
 		break;
+	default:
+		return 0;
 	}
-	return 0;
-}
-
-/* the next second */
-static void tick_send(struct timerequest *t)
-{
-	t->tr_node.io_Command = TR_ADDREQUEST;
-	t->tr_time.tv_secs = 1;
-	t->tr_time.tv_micro = 0;
-	SendIO((struct IORequest *)t);
-}
-
-long amiga_main(char *args, long len)
-{
-	struct MsgPort *tport = NULL;
-	struct timerequest *treq = NULL;
-	int timer_on = 0, r = 20;
-	ULONG sigs = 0;
-
-	(void)args; (void)len;
-	DOSBase = (struct DosLibrary *)OpenLibrary((CONST_STRPTR)"dos.library", 37);
-	IntuitionBase = (struct IntuitionBase *)OpenLibrary((CONST_STRPTR)"intuition.library", 37);
-	GfxBase = (struct GfxBase *)OpenLibrary((CONST_STRPTR)"graphics.library", 37);
-	MUIMasterBase = OpenLibrary((CONST_STRPTR)"muimaster.library", 19);
-	if (DOSBase && !MUIMasterBase) {
-		static const char t[] = "Alice68-Network needs MUI 3.8 or later (muimaster.library 19).\n"
-		                        "Alice68-NetworkGT is a simpler window without MUI.\n";
-		Write(Output(), (APTR)t, (LONG)sizeof(t) - 1);
-	}
-	if (!DOSBase || !IntuitionBase || !GfxBase || !MUIMasterBase)
-		goto out;
-	find_board();
-	{
-		struct Screen *s = LockPubScreen(NULL);
-		if (s) {
-			theme_set_compact(s->Height < 400);
-			UnlockPubScreen(NULL, s);
-		}
-	}
-	if (rp_classes_make() < 0 || widgets_classes_make() < 0)
-		goto out;
-	app = mui_new(MUIC_Application, MUIA_Application_Title, (ULONG)"Alice68-Network", MUIA_Application_Version,
-	              (ULONG)vers, MUIA_Application_Copyright, (ULONG)"GPL-2.0", MUIA_Application_Author,
-	              (ULONG)"The Alice68 and Riptide authors",
-	              MUIA_Application_Description, (ULONG)"Alice68's WiFi and Ethernet",
-	              MUIA_Application_Base, (ULONG)"ALICE68NET", MUIA_Application_UseCommodities, FALSE,
-	              MUIA_Application_UseRexx, FALSE, MUIA_Application_SingleTask, TRUE, TAGEND);
-	if (!app) {
-		r = MUI_Error() == MUIE_SingleTask ? 0 : 20;
-		goto out;
-	}
-	if (build_window() < 0)
-		goto out;
-	prefs_load();
-	dev_open();
-	mui_set(win, MUIA_Window_Open, TRUE);
-	if (!mui_get(win, MUIA_Window_Open))
-		goto out;
-	if (!nb)
-		say("no Alice68 network board: this is not an Alice68 kernel with the network");
-	else if (!ropen[R_WIFI] && !ropen[R_ETH])
-		say("alice68net.device could not be opened: is it in DEVS:?");
-	else
-		say("Alice68-Network " A68N_VERSION);
-	tport = CreateMsgPort();
-	treq = tport ? (struct timerequest *)CreateIORequest(tport, sizeof(struct timerequest)) : NULL;
-	if (treq && !OpenDevice((CONST_STRPTR)"timer.device", UNIT_VBLANK, (struct IORequest *)treq, 0))
-		timer_on = 1;
-	refresh();
-	if (timer_on)
-		tick_send(treq);
-	r = 0;
-	for (;;) {
-		LONG id = (LONG)mui_do(app, MUIM_Application_NewInput, (ULONG)&sigs);
-		if (id == MUIV_Application_ReturnID_Quit)
-			break;
-		if (id && command((ULONG)id))
-			break;
-		if (sigs) {
-			ULONG got = Wait(sigs | SIGBREAKF_CTRL_C | (ioport ? 1UL << ioport->mp_SigBit : 0) |
-			                 (timer_on ? 1UL << tport->mp_SigBit : 0));
-			if (got & SIGBREAKF_CTRL_C)
-				break;
-			if (ioport && (got & (1UL << ioport->mp_SigBit)))
-				dev_done();
-			if (timer_on && (got & (1UL << tport->mp_SigBit)) && CheckIO((struct IORequest *)treq)) {
-				WaitIO((struct IORequest *)treq);
-				refresh();
-				tick_send(treq);
-			}
-			sigs = got & sigs;
-		}
-	}
-out:
-	if (timer_on) {
-		if (!CheckIO((struct IORequest *)treq))
-			AbortIO((struct IORequest *)treq);
-		WaitIO((struct IORequest *)treq);
-		CloseDevice((struct IORequest *)treq);
-	}
-	if (treq)
-		DeleteIORequest(treq);
-	if (tport)
-		DeleteMsgPort(tport);
-	if (app) {
-		mui_set(win, MUIA_Window_Open, FALSE);
-		MUI_DisposeObject(app);
-	}
-	dev_close();
-	widgets_classes_free();
-	rp_classes_free();
-	if (MUIMasterBase)
-		CloseLibrary(MUIMasterBase);
-	if (GfxBase)
-		CloseLibrary((struct Library *)GfxBase);
-	if (IntuitionBase)
-		CloseLibrary((struct Library *)IntuitionBase);
-	if (DOSBase)
-		CloseLibrary((struct Library *)DOSBase);
-	return r;
+	return 1;
 }

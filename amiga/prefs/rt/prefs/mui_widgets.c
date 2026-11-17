@@ -563,7 +563,8 @@ DISPATCHER(tabs_dispatch)
  * table
  * ================================================================== */
 #define TB_COLS 8
-#define TB_ROWS 40                      /* rows a table holds (Riptide: RP_ST_NCONN, 24) */
+#define TB_ROWS 512                     /* rows a table holds (Riptide: RP_ST_NCONN, 24; Alice68: folders, logs) */
+#define TB_CACHE 40                     /* rows drawn again one by one when they change (more: all of them) */
 struct table_data {
 	struct MUI_EventHandlerNode ehn;
 	const char *header;
@@ -576,7 +577,7 @@ struct table_data {
 	/* what is on screen, for updates */
 	int valid, drawn_n, drawn_active, drawn_hot, drawn_fit;
 	LONG drawn_x[TB_COLS + 1], drawn_w;
-	char cache[TB_ROWS][200];
+	char cache[TB_CACHE][200];
 };
 
 /* the header's height and a row's (two lines) */
@@ -678,7 +679,8 @@ static void tb_row(struct table_data *d, Object *obj, struct RastPort *rp, const
 		cell(d->rows[r], c, t, sizeof(t));
 		text_fit(rp, l + x[c], d->one ? y1 : y1 + fh + 1, x[c + 1] - x[c] - 6, t, tpen(c == 0 ? T_TEXT : T_DIM), 0);
 	}
-	rt_strlcpy(d->cache[r], d->rows[r], sizeof(d->cache[r]));
+	if (r < TB_CACHE)
+		rt_strlcpy(d->cache[r], d->rows[r], sizeof(d->cache[r]));
 }
 
 static void tb_draw(struct table_data *d, Object *obj, int update)
@@ -698,7 +700,7 @@ static void tb_draw(struct table_data *d, Object *obj, int update)
 		d->top = d->n - (fit - 1);
 	/* only the rows that changed, when the columns and rows stayed */
 	if (update && d->valid && d->top == 0 && d->drawn_n == d->n && d->drawn_fit == fit && d->drawn_w == w &&
-	    d->drawn_active == d->active && d->drawn_hot == d->hot && d->n <= fit && d->n > 0 &&
+	    d->drawn_active == d->active && d->drawn_hot == d->hot && d->n <= fit && d->n > 0 && d->n <= TB_CACHE &&
 	    !memcmp(d->drawn_x, x, sizeof(LONG) * (size_t)(nc + 1))) {
 		for (r = 0; r < d->n; r++)
 			if (strcmp(d->cache[r], d->rows[r]))
@@ -812,6 +814,14 @@ DISPATCHER(table_dispatch)
 				d->active = d->n - 1;
 			if (d->shown)
 				MUI_Redraw(obj, MADF_DRAWUPDATE);
+		}
+		if (mc_has_tag(msg, MUIA_Table_Top)) {          /* a large number: the end */
+			d->top = (int)mc_tagval(msg, MUIA_Table_Top, 0);
+			if (d->top < 0)
+				d->top = 0;
+			d->valid = 0;
+			if (d->shown)
+				MUI_Redraw(obj, MADF_DRAWOBJECT);
 		}
 		if (mc_has_tag(msg, MUIA_Table_Active)) {
 			int a = (int)(LONG)mc_tagval(msg, MUIA_Table_Active, (ULONG)-1);

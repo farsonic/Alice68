@@ -1,30 +1,32 @@
-# Alice68-Network: the MUI network settings window. Built as Riptide's own
+# Alice68Prefs: Alice68's MUI preferences editor. Built as Riptide's own
 # RiptidePrefs is (its GCC build: m68k-linux-gnu-gcc, link.ld, elf2hunk.py),
-# from its MUI layer in rt/ (see rt/README) and Alice68's netgui*.c.
+# from its MUI layer in rt/ (see rt/README) and Alice68's prefs.c, ui.c, pg_*.c.
+# $(OUT)/a68prefs.o comes from ../build.sh: cardcore.c and the Shell command's
+# STATUS, LOG, JOYTEST and MONITOR, their own symbols kept to themselves.
 # SPDX-License-Identifier: GPL-2.0-only
 CROSS  ?= m68k-linux-gnu-
 CC     := $(CROSS)gcc
 LD     := $(CROSS)ld
 PYTHON ?= python3
 OUT    ?= ../out
-B      := $(OUT)/netgui
+B      := $(OUT)/prefs
 GCCINC := $(shell $(CC) -print-file-name=include)
 LIBGCC := $(shell $(CC) -m68020 -print-libgcc-file-name)
 CFLAGS := -m68020 -mtune=68020-60 -O2 -std=gnu99 -ffreestanding -fno-builtin -fno-pic -fno-pie \
           -fomit-frame-pointer -msoft-float -nostdinc -isystem $(GCCINC) \
           -fno-asynchronous-unwind-tables -fno-unwind-tables -fno-stack-protector \
           -ffunction-sections -fdata-sections -Wall -Wno-unused-parameter \
-          -Irt/include -Irt -Irt/os -I$(B) -I. -I.. -I../wifi -I../../third_party/Emu68/src/alice
+          -Irt/include -Irt -Irt/os -I$(B) -I. -I.. -I../wifi -I../../third_party/Emu68/src/alice -I../../third_party/Emu68/src/raspi
 LDFLAGS := -T rt/link.ld --emit-relocs --gc-sections --no-warn-rwx-segments
 
 LIBS   := exec dos timer locale battclock intuition gadtools graphics icon
 GEN_H  := $(foreach l,$(LIBS),$(B)/gen/$(l)_calls.h) $(B)/gen/muimaster_calls.h $(B)/gen/expansion_calls.h
 RT_SRC := rt/libc.c rt/printf.c rt/prefs/mui_util.c rt/prefs/mui_theme.c rt/prefs/mui_classes.c rt/prefs/mui_lang.c \
           rt/prefs/mui_widgets.c rt/prefs/stat_util.c
-SRC    := netgui.c
+SRC    := prefs.c ui.c pg_net.c pg_card.c pg_text.c
 OBJ    := $(B)/startup.o $(patsubst %.c,$(B)/%.o,$(notdir $(RT_SRC)) $(SRC)) $(B)/mui_thunks.o
 
-all: $(OUT)/Alice68-Network
+all: $(OUT)/Alice68Prefs
 
 $(B)/gen/%_calls.h: rt/os/os_lvos.txt rt/tools/gen_lvos.py
 	@mkdir -p $(dir $@)
@@ -47,11 +49,11 @@ $(B)/mui_thunks.o: rt/prefs/mui_thunks.S
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(B)/Alice68-Network.elf: $(OBJ) rt/link.ld
-	$(LD) $(LDFLAGS) -o $@ $(OBJ) $(LIBGCC)
-$(OUT)/Alice68-Network: $(B)/Alice68-Network.elf rt/tools/elf2hunk.py
+$(B)/Alice68Prefs.elf: $(OBJ) $(OUT)/a68prefs.o rt/link.ld
+	$(LD) $(LDFLAGS) -o $@ $(OBJ) $(OUT)/a68prefs.o $(LIBGCC)
+$(OUT)/Alice68Prefs: $(B)/Alice68Prefs.elf rt/tools/elf2hunk.py
 	$(PYTHON) rt/tools/elf2hunk.py -v $< $@
 
 clean:
-	rm -rf $(B) $(OUT)/Alice68-Network
+	rm -rf $(B) $(OUT)/Alice68Prefs
 .PHONY: all clean

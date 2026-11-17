@@ -71,9 +71,10 @@ void theme_rect(struct RastPort *rp, LONG x0, LONG y0, LONG x1, LONG y1, LONG pe
 void theme_fill(struct RastPort *rp, LONG x0, LONG y0, LONG x1, LONG y1, LONG pen);
 void theme_line(struct RastPort *rp, LONG x0, LONG y0, LONG x1, LONG y1, LONG pen);
 
-/* icons (one per page, IC_ + page number; Alice68-Network's pages, rt/prefs/prefs_fields.h) */
+/* icons (one per page, IC_ + page number; Alice68Prefs's pages, rt/prefs/prefs_fields.h) */
 enum {
-	IC_ABOUT, IC_STATUS, IC_ETH, IC_WIFI, IC_ETHSET, IC_WIFISET, IC_ETHTRAFFIC, IC_WIFITRAFFIC,
+	IC_ABOUT, IC_STATUS, IC_SETTINGS, IC_TEXT, IC_CARD, IC_FILES, IC_NETSTATUS, IC_ETH, IC_WIFI, IC_ETHSET,
+	IC_WIFISET, IC_ETHTRAFFIC, IC_WIFITRAFFIC, IC_BT, IC_JOY, IC_LOGS, IC_MONITOR,
 	IC_NICONS
 };
 /* icon at x,y, size pixels square; dim: everything but white in T_DISABLED */

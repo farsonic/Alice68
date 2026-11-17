@@ -1,8 +1,8 @@
-Riptide's MUI layer, as Alice68-Network uses it
-================================================
+Riptide's MUI layer, as Alice68Prefs uses it
+=============================================
 
-Alice68-Network (amiga/netgui/netgui.c) looks like Riptide's preferences
-editor because it is built from the same parts. These files come from
+Alice68Prefs (amiga/prefs/prefs.c, ui.c, pg_*.c) looks like Riptide's
+preferences editor because it is built from the same parts. These files come from
 Riptide (https://github.com/farsonic/riptide), commit 4e5f73c
 ("Riptide 0.37: version strings"), GPL-2.0-only like Alice68's Amiga parts.
 Checked against Riptide 95c36f2 ("Riptide 0.39: version strings"): every
@@ -22,8 +22,9 @@ file below is byte for byte the same there, so there was nothing to take in:
   prefs/mui_util.c mui_lang.c mui_ids.h mui_lvos.txt mui_classes.h mui_theme.h
                          src/amiga/prefs/         (mui_theme.h: Alice68's icon list)
   prefs/mui_theme.c      src/amiga/prefs/         (the icon table rearranged for
-                                                   Alice68's pages; WiFi, traffic, sliders
-                                                   and "i" icons added; no soft bold)
+                                                   Alice68Prefs's pages; WiFi, traffic, sliders,
+                                                   "i", chip, page, SD card, folder, Bluetooth
+                                                   and joystick icons added; no soft bold)
   prefs/mui_classes.c    src/amiga/prefs/         (the nav list's rows and headings from
                                                    rp_nav_order[]/rp_nav_head[]; titles in
                                                    the accent colour instead of bold)
@@ -31,12 +32,14 @@ file below is byte for byte the same there, so there was nothing to take in:
   prefs/mui_widgets.c    src/amiga/prefs/mui_status.c: the graph, tabs, table and
                          stext classes only (no interface view, no Status page);
                          its tags in prefs/mui_widgets.h; class making added;
-                         an on/off switch class of Alice68's own
+                         an on/off switch class of Alice68's own; the table holds
+                         up to 512 rows (only the first 40 redrawn one by one) and
+                         takes MUIA_Table_Top
   prefs/stat_util.c/.h   src/amiga/prefs/prefs_status.c/.h: the graph history and
                          the number wording only
 
 Written for Alice68: cmd/cmdlib.h and prefs/prefs_fields.h (small stand-ins for
-Riptide's, which describe its own tools and pages).
+Riptide's, which describe its own tools and pages: here Alice68Prefs's pages).
 
 The library calls are Riptide's generated inline functions (tools/gen_lvos.py,
 register variables, as Riptide builds them). Elsewhere Alice68's 68k code calls

@@ -23,6 +23,7 @@
 #define MUIA_Table_Active  (RTAG + 0x904)  /* (set, get, notify) the chosen row, -1 none */
 #define MUIA_Table_OneLine (RTAG + 0x905)  /* (init) rows of one line: the cells, no title line */
 #define MUIA_Table_Empty   (RTAG + 0x906)  /* (init) the text when there are no rows */
+#define MUIA_Table_Top     (RTAG + 0x907)  /* (set) the first row shown; a large number: the last ones */
 #define MUIA_IfView_Model  (RTAG + 0xa01)  /* (init) struct rp_status_model *; set Update to redraw */
 #define MUIA_IfView_Update (RTAG + 0xa02)  /* (set) */
 #define MUIA_SText_Text    (RTAG + 0xb01)  /* (init, set) lines separated by '\n' (not copied) */

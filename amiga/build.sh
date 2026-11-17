@@ -49,10 +49,19 @@ m68k-linux-gnu-objcopy --keep-global-symbol=card_main --keep-global-symbol=bt_ma
 subs+=(out/sub_card.o)
 $LD -T link.ld --emit-relocs -o out/Alice68.elf "${subs[@]}"
 python3 -I elf2hunk.py out/Alice68.elf out/Alice68
-build Alice68-NetworkGT netprefs_start.S netprefs.c lvoy.S wifi/lvox.S lvo.S
-build Alice68-Card card_start.S card.c hdf/cmdedit.c ../third_party/Emu68/src/raspi/alice_opts.c lvoy.S wifi/lvox.S lvo.S
-# Alice68-Network: the MUI window, built as Riptide's RiptidePrefs is (amiga/netgui/Makefile)
-make -s -C netgui OUT="$(pwd)/out"
+# Alice68Prefs: the MUI editor, built as Riptide's RiptidePrefs is (amiga/prefs/Makefile), with
+# cardcore.c and the Shell command's STATUS, LOG, JOYTEST and MONITOR in one object whose own
+# symbols are local (their memcpy, dos, out ... never meet Riptide's). Their dos_write is
+# capture.c's, which can keep what they print for the pages (lvo.S's renamed dos_write_real).
+$CC $CFLAGS -c capture.c -o out/cap_capture.c.o
+cp out/a68_lvo.S.o out/cap_lvo.o
+m68k-linux-gnu-objcopy --redefine-sym dos_write=dos_write_real out/cap_lvo.o
+$LD -r -o out/a68prefs.o out/cap_capture.c.o out/cap_lvo.o out/a68_lvox.S.o out/cc_cardcore.c.o out/cc_cmdedit.c.o \
+    out/cc_alice_opts.c.o out/sub_status.c.o out/sub_usblog.c.o out/sub_joytest.c.o out/sub_monitor.c.o
+m68k-linux-gnu-objcopy --wildcard --keep-global-symbol='cc_*' --keep-global-symbol='opt_*' --keep-global-symbol=a68_capture \
+    --keep-global-symbol=status_main --keep-global-symbol=usblog_main --keep-global-symbol=joytest_main \
+    --keep-global-symbol=monitor_main out/a68prefs.o
+make -s -C prefs OUT="$(pwd)/out"
 # the ALICE68 folder for the SD card: the files above, a ReadMe, Install and Uninstall
 python3 -I folder/mkfolder.py out
 # alice68hdf.device runs from Emu68's ROM board, which is mapped read-only:

@@ -16,9 +16,8 @@ out = sys.argv[1]
 here = os.path.dirname(os.path.abspath(__file__))
 FILES = [                      # (built file in OUT_DIR, place in the system)
     ('Alice68', 'C'),                          # the Shell command: Alice68 STATUS, LOG, WIFI, ...
-    ('Alice68-Network', 'C'),
-    ('Alice68-NetworkGT', 'C'),
-    ('Alice68-Card', 'C'),
+    ('Alice68Prefs', 'Prefs'),                 # the settings window (MUI)
+    ('Alice68Prefs.info', 'Prefs'),
     ('Alice68Wheel', 'WBStartup'),             # the mouse wheel, started with Workbench: its icon runs C:Alice68
     ('Alice68Wheel.info', 'WBStartup'),
     ('alice68-usb.device', 'DEVS/USBHardware'),
@@ -28,9 +27,10 @@ FILES = [                      # (built file in OUT_DIR, place in the system)
 # Alice68Prefs): Install takes them away, Uninstall puts back what they had replaced
 OLD = ['C/Alice68-HDF', 'C/Alice68-USBLog', 'C/Alice68-NetCheck', 'C/Alice68-ShowConfig', 'C/Alice68-Status',
        'C/Alice68-JoyTest', 'C/Alice68-WiFi', 'C/Alice68-Monitor', 'C/Alice68-Wheel',
-       'WBStartup/Alice68-Wheel', 'WBStartup/Alice68-Wheel.info']
-DATE = '07.11.2026'
-VER = '1.1'
+       'WBStartup/Alice68-Wheel', 'WBStartup/Alice68-Wheel.info',
+       'C/Alice68-Network', 'C/Alice68-NetworkGT', 'C/Alice68-Card']
+DATE = '17.11.2026'
+VER = '1.2'
 folder = os.path.join(out, 'ALICE68')
 shutil.rmtree(folder, ignore_errors=True)
 sys.dont_write_bytecode = True             # keep the source tree clean
@@ -45,6 +45,11 @@ with open(os.path.join(out, 'Alice68Wheel'), 'w', newline='\n') as f:
 data = mkinfo.write_icon(os.path.join(out, 'Alice68Wheel.info'), mkinfo.WBPROJECT, mkinfo.icon_wheel(), 'C:Alice68', wheel_tt, 4096)
 k, pic, t, tt, st = mkinfo.read_icon(data)
 if (k, t, tuple(tt), st) != (mkinfo.WBPROJECT, 'C:Alice68', wheel_tt, 4096) or pic.p != mkinfo.icon_wheel().p: sys.exit('Alice68Wheel.info does not read back')
+# Alice68Prefs's icon: a tool; its tool types are the editor's arguments (in brackets: off)
+prefs_tt = ('(PUBSCREEN=Workbench)', '(PAGE=Status)', '(THEME=DARK)')
+data = mkinfo.write_icon(os.path.join(out, 'Alice68Prefs.info'), mkinfo.WBTOOL, mkinfo.icon_prefs(), '', prefs_tt, 16384)
+k, pic, t, tt, st = mkinfo.read_icon(data)
+if (k, tuple(tt), st) != (mkinfo.WBTOOL, prefs_tt, 16384) or pic.p != mkinfo.icon_prefs().p: sys.exit('Alice68Prefs.info does not read back')
 for name, place in FILES:
     os.makedirs(os.path.join(folder, place), exist_ok=True)
     shutil.copyfile(os.path.join(out, name), os.path.join(folder, place, name))
@@ -161,7 +166,7 @@ ins = [
     '  (abort %s))' % q("ALICE68: is not mounted.\n\nIs the folder ALICE68 on the SD card's\nFAT partition, next to kernel8.img?\n(and no alice68.folders=off in config.txt)"),
     '(welcome "Alice68 %s: the Amiga files")' % VER,
     '(message %s (all))' % q("This copies Alice68's Amiga files from\nALICE68: into your system:\n\n"
-                              "the Alice68 command into C:,\nthe mouse wheel into WBStartup\n(Alice68Wheel),\nalice68net.device into DEVS:,\nalice68-usb.device into DEVS:USBHardware.\n\n"
+                              "the Alice68 command into C:,\nAlice68Prefs into SYS:Prefs,\nthe mouse wheel into WBStartup\n(Alice68Wheel),\nalice68net.device into DEVS:,\nalice68-usb.device into DEVS:USBHardware.\n\n"
                               "What they replace is kept in\nAlice68-Backup, and Uninstall puts it back."),
     '(set #dest (askdir (prompt "Install into which system?") (help @askdir-help) (default @default-dest)))',
     '(set #bak (tackon #dest "Alice68-Backup"))',
