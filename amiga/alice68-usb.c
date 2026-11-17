@@ -69,7 +69,7 @@
 
 struct DevBase {
     struct Library lib;
-    /* offsets 34 and 38, read by Alice68-USBLog: why the last Open failed */
+    /* offsets 34 and 38, read by Alice68 LOG: why the last Open failed */
     ULONG diag;                              /* 0 ok, 1 no expansion.library, 2 no board, 3 bad magic, 4 bad version, 5 unit not 0 */
     ULONG diag_val;
     APTR seglist;
@@ -91,7 +91,7 @@ struct DevBase {
     ULONG seq;                               /* submission order, for the kernel */
 };
 
-_Static_assert(__builtin_offsetof(struct DevBase, diag) == 34, "Alice68-USBLog reads diag at 34");
+_Static_assert(__builtin_offsetof(struct DevBase, diag) == 34, "Alice68 LOG reads diag at 34");
 
 /* ---- small helpers -------------------------------------------------------- */
 void *memcpy(void *d, const void *s, unsigned long n) { UBYTE *a = d; const UBYTE *b = s; while (n--) *a++ = *b++; return d; }

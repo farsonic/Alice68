@@ -124,7 +124,7 @@ static int nav_isz(void)
 	return nav_rh ? nav_is : theme_compact() ? 0 : nav_rowh() - 2 < 16 ? nav_rowh() - 2 : 16;
 }
 
-/* Alice68-Network: the headings come from rp_nav_head[] (prefs_fields.h) */
+/* Alice68Prefs: the headings come from rp_nav_head[] (prefs_fields.h) */
 static int nav_nheads(int upto)                 /* headings above rows 0..upto */
 {
 	int i, n = 0;
@@ -158,7 +158,7 @@ static void nav_fit(Object *obj)
 	nav_is = compact || nav_rh - 2 < 12 ? 0 : nav_rh - 2 < 16 ? nav_rh - 2 : 16;
 }
 
-/* The list's order: Alice68-Network's rp_nav_order[] (prefs_fields.h). pos is a
+/* The list's order: Alice68Prefs's rp_nav_order[] (prefs_fields.h). pos is a
  * row of the list, page a P_* number. */
 static int nav_page_at(int pos)
 {

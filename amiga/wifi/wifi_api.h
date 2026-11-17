@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only
- * alice68net.device's WiFi commands (unit 0), used by C:Alice68-WiFi. They sit in the
+ * alice68net.device's WiFi commands (unit 0), used by `Alice68 WIFI` and Alice68Prefs. They sit in the
  * third-party command area next to netdev's 0x8900 block. The structures are
  * built by the same compiler on both sides (pack 2, as AmigaOS). */
 #ifndef ALICE68_WIFI_API_H

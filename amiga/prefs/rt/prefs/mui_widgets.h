@@ -1,5 +1,5 @@
 /*
- * Alice68-Network: the graph, tabs, table and stext classes (mui_widgets.c,
+ * Alice68Prefs: the graph, tabs, table and stext classes (mui_widgets.c,
  * from Riptide's RiptidePrefs). Tags as Riptide's mui_status.c has them.
  * SPDX-License-Identifier: GPL-2.0-only
  */

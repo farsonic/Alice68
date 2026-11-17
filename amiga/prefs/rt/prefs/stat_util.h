@@ -1,5 +1,5 @@
 /*
- * Alice68-Network: graph histories and number wording, from Riptide's
+ * Alice68Prefs: graph histories and number wording, from Riptide's
  * RiptidePrefs (its prefs_status.h/.c, the parts before the IP addresses).
  * SPDX-License-Identifier: GPL-2.0-only
  */

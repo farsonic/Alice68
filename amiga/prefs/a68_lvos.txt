@@ -1,4 +1,4 @@
-# Alice68-Network: library calls beyond Riptide's tables (format: rt/tools/gen_lvos.py).
+# Alice68Prefs: library calls beyond Riptide's tables (format: rt/tools/gen_lvos.py).
 # SPDX-License-Identifier: GPL-2.0-only
 
 @lib expansion ExpansionBase basetype=Library

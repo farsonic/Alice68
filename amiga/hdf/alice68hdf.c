@@ -944,7 +944,7 @@ static void reply(struct IORequest *io)
 LONG dev_open(struct HdfBase *db, struct IORequest *io, ULONG unit, ULONG flags)
 {
     (void)flags;
-    if (unit == CS_UNIT) {                              /* the card service (cardsvc.c), for Alice68-Card */
+    if (unit == CS_UNIT) {                              /* the card service (cardsvc.c), for Alice68Prefs and Alice68 CARD */
         io->io_Unit = &db->csunit;
         db->csunit.unit_OpenCnt++;
         db->lib.lib_OpenCnt++;

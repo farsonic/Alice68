@@ -36,7 +36,7 @@
 extern void folder_main(struct HdfBase *db);
 
 /* ---- the volumes ------------------------------------------------------------------ */
-struct FVol {                               /* starts as struct FVolHead (hdf_dev.h): Alice68-ShowConfig reads it */
+struct FVol {                               /* starts as struct FVolHead (hdf_dev.h): Alice68 SHOWCONFIG reads it */
     ULONG index;
     char  path[128];                        /* on the FAT partition */
     char  vol[32];                          /* volume name */

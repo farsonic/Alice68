@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only
  *
  * alice68hdf.device's card service: the SD card Alice68 booted from, for
- * Alice68-Card (amiga/card.c). Open the device with unit CS_UNIT, then DoIO()
+ * Alice68Prefs and `Alice68 CARD` (amiga/cardcore.c). Open the device with unit CS_UNIT, then DoIO()
  * one of the commands below from a process. Writes go through the device's
  * own FAT and exFAT engines, one at a time with its folder volumes, so the
  * card stays consistent whatever else is open. Mounted hardfiles and CD

@@ -1,5 +1,5 @@
 /*
- * Alice68-Network: the graph, tabs, table and stext classes of Riptide's
+ * Alice68Prefs: the graph, tabs, table and stext classes of Riptide's
  * RiptidePrefs Status page (its mui_status.c, from the start of the file
  * to the table class, and its stext class; the interface view and the page
  * itself are left out). Riptide's comment follows.
@@ -1009,7 +1009,7 @@ DISPATCHER(stext_dispatch)
 }
 
 /* ==================================================================
- * Alice68-Network: switch - an on/off slider. A pill: in the accent
+ * Alice68Prefs: switch - an on/off slider. A pill: in the accent
  * colour with the knob on the right and "ON" when on, grey with the
  * knob on the left and "OFF" when off. A click anywhere on it flips it
  * and notifies MUIA_Switch_On.
@@ -1156,7 +1156,7 @@ DISPATCHER(switch_dispatch)
 }
 
 /* ==================================================================
- * Alice68-Network: making the classes, and the timer's work
+ * Alice68Prefs: making the classes, and the timer's work
  * ================================================================== */
 void widgets_set_tick(void (*fn)(void))
 {

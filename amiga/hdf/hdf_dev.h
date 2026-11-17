@@ -12,16 +12,16 @@
 struct FVol;
 struct FObj;
 struct SignalSemaphore { UWORD ss[23]; };   /* exec's 46 bytes, set up by InitSemaphore */
-/* the start of a folder volume (folders.c's struct FVol), which Alice68-ShowConfig reads */
+/* the start of a folder volume (folders.c's struct FVol), which Alice68 SHOWCONFIG reads */
 struct FVolHead { ULONG index; char path[128]; char vol[32]; char dev[8]; };
 
 #define ISO_MAX      8                      /* CD images mounted as volumes */
 #define ISO_UNIT0    0x5000                 /* their FileSysStartupMsg units */
 struct IVol;
-/* the start of a CD image volume (isos.c's struct IVol): Alice68-ShowConfig and folders.c read it */
+/* the start of a CD image volume (isos.c's struct IVol): Alice68 SHOWCONFIG and folders.c read it */
 struct IVolHead { ULONG index; char path[128]; char vol[32]; char dev[8]; struct hdf_file f; };
 
-#define HDF_MAGIC  0x41363848u              /* 'A68H', read by Alice68-HDF */
+#define HDF_MAGIC  0x41363848u              /* 'A68H', read by Alice68 HDF */
 #define LOG_SIZE   4096
 #define TASK_STACK 8192
 #define MAX_CHUNK  256u                     /* sectors per card request */
@@ -91,7 +91,7 @@ ACHECK(AOFF(struct DeviceNode, dn_Name) == 40);
 
 struct HUnit {
     struct Unit u;
-    struct hdf_file f;                      /* Alice68-HDF reads up to here */
+    struct hdf_file f;                      /* Alice68 HDF reads up to here */
     struct hdf_rdb rdb;
     ULONG index;
     ULONG chosen;                           /* hdf.boot names it */
@@ -105,7 +105,7 @@ struct HdfBase {
     ULONG nunits;                           /* 40 */
     struct HUnit *unit[HDF_MAX_FILES];      /* 44 */
     ULONG log_wr;                           /* bytes ever written to log[] */
-    char log[LOG_SIZE];                     /* Alice68-HDF reads up to here */
+    char log[LOG_SIZE];                     /* Alice68 HDF reads up to here */
     const char *card_dev;                   /* brcm-emmc.device or brcm-sdhc.device */
     ULONG cmd64;                            /* 0: below 4 GB only, else the 64-bit read command */
     ULONG readonly;                         /* hdf.readonly, or the card's unit 0 is read-only */

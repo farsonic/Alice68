@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only
  *
- * alice68hdf.device: the card service (cardsvc.h) - the SD card for Alice68-Card.
+ * alice68hdf.device: the card service (cardsvc.h) - the SD card for Alice68Prefs and `Alice68 CARD`.
  * Runs in the caller's process: its own card request, the FAT/exFAT engines under
  * db->fsem like the folder handlers, then ffs_sync before the answer.
  */

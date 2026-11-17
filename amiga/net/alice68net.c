@@ -77,7 +77,7 @@ struct NUnit {                      /* one unit of the board: 0 WiFi, 1 Ethernet
 struct NetBase {
     struct Library lib;
     UWORD   pad0;
-    APTR    seglist;                /* at 36: Alice68-Monitor finds the code through it */
+    APTR    seglist;                /* at 36: Alice68 MONITOR finds the code through it */
     struct MsgPort port;            /* both units' requests */
     volatile UBYTE *b;              /* the board */
     struct Task *task, *waiter;
@@ -640,7 +640,7 @@ void dev_irq(struct NetBase *n)
     }
 }
 
-/* ---- the saved settings (Alice68-Network): ENV:alice68net.prefs ---------------------------
+/* ---- the saved settings (Alice68Prefs): ENV:alice68net.prefs ---------------------------
    MAC0= and MAC1= (unit 0 WiFi, unit 1 Ethernet): COMMODORE (Commodore's OUI 00:80:10 on the
    hardware's own last three bytes), an address aa:bb:cc:dd:ee:ff, or nothing (the kernel's
    choice: Commodore's OUI unless net.oui=off). ETH=adv,flags,speed (NET_CMD_ETHCFG's numbers,

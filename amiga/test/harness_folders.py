@@ -42,7 +42,7 @@ exfatboot = 'exfatboot' in sys.argv[4:]
 hdfboot = 'hdfboot' in sys.argv[4:]
 exfatrw = 'exfatrw' in sys.argv[4:] or exfatboot
 exfat = 'exfat' in sys.argv[4:] or exfatrw
-cardsvc = 'card' in sys.argv[4:]                     # the card service (cardsvc.c), as Alice68-Card uses it
+cardsvc = 'card' in sys.argv[4:]                     # the card service (cardsvc.c), as cardcore.c (Alice68Prefs, Alice68 CARD) uses it
 setup = 'setup' in sys.argv[4:]                      # the setup screen's changes on the network board
 env = dict(os.environ, MTOOLS_SKIP_CHECK='1', LC_ALL='C.UTF-8')
 
@@ -289,7 +289,7 @@ call(syms['stub_vbl'], {R.A1: DEVBASE}, name='vbl (Ctrl-Amiga-Amiga)')
 if coldreboot != [2] or mem.r32(PTB + 60) != 2: die('Ctrl-Amiga-Amiga: ColdReboot %s, reset_req %d' % (coldreboot, mem.r32(PTB + 60)))
 print('Ctrl-Amiga-Amiga: vertical blank server installed; idle does nothing; a request is taken (2) and ColdReboot called')
 
-if cardsvc:                                          # the card service: what Alice68-Card asks alice68hdf.device
+if cardsvc:                                          # the card service: what cardcore.c asks alice68hdf.device
     CSIO = alloc(48)
     if call(syms['dev_open'], args=(DEVBASE, CSIO, 0x41363843, 0), name='dev_open(CS_UNIT)') != 0: die('the card service unit would not open')
     CSBUF = alloc(0x10000)
